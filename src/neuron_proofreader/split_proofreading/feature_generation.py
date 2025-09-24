@@ -50,20 +50,20 @@ class FeatureGenerator:
             Path to the raw image assumed to be stored in a GCS bucket.
         anisotropy : Tuple[float], optional
             Image to physical coordinates scaling factors to account for the
-            anisotropy of the microscope. The default is (1.0, 1.0, 1.0).
+            anisotropy of the microscope. Default is (1.0, 1.0, 1.0).
         context : int, optional
             ...
         is_multimodal : bool, optional
             Indication of whether to generate multimodal features (i.e. image
-            and label patch for each proposal). The default is False.
+            and label patch for each proposal). Default is False.
         multiscale : int, optional
             Level in the image pyramid that voxel coordinates must index into.
-            The default is 0.
+            Default is 0.
         patch_shape : Tuple[int], optional
             ...
         segmentation_path : str, optional
-            Path to the segmentation assumed to be stored on a GCS bucket. The
-            default is None.
+            Path to the segmentation assumed to be stored on a GCS bucket.
+            Default is None.
         """
         # Sanity check
         if is_multimodal and not segmentation_path:
@@ -323,8 +323,8 @@ class FeatureGenerator:
 
         # Read image patch
         patch = self.img_reader.read(center, shape)
-        intensity = np.percentile(patch, 99.9)
-        patch = np.minimum(patch / intensity, 1)
+        mx = np.percentile(patch, 99.9)
+        patch = np.minimum(patch / mx, 1)
 
         # Get image profile
         profile = list()
@@ -335,37 +335,6 @@ class FeatureGenerator:
                 profile.append(0)
         profile.extend([np.mean(profile), np.std(profile)])
         return {proposal: profile}
-
-    def get_spec(self, xyz_path):
-        """
-        Gets image bounding box and voxel coordinates needed to compute an
-        image intensity profile or extract image patch.
-
-        Parameters
-        ----------
-        xyz_path : numpy.ndarray
-            xyz coordinates of a profile path.
-
-        Returns
-        -------
-        dict
-            Specifications needed to read image patch and generate profile.
-        """
-        # Compute bounding box
-        center, patch_shape = self.compute_bbox(xyz_path)
-        img_shape = self.img_reader.shape()
-        img_shape = img_shape[2:] if len(img_shape) == 5 else img_shape
-        iterator = list(zip(center, patch_shape, img_shape))
-        bbox = {
-            "min": [max(0, c - ps // 2) for c, ps, _ in iterator],
-            "max": [min(c + ps // 2, s - 1) for c, ps, s in iterator],
-        }
-
-        # Shift voxel profile path
-        voxel_path = [self.to_voxels(xyz) for xyz in xyz_path]
-        voxel_path = geometry_util.shift_path(voxel_path, bbox["min"])
-        voxel_path = get_inbounds(voxel_path, img_shape)
-        return {"bbox": bbox, "profile_path": voxel_path}
 
     def get_patches(self, proposal):
         # Compute bounding box
@@ -411,20 +380,20 @@ class FeatureGenerator:
         # Annotate label patch
         i, j = tuple(proposal)
         patch = (patch > 0).astype(float)
-        patch = self.annotate_edge(patch, center, shape, i)
-        patch = self.annotate_edge(patch, center, shape, j)
-        patch = self.annotate_proposal(patch, center, shape, proposal)
+        self.annotate_edge(patch, center, shape, i)
+        self.annotate_edge(patch, center, shape, j)
+        self.annotate_proposal(patch, center, shape, proposal)
         return img_util.resize(patch, self.patch_shape)
 
     def annotate_proposal(self, patch, center, shape, proposal):
         profile_path = self.get_profile_line(center, shape, proposal, False)
-        return img_util.fill_path(patch, profile_path, val=3)
+        img_util.fill_path(patch, profile_path, val=3)
 
     def annotate_edge(self, patch, center, shape, i):
         edge_xyz = np.vstack(self.graph.edge_attr(i, "xyz"))
         voxels = self.get_local_coordinates(center, shape, edge_xyz)
         voxels = get_inbounds(voxels, patch.shape)
-        return img_util.fill_path(patch, voxels, val=2)
+        img_util.fill_path(patch, voxels, val=2)
 
     # --- Helpers ---
     def compute_bbox(self, xyz_pts):

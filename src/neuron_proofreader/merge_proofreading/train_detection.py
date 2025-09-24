@@ -143,7 +143,7 @@ class MergeSiteDataset:
 
         Parameters
         ----------
-        graphs : dict
+        graphs : Dict[str, SkeletonGraph]
             Dictionary mapping brain IDs to SkeletonGraph instances.
 
         Returns
@@ -183,6 +183,15 @@ class MergeSiteDataset:
         graph.relabel_nodes()
         self.merge_graphs[brain_id] = graph
 
+        # Check each merge site has a corresponding fragment
+        segment_ids = set(
+            [str(swc_util.get_segment_id(s)) for s in graph.get_swc_ids()]
+        )
+        for query_segment_id in merged_segment_ids:
+            if query_segment_id not in segment_ids:
+                idxs = self.merge_sites_df["segment_id"] != query_segment_id
+                self.merge_sites_df = self.merge_sites_df[idxs]
+
     def load_gt_graphs(self, brain_id, img_path, swc_pointer):
         """
         Loads and processes ground truth tracings and image for a given brain
@@ -215,12 +224,12 @@ class MergeSiteDataset:
 
         Returns
         -------
-        patches : np.ndarray
+        patches : numpy.ndarray
             Array of stacked channels containing the image patch and label
             mask with shape (2, D, H, W).
-        subgraph : Graph
+        subgraph : networkx.Graph
             Rooted subgraph centered at the site node.
-        label : int
+        is_positive : int
             Binary label indicating whether the site is a positive example or
             negative.
         """

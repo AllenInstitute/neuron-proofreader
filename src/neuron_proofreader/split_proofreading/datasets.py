@@ -6,8 +6,6 @@ Created on Sat April 12 11:00:00 2024
 
 Custom datasets for training graph neural networks.
 
-# explain branches vs edges terminology
-
 """
 
 from random import sample
@@ -497,5 +495,4 @@ def toTensor(arr):
     torch.Tensor
         Tensor.
     """
-    #arr = np.array(my_list, dtype=np.int64).tolist()
     return torch.Tensor(arr).t().contiguous().long()
