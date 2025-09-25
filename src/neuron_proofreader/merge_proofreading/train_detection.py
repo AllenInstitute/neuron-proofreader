@@ -5,7 +5,7 @@ Created on Wed July 2 11:00:00 2025
 @email: anna.grim@alleninstitute.org
 
 Dataset and dataloader utilities for processing merge site data to train
-neural networks that detect merge errors.
+model to detect merge errors.
 
 """
 
@@ -183,15 +183,6 @@ class MergeSiteDataset:
         graph.relabel_nodes()
         self.merge_graphs[brain_id] = graph
 
-        # Check each merge site has a corresponding fragment
-        segment_ids = set(
-            [str(swc_util.get_segment_id(s)) for s in graph.get_swc_ids()]
-        )
-        for query_segment_id in merged_segment_ids:
-            if query_segment_id not in segment_ids:
-                idxs = self.merge_sites_df["segment_id"] != query_segment_id
-                self.merge_sites_df = self.merge_sites_df[idxs]
-
     def load_gt_graphs(self, brain_id, img_path, swc_pointer):
         """
         Loads and processes ground truth tracings and image for a given brain
@@ -233,11 +224,8 @@ class MergeSiteDataset:
             Binary label indicating whether the site is a positive example or
             negative.
         """
-        # Extract site
-        if idx is None:
-            brain_id, graph, node, is_positive = self.get_random_site()
-        else:
-            brain_id, graph, node, is_positive = self.get_site(idx)
+        # Get example
+        brain_id, graph, node, is_positive = self.get_site(idx)
         xyz = graph.node_xyz[node]
         voxel = img_util.to_voxels(xyz, self.anisotropy, self.multiscale)
 
@@ -259,8 +247,15 @@ class MergeSiteDataset:
         return patches, subgraph, int(is_positive)
 
     def get_site(self, idx):
+        # Check if site is random
+        if idx is None:
+            return self.get_random_site()
+        else:
+            return self.get_indexed_site(idx)
+
+    def get_indexed_site(self, idx):
         """
-        Retrieves a site from the dataset.
+        Retrieves the site corresponding to the given index.
 
         Parameters
         ----------
@@ -283,10 +278,12 @@ class MergeSiteDataset:
         # Extract graph
         brain_id = self.merge_sites_df["brain_id"].iloc[idx]
         is_positive = idx > 0
-        if is_positive:
+        if not is_positive:
+            graph = self.gt_graphs[brain_id]
+        elif self.has_fragment(idx):
             graph = self.merge_graphs[brain_id]
         else:
-            graph = self.gt_graphs[brain_id]
+            return self.get_random_site()
 
         # Extract site info
         xyz = self.merge_sites_df["xyz"].iloc[abs(idx)]
@@ -315,7 +312,7 @@ class MergeSiteDataset:
         # Sample node on graph
         while True:
             # Sample node
-            if random.random() < 0.5:
+            if random.random() < 0.3:
                 node = np.random.randint(0, graph.number_of_nodes())
             else:
                 node = util.sample_once(graph.get_branchings())
@@ -372,6 +369,12 @@ class MergeSiteDataset:
         for graph in self.merge_graphs.values():
             cnt += nx.number_connected_components(graph)
         return cnt
+
+    def has_fragment(self, idx):
+        brain_id = self.merge_sites_df["brain_id"][idx]
+        segment_id = self.merge_sites_df["segment_id"][idx]
+        swc_id = f"{segment_id}.0"
+        return swc_id in self.merge_graphs[brain_id].get_swc_ids()
 
 
 class MergeSiteDataloader:
