@@ -30,7 +30,7 @@ The split correction proofreading pipeline consists of three main steps:
 <p align="center">
   <img src="imgs/pipeline.png" width="800" alt="pipeline">
     <br>
-  <b> Figure: </b>Visualization of split correction pipeline, see Inference section for description of each step.
+  <b> Figure: </b>Visualization of split correction pipeline.
 </p>
 
 
