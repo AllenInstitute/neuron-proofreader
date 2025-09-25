@@ -24,7 +24,7 @@ class CNN3D(nn.Module):
 
     def __init__(
         self,
-        token_shape,
+        patch_shape,
         output_dim=1,
         dropout=0.1,
         n_conv_layers=5,
@@ -36,7 +36,7 @@ class CNN3D(nn.Module):
 
         Parameters
         ----------
-        token_shape : Tuple[int]
+        patch_shape : Tuple[int]
             Shape of input image patch.
         output_dim : int, optional
             Dimension of output. Default is 1.
@@ -57,7 +57,7 @@ class CNN3D(nn.Module):
         self.use_double_conv = use_double_conv
 
         # Dynamically build convolutional layers
-        layers = []
+        layers = list()
         in_channels = 2
         out_channels = n_feat_channels
         for i in range(n_conv_layers):
@@ -67,13 +67,9 @@ class CNN3D(nn.Module):
         self.conv_layers = nn.ModuleList(layers)
 
         # Output layer
-        flat_size = self._get_flattened_size(token_shape)
-        self.output = nn.Sequential(
-            init_mlp(flat_size, flat_size * 2, flat_size // 2),
-            init_mlp(flat_size // 2, flat_size, flat_size // 4),
-            init_mlp(flat_size // 4, flat_size // 2, output_dim),
-        )
-
+        flat_size = self._get_flattened_size(patch_shape)
+        self.output = init_feedforward(flat_size, output_dim, 3)
+  
         # Initialize weights
         self.apply(self.init_weights)
 
@@ -193,6 +189,12 @@ class CNN3D(nn.Module):
 
 # --- Transformers ---
 class ViT3D(nn.Module):
+    """
+    A class that implements a 3D Vision transformer.
+
+    Attributes
+    ----------
+    """
 
     def __init__(
         self,
@@ -203,45 +205,48 @@ class ViT3D(nn.Module):
         depth=6,
         heads=8,
         mlp_dim=1024,
+        output_dim=1
     ):
         # Call parent class
         super().__init__()
 
         # Class attributes
-        self.token_shape = token_shape
         self.grid_size = [img_shape[i] // token_shape[i] for i in range(3)]
+        self.in_channels = in_channels
+        self.n_tokens = np.prod(self.grid_size) + 1
+        self.token_shape = token_shape
 
-        # Transformer layers
+        # Transformer architecture
+        self.cls_token = nn.Parameter(torch.randn(1, 1, emb_dim))
         self.img_token_embed = ImageTokenEmbedding3D(
             in_channels, token_shape, emb_dim, img_shape
         )
+        self.pos_embedding = nn.Parameter(
+            torch.randn(1, self.n_tokens, emb_dim)
+        )
         self.transformer = nn.Sequential(
-            *[
-                TransformerEncoderBlock(emb_dim, heads, mlp_dim)
-                for _ in range(depth)
-            ]
+            *[TransformerEncoderBlock(emb_dim, heads, mlp_dim) for _ in range(depth)]
         )
-        self.output_head = nn.Linear(
-            emb_dim, np.prod(token_shape) * in_channels
-        )
+        self.norm = nn.LayerNorm(emb_dim)
+
+        # Output layer
+        self.output = init_feedforward(emb_dim, output_dim, 3)
 
     def forward(self, x):
-        batch_size = x.size(0)
+        # Patchify input -> (b, n_tokens, emb_dim)
         x = self.img_token_embed(x)
+
+        # Add cls token
+        cls_tokens = self.cls_token.expand(x.size(0), -1, -1)
+        x = torch.cat((cls_tokens, x), dim=1)
+
+        # Transformer
+        x = x + self.pos_embedding[:, : x.size(1)]
         x = self.transformer(x)
-        x = self.output_head(x)
-        x = x.view(batch_size, -1, *self.token_shape)
-        x = rearrange(
-            x,
-            "(b d h w) c pd ph pw -> b c (d pd) (h ph) (w pw)",
-            b=batch_size,
-            d=self.grid_size[0],
-            h=self.grid_size[1],
-            w=self.grid_size[2],
-            pd=self.token_shape[0],
-            ph=self.token_shape[1],
-            pw=self.token_shape[2],
-        )
+        x = self.norm(x[:, 0])
+
+        # Output layer
+        x = self.output(x)
         return x
 
 
@@ -389,6 +394,17 @@ class TransformerEncoderBlock(nn.Module):
 
 
 # --- Helpers ---
+def init_feedforward(input_dim, output_dim, n_layers):
+    layers = list()
+    input_dim_i = input_dim
+    output_dim_i = input_dim // 2
+    for i in range(n_layers):
+        layers.append(init_mlp(input_dim_i, input_dim_i * 2, output_dim_i))
+        input_dim_i = input_dim_i // 2
+        output_dim_i = output_dim_i // 2 if i < n_layers - 2 else output_dim
+    return nn.Sequential(*layers)
+
+
 def init_mlp(input_dim, hidden_dim, output_dim, dropout=0.1):
     """
     Initializes a multi-layer perceptron (MLP).
