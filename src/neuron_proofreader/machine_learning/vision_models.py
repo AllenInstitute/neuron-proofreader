@@ -24,7 +24,7 @@ class CNN3D(nn.Module):
 
     def __init__(
         self,
-        token_shape,
+        patch_shape,
         output_dim=1,
         dropout=0.1,
         n_conv_layers=5,
@@ -36,7 +36,7 @@ class CNN3D(nn.Module):
 
         Parameters
         ----------
-        token_shape : Tuple[int]
+        patch_shape : Tuple[int]
             Shape of input image patch.
         output_dim : int, optional
             Dimension of output. Default is 1.
@@ -67,9 +67,9 @@ class CNN3D(nn.Module):
         self.conv_layers = nn.ModuleList(layers)
 
         # Output layer
-        flat_size = self._get_flattened_size(token_shape)
+        flat_size = self._get_flattened_size(patch_shape)
         self.output = init_feedforward(flat_size, output_dim, 3)
-
+  
         # Initialize weights
         self.apply(self.init_weights)
 

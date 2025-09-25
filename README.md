@@ -16,7 +16,7 @@
    <b> Figure: </b>NeuronProofreader reconnects fragmented neuron segments into coherent traces.
 </p>
 
-## Split Mistake Proofreading
+## Split Proofreading
 
 The split correction proofreading pipeline consists of three main steps:
 
@@ -34,7 +34,7 @@ The split correction proofreading pipeline consists of three main steps:
 </p>
 
 
-## Merge Mistake Proofreading
+## Merge Proofreading
 
 In progress...
 
