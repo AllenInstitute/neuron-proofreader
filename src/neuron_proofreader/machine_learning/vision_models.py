@@ -69,7 +69,7 @@ class CNN3D(nn.Module):
         # Output layer
         flat_size = self._get_flattened_size(patch_shape)
         self.output = init_feedforward(flat_size, output_dim, 3)
-  
+
         # Initialize weights
         self.apply(self.init_weights)
 
@@ -217,12 +217,12 @@ class ViT3D(nn.Module):
         self.token_shape = token_shape
 
         # Transformer architecture
-        self.cls_token = nn.Parameter(torch.randn(1, 1, emb_dim))
+        self.cls_token = nn.Parameter(torch.empty(1, 1, emb_dim))
         self.img_token_embed = ImageTokenEmbedding3D(
             in_channels, token_shape, emb_dim, img_shape
         )
         self.pos_embedding = nn.Parameter(
-            torch.randn(1, self.n_tokens, emb_dim)
+            torch.empty(1, self.n_tokens, emb_dim)
         )
         self.transformer = nn.Sequential(
             *[TransformerEncoderBlock(emb_dim, heads, mlp_dim) for _ in range(depth)]
@@ -230,7 +230,14 @@ class ViT3D(nn.Module):
         self.norm = nn.LayerNorm(emb_dim)
 
         # Output layer
-        self.output = init_feedforward(emb_dim, output_dim, 3)
+        self.output = init_feedforward(emb_dim, output_dim, 2)
+
+        # Initialize weights
+        self._init_wgts()
+
+    def _init_wgts(self):
+        nn.init.trunc_normal_(self.cls_token, std=0.02)
+        nn.init.trunc_normal_(self.pos_embedding, std=0.02)
 
     def forward(self, x):
         # Patchify input -> (b, n_tokens, emb_dim)
@@ -271,7 +278,7 @@ class ImageTokenEmbedding3D(nn.Module):
     """
 
     def __init__(
-        self, in_channels, token_shape, emb_dim, img_shape, dropout=0.1
+        self, in_channels, token_shape, emb_dim, img_shape, dropout=0
     ):
         """
         Instantiates a ImageTokenEmbedding3D object.
@@ -288,7 +295,7 @@ class ImageTokenEmbedding3D(nn.Module):
             Shape of the input image (D, H, W).
         dropout : float, optional
             Dropout probability applied after adding positional embeddings.
-            Default is 0.1.
+            Default is 0.
         """
         # Call parent class
         super().__init__()
@@ -345,7 +352,7 @@ class TransformerEncoderBlock(nn.Module):
         multihead attention block.
     """
 
-    def __init__(self, emb_dim, heads, mlp_dim, dropout=0.1):
+    def __init__(self, emb_dim, heads, mlp_dim, dropout=0):
         """
         Instantiates a TransformerEncoderBlock object.
 
@@ -359,7 +366,7 @@ class TransformerEncoderBlock(nn.Module):
             Dimensionality of the hidden layer in the MLP.
         dropout : float, optional
             Dropout probability applied after attention and MLP layers.
-            Default is 0.1.
+            Default is 0.
         """
         # Call parent class
         super().__init__()

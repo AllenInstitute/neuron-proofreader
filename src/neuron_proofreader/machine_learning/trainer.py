@@ -94,6 +94,7 @@ class Trainer:
         # Instance attributes
         self.batch_size = batch_size
         self.best_f1 = 0
+        self.device = device
         self.log_dir = log_dir
         self.max_epochs = max_epochs
         self.model_name = model_name
@@ -238,8 +239,8 @@ class Trainer:
             Computed loss value.
         """
         with self.autocast:
-            x = x.to("cuda")
-            y = y.to("cuda")
+            x = x.to(self.device)
+            y = y.to(self.device)
             hat_y = self.model(x)
             loss = self.criterion(hat_y, y)
             return hat_y, loss
@@ -287,9 +288,8 @@ class Trainer:
         model_path : str
             Path to the checkpoint file containing the saved weights.
         """
-        device = next(self.model.parameters()).device
         self.model.load_state_dict(
-            torch.load(model_path, map_location=device)
+            torch.load(model_path, map_location=self.device)
         )
 
     def report_stats(self, stats, is_train=True):
