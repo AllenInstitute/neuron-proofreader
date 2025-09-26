@@ -183,15 +183,6 @@ class MergeSiteDataset:
         graph.relabel_nodes()
         self.merge_graphs[brain_id] = graph
 
-        # Check each merge site has a corresponding fragment
-        segment_ids = set(
-            [str(swc_util.get_segment_id(s)) for s in graph.get_swc_ids()]
-        )
-        for query_segment_id in merged_segment_ids:
-            if query_segment_id not in segment_ids:
-                idxs = self.merge_sites_df["segment_id"] != query_segment_id
-                self.merge_sites_df = self.merge_sites_df[idxs]
-
     def load_gt_graphs(self, brain_id, img_path, swc_pointer):
         """
         Loads and processes ground truth tracings and image for a given brain
@@ -285,7 +276,7 @@ class MergeSiteDataset:
             True if the site is a merge site, False if it is a non-merge site.
         """
         # Extract graph
-        brain_id = self.merge_sites_df["brain_id"].iloc[idx]
+        brain_id = self.merge_sites_df["brain_id"].iloc[abs(idx)]
         is_positive = idx > 0
         if not is_positive:
             graph = self.gt_graphs[brain_id]
@@ -380,8 +371,8 @@ class MergeSiteDataset:
         return cnt
 
     def has_fragment(self, idx):
-        brain_id = self.merge_sites_df["brain_id"][idx]
-        segment_id = self.merge_sites_df["segment_id"][idx]
+        brain_id = self.merge_sites_df["brain_id"].iloc[idx]
+        segment_id = self.merge_sites_df["segment_id"].iloc[idx]
         swc_id = f"{segment_id}.0"
         return swc_id in self.merge_graphs[brain_id].get_swc_ids()
 
