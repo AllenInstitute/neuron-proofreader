@@ -32,6 +32,7 @@ class MergeDetector:
         patch_shape,
         anisotropy=(1.0, 1.0, 1.0),
         batch_size=16,
+        device="cuda",
         prefetch=64,
         remove_detected_sites=False,
         threshold=0.5,
@@ -39,6 +40,7 @@ class MergeDetector:
     ):
         # Instance attributes
         self.batch_size = batch_size
+        self.device = device
         self.graph = graph
         self.patch_shape = patch_shape
         self.remove_detected_sites = remove_detected_sites
@@ -46,7 +48,7 @@ class MergeDetector:
 
         # Load model
         self.model = model
-        ml_util.load_model(model, model_path)
+        ml_util.load_model(model, model_path, device=self.device)
 
         # Initialize dataset
         self.dataset = IterableGraphDataset(
@@ -91,7 +93,7 @@ class MergeDetector:
 
     def predict(self, x_nodes):
         with torch.no_grad():
-            x_nodes = x_nodes.to("cuda")
+            x_nodes = x_nodes.to(self.device)
             y_nodes = sigmoid(self.model(x_nodes))
             return np.squeeze(ml_util.to_cpu(y_nodes, to_numpy=True), axis=1)
 
