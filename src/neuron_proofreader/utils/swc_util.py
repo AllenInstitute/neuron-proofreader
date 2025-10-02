@@ -25,7 +25,7 @@ from concurrent.futures import (
     as_completed,
 )
 from google.cloud import storage
-from io import BytesIO
+from io import BytesIO, StringIO
 from tqdm import tqdm
 from zipfile import ZipFile
 
@@ -517,6 +517,65 @@ class Reader:
         """
         iterator = zip(self.anisotropy, xyz_str, offset)
         return [a * (float(s) + o) for a, s, o in iterator]
+
+
+# --- Write ---
+def write_points(zip_path, points, color=None, prefix="", radius=10):
+    """
+    Writes a list of 3D points to individual SWC files in the specified
+    directory.
+
+    Parameters
+    -----------
+    zip_path : str
+        Path to ZIP archive where the SWC files will be saved.
+    points : List[Tuple[float]]
+        A list of 3D points to be saved.
+    color : str, optional
+        The color to associate with the points in the SWC files. Default is
+        None.
+    prefix : str, optional
+        String that is prefixed to the filenames of the SWC files. Default is
+        an empty string. Default is an empty string.
+    radius : float, optional
+        Radius to be used in SWC file. Default is 20.
+    """
+    zip_writer = ZipFile(zip_path, "w")
+    for i, xyz in enumerate(points):
+        filename = prefix + str(i + 1) + ".swc"
+        to_zipped_point(zip_writer, filename, xyz, color=color, radius=radius)
+
+
+def to_zipped_point(zip_writer, filename, xyz, color=None, radius=5):
+    """
+    Writes a point to an SWC file format, which is then stored in a ZIP
+    archive.
+
+    Parameters
+    ----------
+    zip_writer : zipfile.ZipFile
+        A ZipFile object that will store the generated SWC file.
+    filename : str
+        Filename of SWC file.
+    xyz : ArrayLike
+        Point to be written to SWC file.
+    color : str, optional
+        Color of nodes. Default is None.
+    radius : float, optional
+        Radius of point. Default is 5um.
+    """
+    with StringIO() as text_buffer:
+        # Preamble
+        if color:
+            text_buffer.write("# COLOR " + color)
+        text_buffer.write("\n" + "# id, type, z, y, x, r, pid")
+
+        # Write entry
+        x, y, z = tuple(xyz)
+        text_buffer.write("\n" + f"1 5 {x} {y} {z} {radius} -1")
+
+        # Finish
+        zip_writer.writestr(filename, text_buffer.getvalue())
 
 
 # --- Helpers ---
