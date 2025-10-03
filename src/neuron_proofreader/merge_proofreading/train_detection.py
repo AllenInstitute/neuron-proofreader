@@ -134,7 +134,7 @@ class MergeSiteDataset:
 
         # Build kd-tree from merge sites
         for brain_id in self.merge_sites_df["brain_id"].unique():
-            pts = extract_merge_xyz(self.merge_sites_df, brain_id)
+            pts = get_gt_merge_sites(self.merge_sites_df, brain_id)
             self.merge_site_kdtrees[brain_id] = KDTree(pts)
 
     def _init_kdtree(self, graphs):
@@ -354,7 +354,7 @@ class MergeSiteDataset:
         for i, xyz in enumerate(graph.node_xyz):
             if i in graph:
                 d, _ = kdtree.query(xyz)
-                if d > 30:
+                if d > 80:
                     graph.remove_node(i)
                     cnt += 1
 
@@ -503,9 +503,9 @@ def get_brain_segmentation_pairs(merge_sites_df, idxs):
     return brain_segmentation_pairs
 
 
-def extract_merge_xyz(merge_sites_df, brain_id):
+def get_gt_merge_sites(merge_sites_df, brain_id):
     """
-    Gets the xyz coordinates of merge sites for a given brain.
+    Gets the xyz coordinates of ground truth merge sites for a given brain.
 
     Parameters
     ----------

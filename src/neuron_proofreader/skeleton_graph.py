@@ -181,6 +181,18 @@ class SkeletonGraph(nx.Graph):
         self.node_radius = self.node_radius[old_node_ids]
         self.node_xyz = self.node_xyz[old_node_ids]
         self.node_component_id = self.node_component_id[old_node_ids]
+        self.reassign_component_ids()
+
+    def reassign_component_ids(self):
+        """
+        Reassigns component IDs for all connected components in the graph.
+        """
+        component_id_to_swc_id = dict()
+        for i, nodes in enumerate(nx.connected_components(self)):
+            nodes = np.array(list(nodes), dtype=int)
+            component_id_to_swc_id[i + 1] = self.get_swc_id(nodes[0])
+            self.node_component_id[nodes] = i + 1
+        self.component_id_to_swc_id = component_id_to_swc_id
 
     # --- Getters ---
     def get_branchings(self):
@@ -315,8 +327,9 @@ class SkeletonGraph(nx.Graph):
                 write_entry(j, node_to_idx[i])
 
             # Finish
-            filename = self.get_swc_id(root)
-            zip_writer.writestr(f"{filename}.swc", text_buffer.getvalue())
+            filename = self.get_swc_id(i)
+            filename = util.set_zip_path(zip_writer, filename, ".swc")
+            zip_writer.writestr(filename, text_buffer.getvalue())
 
     # --- Helpers ---
     def path_length_of_component(self, root, max_depth=np.inf):
