@@ -40,6 +40,7 @@ class SkeletonGraph(nx.Graph):
         self.anisotropy = anisotropy
         self.component_id_to_swc_id = dict()
         self.irreducible = nx.Graph()
+        self.node_spacing = node_spacing
 
         # Graph Loader
         self.graph_loader = gutil.GraphLoader(

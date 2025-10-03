@@ -44,6 +44,7 @@ class MergeDetector:
         self.graph = graph
         self.patch_shape = patch_shape
         self.remove_detected_sites = remove_detected_sites
+        self.step_size = step_size
         self.threshold = threshold
 
         # Load model
@@ -63,8 +64,8 @@ class MergeDetector:
 
     # --- Core routines
     def search_graph(self):
-        total = self.graph.number_of_nodes() // 2
-        pbar = tqdm(total=int(total))
+        approx_path_length = self.graph.number_of_edges() * self.graph.node_spacing
+        pbar = tqdm(total=int(approx_path_length / self.step_size))
         self.graph.node_radius[:] = 1
 
         # Iterate over dataset
