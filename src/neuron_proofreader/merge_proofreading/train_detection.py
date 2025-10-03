@@ -350,13 +350,11 @@ class MergeSiteDataset:
     def clip_fragments_to_groundtruth(self, brain_id, graph):
         assert brain_id in self.gt_graphs, "Must load GT before fragments!"
         kdtree = KDTree(self.gt_graphs[brain_id].node_xyz)
-        cnt = 0
         for i, xyz in enumerate(graph.node_xyz):
             if i in graph:
                 d, _ = kdtree.query(xyz)
                 if d > 80:
                     graph.remove_node(i)
-                    cnt += 1
 
     def __len__(self):
         """
