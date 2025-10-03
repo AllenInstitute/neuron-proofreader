@@ -180,6 +180,8 @@ class MergeSiteDataset:
                 graph.remove_nodes_from(nodes)
                 graph.irreducible.remove_nodes_from(nodes)
 
+        # Postprocess and store graph
+        self.clip_fragments_to_groundtruth(brain_id, graph)
         graph.relabel_nodes()
         self.merge_graphs[brain_id] = graph
 
@@ -345,6 +347,17 @@ class MergeSiteDataset:
         return label_mask
 
     # --- Helpers ---
+    def clip_fragments_to_groundtruth(self, brain_id, graph):
+        assert brain_id in self.gt_graphs, "Must load GT before fragments!"
+        kdtree = KDTree(self.gt_graphs[brain_id].node_xyz)
+        cnt = 0
+        for i, xyz in enumerate(graph.node_xyz):
+            if i in graph:
+                d, _ = kdtree.query(xyz)
+                if d > 30:
+                    graph.remove_node(i)
+                    cnt += 1
+
     def __len__(self):
         """
         Returns the number of positive and negative examples of merge sites.
