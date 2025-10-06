@@ -272,10 +272,31 @@ class SkeletonGraph(nx.Graph):
         return subgraph
 
     def get_swc_id(self, i):
+        """
+        Gets the SWC ID of the given node.
+
+        Parameters
+        ----------
+        i : int
+            Node ID.
+
+        Returns
+        -------
+        str
+            SWC ID of the given node.
+        """
         component_id = self.node_component_id[i]
         return self.component_id_to_swc_id[component_id]
 
     def get_swc_ids(self):
+        """
+        Gets the set of all unique SWC IDs of nodes in the graph.
+
+        Returns
+        -------
+        Set[str]
+            Set of all unique SWC IDs of nodes in the graph.
+        """
         return np.unique(list(self.component_id_to_swc_id.values()))
 
     # --- Writer ---
@@ -334,6 +355,25 @@ class SkeletonGraph(nx.Graph):
 
     # --- Helpers ---
     def path_length_of_component(self, root, max_depth=np.inf):
+        """
+        Computes the path length of the connected component that contains the
+        given root node.
+
+        Parameters
+        ----------
+        root : int
+            Node that belongs to connected component to be searched.
+        max_depth : float
+            Maximum depth (in microns) to search in the connected component.
+            Useful if only checking that a connected component is has path
+            length above some threshold.
+
+        Returns
+        -------
+        length : float
+            Path length of the connected component containing the given root
+            node.
+        """
         length = 0
         for i, j in nx.dfs_edges(self, source=root):
             length += self.dist(i, j)

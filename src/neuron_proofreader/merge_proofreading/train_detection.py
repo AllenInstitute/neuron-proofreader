@@ -100,9 +100,7 @@ class MergeSiteDataset:
         # Data structures
         self.img_readers = dict()
         self.gt_graphs = dict()
-        self.gt_kdtrees = dict()
         self.merge_graphs = dict()
-        self.merge_kdtrees = dict()
         self.merge_site_kdtrees = dict()
 
     # --- Load Data ---
@@ -232,7 +230,15 @@ class MergeSiteDataset:
         voxel = img_util.to_voxels(xyz, self.anisotropy, self.multiscale)
 
         # Extract subgraph and image patches centered at site
-        subgraph = graph.get_rooted_subgraph(node, self.context_radius)
+        try:
+            subgraph = graph.get_rooted_subgraph(node, self.context_radius)
+        except:
+            print("Brain ID:", brain_id)
+            print("Node:", node)
+            print("xyz:", xyz)
+            print("is_positive:", is_positive)
+            print("graph.number_of_nodes:", graph.number_of_nodes())
+
         img_patch = self.get_img_patch(brain_id, voxel)
         label_patch = self.get_label_mask(subgraph)
 
@@ -249,7 +255,6 @@ class MergeSiteDataset:
         return patches, subgraph, int(is_positive)
 
     def get_site(self, idx):
-        # Check if site is random
         if idx is None:
             return self.get_random_site()
         else:
@@ -314,8 +319,11 @@ class MergeSiteDataset:
         # Sample node on graph
         while True:
             # Sample node
-            if random.random() < 0.3:
-                node = np.random.randint(0, graph.number_of_nodes())
+            outcome = random.random()
+            if outcome <= 0.35:
+                node = util.sample_once(graph.nodes)
+            elif outcome > 0.35 and outcome < 0.5:
+                node = util.sample_once(graph.get_leafs())
             else:
                 node = util.sample_once(graph.get_branchings())
 
@@ -353,7 +361,7 @@ class MergeSiteDataset:
         for i, xyz in enumerate(graph.node_xyz):
             if i in graph:
                 d, _ = kdtree.query(xyz)
-                if d > 80:
+                if d > 100:
                     graph.remove_node(i)
 
     def __len__(self):
@@ -486,6 +494,21 @@ class MergeSiteDataloader:
         return ml_util.to_tensor(patches), ml_util.to_tensor(labels)
 
     def _load_idxs(self, idxs):
+        """
+        Initializes indexes that dataloader iterates over. Note: indexes
+        are duplicated and one set is negated to account for negative
+        examples.
+
+        Parameters
+        ----------
+        idxs : List[int]
+            Indexes of examples to be iterated over.
+
+        Returns
+        -------
+        idxs : List[int]
+            Indexes of examples to be iterated over.
+        """
         negative_idxs = -np.arange(0, len(idxs))
         idxs.extend(negative_idxs.tolist())
         return idxs
