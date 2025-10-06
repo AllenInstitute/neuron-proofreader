@@ -4,7 +4,7 @@ Created on Sat July 15 9:00:00 2023
 @author: Anna Grim
 @email: anna.grim@alleninstitute.org
 
-Code that generates edge proposals for a given fragments graph.
+Code that generates edge proposals for a given graph.
 
 """
 
@@ -17,18 +17,17 @@ from neuron_proofreader.utils import geometry_util
 
 DOT_THRESHOLD = -0.3
 SEARCH_SCALING_FACTOR = 1.5
-TRIM_SEARCH_DIST = 15
 
 
-def run(
-    proposal_graph, search_radius, complex_bool=False, long_range_bool=True,
-):
+def run(graph, search_radius, complex_bool=False, long_range_bool=True):
     """
-    Generates proposals for fragments graph.
+    Generates edge proposals from leaf nodes to other leaf nodes within the
+    given search radius. Note: proposals can be generated between leaf and
+    non-leaf nodes if "complex_bool" is set to True.
 
     Parameters
     ----------
-    proposal_graph : ProposalGraph
+    graph : ProposalGraph
         Graph that proposals will be generated for.
     search_radius : float
         Maximum Euclidean distance between endpoints of proposal.
@@ -36,41 +35,41 @@ def run(
         Indication of whether to generate proposals between leaf and non-
         leaf nodes. Default is False.
     long_range_bool : bool, optional
-        Indication of whether to generate simple proposals within distance of
-        "LONG_RANGE_FACTOR" * radius of leaf from leaf without any proposals.
-        Default is True.
+        Indication of wether to attempt generating proposals for a leaf
+        without existing proposals by expanding the search radius to
+        "SEARCH_SCALING_FACTOR" × radius microns. Default is True.
     """
     # Initializations
     connections = dict()
-    kdtree = init_kdtree(proposal_graph, complex_bool)
-    if proposal_graph.verbose:
-        iterable = tqdm(proposal_graph.get_leafs(), desc="Proposals")
+    kdtree = init_kdtree(graph, complex_bool)
+    if graph.verbose:
+        iterable = tqdm(graph.get_leafs(), desc="Proposals")
     else:
-        iterable = proposal_graph.get_leafs()
+        iterable = graph.get_leafs()
 
     # Main
     for leaf in iterable:
         # Check fragment satisfies size requirement
-        length = proposal_graph.path_length_of_component(
-            leaf, proposal_graph.min_size_with_proposals
+        length = graph.path_length_of_component(
+            leaf, graph.min_size_with_proposals
         )
-        if length < proposal_graph.min_size_with_proposals:
+        if length < graph.min_size_with_proposals:
             continue
 
         # Generate potential proposals
         candidates = get_candidates(
-            proposal_graph,
+            graph,
             leaf,
             kdtree,
             search_radius,
-            proposal_graph.proposals_per_leaf,
+            graph.proposals_per_leaf,
             complex_bool,
         )
 
         # Generate long range proposals (if applicable)
         if len(candidates) == 0 and long_range_bool:
             candidates = get_candidates(
-                proposal_graph,
+                graph,
                 leaf,
                 kdtree,
                 search_radius * SEARCH_SCALING_FACTOR,
@@ -80,24 +79,24 @@ def run(
 
         # Determine which potential proposals to keep
         for i in candidates:
-            leaf_component_id = proposal_graph.node_component_id[leaf]
-            node_component_id = proposal_graph.node_component_id[i]
+            leaf_component_id = graph.node_component_id[leaf]
+            node_component_id = graph.node_component_id[i]
             pair_id = frozenset((leaf_component_id, node_component_id))
             if pair_id in connections.keys():
                 cur_proposal = connections[pair_id]
-                cur_dist = proposal_graph.proposal_length(cur_proposal)
-                if proposal_graph.dist(leaf, i) < cur_dist:
-                    proposal_graph.remove_proposal(cur_proposal)
+                cur_dist = graph.proposal_length(cur_proposal)
+                if graph.dist(leaf, i) < cur_dist:
+                    graph.remove_proposal(cur_proposal)
                     del connections[pair_id]
                 else:
                     continue
 
             # Add proposal
-            proposal_graph.add_proposal(leaf, i)
+            graph.add_proposal(leaf, i)
             connections[pair_id] = frozenset({leaf, i})
 
 
-def init_kdtree(proposal_graph, complex_bool):
+def init_kdtree(graph, complex_bool):
     """
     Initializes a KD-Tree used to generate proposals.
 
@@ -115,9 +114,9 @@ def init_kdtree(proposal_graph, complex_bool):
         complex_bool is True; otherwise, only built from leaf nodes.
     """
     if complex_bool:
-        return proposal_graph.get_kdtree()
+        return graph.get_kdtree()
     else:
-        return proposal_graph.get_kdtree(node_type="leaf")
+        return graph.get_kdtree(node_type="leaf")
 
 
 def get_candidates(
@@ -139,14 +138,14 @@ def get_candidates(
         return list() if max_proposals < 0 else candidates
 
 
-def search_kdtree(proposal_graph, leaf, kdtree, radius, max_proposals):
+def search_kdtree(graph, leaf, kdtree, radius, max_proposals):
     """
     Generates proposals extending from node "leaf" by finding candidate xyz
     points on distinct connected components nearby.
 
     Parameters
     ----------
-    proposal_graph : FragmentsGraph
+    graph : FragmentsGraph
         Graph that proposals will be generated for.
     kdtree : scipy.spatial.cKDTree
         ...
@@ -164,10 +163,10 @@ def search_kdtree(proposal_graph, leaf, kdtree, radius, max_proposals):
     """
     # Generate candidates
     candidates = dict()
-    leaf_xyz = proposal_graph.node_xyz[leaf]
+    leaf_xyz = graph.node_xyz[leaf]
     for xyz in geometry_util.query_ball(kdtree, leaf_xyz, radius):
-        component_id = proposal_graph.xyz_to_component_id(xyz)
-        if component_id != proposal_graph.node_component_id[leaf]:
+        component_id = graph.xyz_to_component_id(xyz)
+        if component_id != graph.node_component_id[leaf]:
             dist = geometry_util.dist(leaf_xyz, xyz)
             if component_id not in candidates.keys():
                 candidates[component_id] = {"dist": dist, "xyz": tuple(xyz)}
@@ -210,13 +209,13 @@ def get_best(candidates, max_proposals):
     return list_candidates_xyz(candidates)
 
 
-def get_connecting_node(proposal_graph, leaf, xyz, radius, complex_bool):
+def get_connecting_node(graph, leaf, xyz, radius, complex_bool):
     """
     Gets node that proposal emanating from "leaf" will connect to.
 
     Parameters
     ----------
-    proposal_graph : FragmentsGraph
+    graph : FragmentsGraph
         Graph containing "leaf".
     leaf : int
         Leaf node.
@@ -230,29 +229,29 @@ def get_connecting_node(proposal_graph, leaf, xyz, radius, complex_bool):
     """
     # Check if edge exists
     try:
-        edge = proposal_graph.xyz_to_edge[xyz]
+        edge = graph.xyz_to_edge[xyz]
     except:
         return None
 
     # Find connecting node
-    node = get_closer_endpoint(proposal_graph, edge, xyz)
-    if proposal_graph.dist(leaf, node) < radius:
+    node = get_closer_endpoint(graph, edge, xyz)
+    if graph.dist(leaf, node) < radius:
         return node
     elif complex_bool:
-        attrs = proposal_graph.get_edge_data(*edge)
+        attrs = graph.get_edge_data(*edge)
         idx = np.where(np.all(attrs["xyz"] == xyz, axis=1))[0][0]
         if type(idx) is int:
-            return proposal_graph.split_edge(edge, attrs, idx)
+            return graph.split_edge(edge, attrs, idx)
     return None
 
 
-def get_closer_endpoint(proposal_graph, edge, xyz):
+def get_closer_endpoint(graph, edge, xyz):
     """
     Gets node from "edge" that is closer to "xyz".
 
     Parameters
     ----------
-    proposal_graph : FragmentsGraph
+    graph : FragmentsGraph
         Graph containing "edge".
     edge : tuple
         Edge to be checked.
@@ -265,66 +264,66 @@ def get_closer_endpoint(proposal_graph, edge, xyz):
         Node closer to "xyz".
     """
     i, j = tuple(edge)
-    d_i = geometry_util.dist(proposal_graph.node_xyz[i], xyz)
-    d_j = geometry_util.dist(proposal_graph.node_xyz[j], xyz)
+    d_i = geometry_util.dist(graph.node_xyz[i], xyz)
+    d_j = geometry_util.dist(graph.node_xyz[j], xyz)
     return i if d_i < d_j else j
 
 
 # --- Trim Endpoints ---
-def run_endpoint_trimming(proposal_graph, search_radius):
+def run_endpoint_trimming(graph, search_radius):
     # Initializations
     augmented_search_radius = search_radius * SEARCH_SCALING_FACTOR
     long_range, in_range = deque(), deque()
-    for p in proposal_graph.proposals:
-        if proposal_graph.proposal_length(p) < augmented_search_radius:
+    for p in graph.proposals:
+        if graph.proposal_length(p) < augmented_search_radius:
             in_range.append(p)
         else:
             long_range.append(p)
 
     # Trim endpoints by proposal type
-    trim_proposal_endpoints(proposal_graph, in_range, search_radius)
+    trim_proposal_endpoints(graph, in_range, search_radius)
     trim_proposal_endpoints(
-        proposal_graph, long_range, augmented_search_radius
+        graph, long_range, augmented_search_radius
     )
 
 
-def trim_proposal_endpoints(proposal_graph, proposals, max_length):
+def trim_proposal_endpoints(graph, proposals, max_length):
     while proposals:
         p = proposals.pop()
-        is_simple = proposal_graph.is_simple(p)
-        is_single = proposal_graph.is_single_proposal(p)
+        is_simple = graph.is_simple(p)
+        is_single = graph.is_single_proposal(p)
         if is_simple and is_single:
-            trim_endpoints_at_proposal(proposal_graph, p, max_length)
-        elif proposal_graph.proposal_length(p) > max_length:
-            proposal_graph.remove_proposal(p)
+            trim_endpoints_at_proposal(graph, p, max_length)
+        elif graph.proposal_length(p) > max_length:
+            graph.remove_proposal(p)
 
 
-def trim_endpoints_at_proposal(proposal_graph, proposal, max_length):
+def trim_endpoints_at_proposal(graph, proposal, max_length):
     # Find closest points between proposal branches
     i, j = tuple(proposal)
-    pts_i = proposal_graph.edge_attr(i, key="xyz", ignore=True)[0]
-    pts_j = proposal_graph.edge_attr(j, key="xyz", ignore=True)[0]
+    pts_i = graph.edge_attr(i, key="xyz", ignore=True)[0]
+    pts_j = graph.edge_attr(j, key="xyz", ignore=True)[0]
     dist_ij, (idx_i, idx_j) = find_closest_pair(pts_i, pts_j)
 
     # Update branches (if applicable)
     if dist_ij > max_length:
-        proposal_graph.remove_proposal(frozenset((i, j)))
+        graph.remove_proposal(frozenset((i, j)))
     elif dist_ij + 2 < geometry_util.dist(pts_i[0], pts_j[0]):
         if compute_dot(pts_i, pts_j, idx_i, idx_j) < DOT_THRESHOLD:
-            trim_to_idx(proposal_graph, i, idx_i)
-            trim_to_idx(proposal_graph, j, idx_j)
+            trim_to_idx(graph, i, idx_i)
+            trim_to_idx(graph, j, idx_j)
 
 
 def find_closest_pair(pts1, pts2):
     best_dist, best_idxs = np.inf, (0, 0)
     i, length1 = -1, 0
-    while length1 < TRIM_SEARCH_DIST and i < len(pts1) - 1:
+    while length1 < 20 and i < len(pts1) - 1:
         i += 1
         length1 += geometry_util.dist(pts1[i], pts1[i - 1]) if i > 0 else 0
 
         # Search other branch
         j, length2 = -1, 0
-        while length2 < TRIM_SEARCH_DIST and j < len(pts2) - 1:
+        while length2 < 20 and j < len(pts2) - 1:
             j += 1
             length2 += geometry_util.dist(pts2[j], pts2[j - 1]) if j > 0 else 0
 
@@ -336,13 +335,13 @@ def find_closest_pair(pts1, pts2):
     return best_dist, best_idxs
 
 
-def trim_to_idx(proposal_graph, i, idx):
+def trim_to_idx(graph, i, idx):
     """
     Trims the end of a branch specified by the leaf node "i".
 
     Parameters
     ----------
-    proposal_graph : FragmentsGraph
+    graph : FragmentsGraph
         Graph containing node "i"
     i : int
         Leaf node ID.
@@ -350,18 +349,18 @@ def trim_to_idx(proposal_graph, i, idx):
         Branch is trimmed to the index "idx".
     """
     # Update node
-    edge_xyz = proposal_graph.edge_attr(i, key="xyz", ignore=True)[0]
-    edge_radii = proposal_graph.edge_attr(i, key="radius", ignore=True)[0]
-    proposal_graph.node_xyz[i] = edge_xyz[idx]
-    proposal_graph.node_radius[i] = edge_radii[idx]
+    edge_xyz = graph.edge_attr(i, key="xyz", ignore=True)[0]
+    edge_radii = graph.edge_attr(i, key="radius", ignore=True)[0]
+    graph.node_xyz[i] = edge_xyz[idx]
+    graph.node_radius[i] = edge_radii[idx]
 
     # Update edge
-    nb = list(proposal_graph.neighbors(i))[0]
-    proposal_graph.edges[i, nb]["xyz"] = edge_xyz[idx:]
-    proposal_graph.edges[i, nb]["radius"] = edge_radii[idx:]
+    nb = list(graph.neighbors(i))[0]
+    graph.edges[i, nb]["xyz"] = edge_xyz[idx:]
+    graph.edges[i, nb]["radius"] = edge_radii[idx:]
     for k in range(idx):
         try:
-            del proposal_graph.xyz_to_edge[tuple(edge_xyz[k])]
+            del graph.xyz_to_edge[tuple(edge_xyz[k])]
         except KeyError:
             pass
 

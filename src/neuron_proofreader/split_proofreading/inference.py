@@ -72,7 +72,7 @@ class InferencePipeline:
         s3_dict=None,
     ):
         """
-        Initializes an object that executes the full GraphTrace inference
+        Initializes an object that executes the full split correction
         pipeline.
 
         Parameters
@@ -199,7 +199,7 @@ class InferencePipeline:
 
         # Filter fragments
         if self.graph_config.remove_doubles:
-            geometry_util.remove_doubles(self.graph, 200)
+            geometry_util.remove_doubles(self.graph, 160)
 
         # Report results
         path = f"{self.output_dir}/segment_ids.txt"
@@ -281,7 +281,6 @@ class InferencePipeline:
         # Initializations
         self.report("Step 3: Run Inference")
         proposals = self.graph.list_proposals()
-        n_proposals = max(len(proposals), 1)
 
         # Main
         t0 = time()
@@ -301,7 +300,7 @@ class InferencePipeline:
         t, unit = util.time_writer(time() - t0)
         self.report(f"# Merges Blocked: {self.graph.n_merges_blocked}")
         self.report(f"# Accepted: {format(len(accepts), ',')}")
-        self.report(f"% Accepted: {len(accepts) / n_proposals:.4f}")
+        self.report(f"% Accepted: {len(accepts) / len(proposals):.4f}")
         self.report(f"Module Runtime: {t:.4f} {unit}\n")
 
     def save_results(self):
@@ -565,7 +564,7 @@ class InferenceEngine:
             machine learning model.
         high_threshold : float, optional
             Threshold value for separating the best proposals from the rest.
-            The default is 0.9.
+            Default is 0.9.
 
         Returns
         -------
