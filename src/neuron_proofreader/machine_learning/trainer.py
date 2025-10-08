@@ -214,8 +214,8 @@ class Trainer:
 
         # Check for new best
         if stats["f1"] > self.best_f1:
-            self.save_model(epoch)
             self.best_f1 = stats["f1"]
+            self.save_model(epoch)
             return stats, True
         else:
             return stats, False
