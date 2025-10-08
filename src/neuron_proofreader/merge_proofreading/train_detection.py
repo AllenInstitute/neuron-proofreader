@@ -230,15 +230,7 @@ class MergeSiteDataset:
         voxel = img_util.to_voxels(xyz, self.anisotropy, self.multiscale)
 
         # Extract subgraph and image patches centered at site
-        try:
-            subgraph = graph.get_rooted_subgraph(node, self.context_radius)
-        except:
-            print("Brain ID:", brain_id)
-            print("Node:", node)
-            print("xyz:", xyz)
-            print("is_positive:", is_positive)
-            print("graph.number_of_nodes:", graph.number_of_nodes())
-
+        subgraph = graph.get_rooted_subgraph(node, self.context_radius)
         img_patch = self.get_img_patch(brain_id, voxel)
         label_patch = self.get_label_mask(subgraph)
 
