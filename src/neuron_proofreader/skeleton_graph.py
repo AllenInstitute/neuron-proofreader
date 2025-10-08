@@ -218,7 +218,7 @@ class SkeletonGraph(nx.Graph):
 
         Returns
         -------
-        List[int]
+        visited : List[int]
             Nodes connected to the given root.
         """
         queue = [root]
