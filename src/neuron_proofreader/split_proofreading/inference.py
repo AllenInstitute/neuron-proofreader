@@ -113,7 +113,7 @@ class InferencePipeline:
 
         # Set output directory
         self.output_dir = output_dir
-        util.mkdir(self.output_dir, delete=True)
+        util.mkdir(self.output_dir)
 
         # Initialize logger
         log_path = os.path.join(self.output_dir, "runtimes.txt")
