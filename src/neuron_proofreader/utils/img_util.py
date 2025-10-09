@@ -245,7 +245,7 @@ def init_reader(img_path):
     ImageReader
         Image reader.
     """
-    if util.is_s3_path("s3://"):
+    if util.is_s3_path(img_path):
         return ZarrReader(img_path)
     else:
         return TensorStoreReader(img_path)
@@ -303,7 +303,7 @@ def find_img_path(bucket_name, root_dir, dataset_name):
     raise f"Dataset not found in {bucket_name} - {root_dir}"
 
 
-def get_storage_driver(self, img_path):
+def get_storage_driver(img_path):
     """
     Gets the storage driver needed to read the image.
 
@@ -319,7 +319,7 @@ def get_storage_driver(self, img_path):
     """
     if util.is_s3_path(img_path):
         return "s3"
-    elif self.is_gcs_path(img_path):
+    elif util.is_gcs_path(img_path):
         return "gcs"
     else:
         raise ValueError(f"Unsupported path type: {img_path}")
