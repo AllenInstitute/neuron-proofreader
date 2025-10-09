@@ -18,7 +18,7 @@ import networkx as nx
 import numpy as np
 import torch
 
-from neuron_proofreader.utils import img_util, ml_util
+from neuron_proofreader.utils import img_util, ml_util, util
 
 
 class MergeDetector:
@@ -31,11 +31,12 @@ class MergeDetector:
         model_path,
         patch_shape,
         anisotropy=(1.0, 1.0, 1.0),
-        batch_size=16,
+        batch_size=32,
         device="cuda",
-        prefetch=64,
+        min_size=0,
+        prefetch=128,
         remove_detected_sites=False,
-        threshold=0.5,
+        threshold=0.4,
         step_size=10,
     ):
         # Instance attributes
@@ -58,15 +59,17 @@ class MergeDetector:
             patch_shape,
             anisotropy=anisotropy,
             batch_size=batch_size,
+            min_size=min_size,
             prefetch=prefetch,
             step_size=step_size,
         )
 
     # --- Core routines
     def search_graph(self):
-        approx_path_length = self.graph.number_of_edges() * self.graph.node_spacing
-        pbar = tqdm(total=int(approx_path_length / self.step_size))
-        self.graph.node_radius[:] = 1
+        # Find fragment IDs to search
+        approx_length = self.graph.number_of_edges() * self.graph.node_spacing
+        pbar = tqdm(total=int(approx_length / self.step_size))
+        self.graph.node_radius[:] = 1  # temp
 
         # Iterate over dataset
         merge_sites = list()
@@ -85,7 +88,7 @@ class MergeDetector:
         # Non-maximum suppression of detected sites
         merge_sites = self.filter_with_nms(merge_sites, confidences)
         print("# Detected Merge Sites:", len(merge_sites))
-        #print("Total Path Length Traversed:", gutil.path_length(self.graph))
+        print(f"Distance Traversed: {self.dataset.distance_traversed:.2f}μm")
 
         # Optionally, remove merge mistakes from graphs
         if self.remove_detected_sites:
@@ -151,18 +154,20 @@ class IterableGraphDataset(IterableDataset):
         patch_shape,
         anisotropy=(1.0, 1.0, 1.0),
         batch_size=16,
-        prefetch=64,
+        min_size=0,
+        prefetch=128,
         step_size=10,
     ):
         # Call parent class
         super().__init__()
 
         # Instance attributes
-        self.graph = graph
-        self.patch_shape = patch_shape
-
         self.anisotropy = anisotropy
         self.batch_size = batch_size
+        self.distance_traversed = 0
+        self.graph = graph
+        self.min_size = min_size
+        self.patch_shape = patch_shape
         self.prefetch = prefetch
         self.step_size = step_size
 
@@ -217,13 +222,16 @@ class IterableGraphDataset(IterableDataset):
             Generator that yields node IDs and patch centers used to generate
             batches across the whole graph.
         """
+        # Find fragment IDs to check
+        valid_ids = self.find_fragments_to_search()
+        print("# Fragments to Search:", len(valid_ids))
+
+        # Search graph
         visited_ids = set()
-        cnt = 0
         for i in self.graph.get_leafs():
             component_id = self.graph.node_component_id[i]
-            if component_id not in visited_ids:
+            if component_id not in visited_ids and component_id in valid_ids:
                 visited_ids.add(component_id)
-                cnt += 1
                 yield from self._generate_batch_metadata_for_component(i)
 
     def _generate_batch_metadata_for_component(self, root):
@@ -247,6 +255,7 @@ class IterableGraphDataset(IterableDataset):
         visited = set()
         for i, j in nx.dfs_edges(self.graph, source=root):
             # Check if starting new batch
+            self.distance_traversed += self.graph.dist(i, j)
             if len(patch_centers) == 0:
                 root = i
                 last_node = i
@@ -303,6 +312,20 @@ class IterableGraphDataset(IterableDataset):
         return nodes, torch.tensor(batch, dtype=torch.float)
 
     # --- Helpers ---
+    def find_fragments_to_search(self):
+        component_ids = set()
+        for nodes in nx.connected_components(self.graph):
+            # Compute path length
+            node = util.sample_once(list(nodes))
+            l = self.graph.path_length_of_component(
+                node, max_depth=self.min_size
+            )
+
+            # Check if path length satisfies threshold
+            if l > self.min_size:
+                component_ids.add(self.graph.node_component_id[node])
+        return component_ids
+
     def read_superchunk(self, patch_centers):
         # Compute bounding box
         buffer = np.array(self.patch_shape) / 2
