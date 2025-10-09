@@ -417,7 +417,7 @@ def is_contained(voxel, shape, buffer=0):
     voxel : Tuple[int]
         Voxel coordinates to be checked.
     shape : Tuple[int]
-        Shape of image volume.
+        Shape of image.
     buffer : int, optional
         Number of voxels to pad the bounds by when checking containment.
         Default 0.
