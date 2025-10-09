@@ -82,7 +82,7 @@ def list_paths(directory, extension=None):
 
     Returns
     -------
-    List[str]
+    paths : List[str]
         List of all paths within "directory".
     """
     paths = list()
@@ -134,13 +134,10 @@ def mkdir(path, delete=False):
     delete : bool, optional
         Indication of whether to delete directory at path if it already
         exists. Default is False.
-
-    Returns
-    -------
-    None
     """
     if delete:
         rmdir(path)
+
     if not os.path.exists(path):
         os.mkdir(path)
 
@@ -175,7 +172,7 @@ def set_path(dirname, filename, extension):
 
     Returns
     -------
-    str
+    path : str
         Path to file in "dirname" with the name "filename" and possibly some
         suffix.
     """
@@ -345,24 +342,26 @@ def write_txt(path, contents):
 
 
 # --- GCS utils ---
-def list_gcs_filenames(gcs_dict, extension):
+def list_gcs_filenames(bucket_name, prefix, extension):
     """
     Lists all files in a GCS bucket with the given extension.
 
     Parameters
     ----------
-    gcs_dict : dict
-        ...
+    bucket_name : str
+        Name of bucket to be searched.
+    prefix : str
+        Path to location within bucket to be searched.
     extension : str
         File extension of filenames to be listed.
 
     Returns
     -------
     List[str]
-        Filenames stored at "cloud" path with the given extension.
+        Filenames stored at the GCS path with the given extension.
     """
-    bucket = storage.Client().bucket(gcs_dict["bucket_name"])
-    blobs = bucket.list_blobs(prefix=gcs_dict["path"])
+    bucket = storage.Client().bucket(bucket_name)
+    blobs = bucket.list_blobs(prefix=prefix)
     return [blob.name for blob in blobs if extension in blob.name]
 
 
@@ -576,6 +575,37 @@ def numpy_to_hashable(arr):
     return [tuple(item) for item in arr.tolist()]
 
 
+def parse_cloud_path(path):
+    """
+    Parses a cloud storage path into its bucket name and key/prefix. Supports
+    paths of the form: "{scheme}://bucket_name/prefix" or without a scheme.
+
+    Parameters
+    ----------
+    path : str
+        Path to be parsed.
+
+    Returns
+    -------
+    bucket_name : str
+        Name of the bucket.
+    prefix : str
+        Cloud prefix.
+    """
+    # Remove s3:// if present
+    if path.startswith("s3://"):
+        path = path[len("s3://"):]
+
+    # Remove gs:// if present
+    if path.startswith("gs://"):
+        path = path[len("gs://"):]
+
+    parts = path.split("/", 1)
+    bucket_name = parts[0]
+    prefix = parts[1] if len(parts) > 1 else ""
+    return bucket_name, prefix
+
+
 def sample_once(my_container):
     """
     Samples a single element from "my_container".
@@ -587,7 +617,7 @@ def sample_once(my_container):
 
     Returns
     -------
-    object
+    hashable
     """
     return sample(my_container, 1)[0]
 
@@ -606,7 +636,7 @@ def spaced_idxs(arr_length, k):
 
     Returns:
     -------
-    numpy.ndarray
+    idxs : numpy.ndarray
         Array of indices starting from 0 up to (but not including) the length
         of "container" spaced by "k". The last index before the length of
         "container" is guaranteed to be included in the output.
