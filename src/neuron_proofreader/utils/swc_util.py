@@ -109,7 +109,7 @@ class Reader:
         # Path to...
         if isinstance(swc_pointer, str):
             # GCS object
-            if swc_pointer.startswith("gs://"):
+            if util.is_gcs_path(swc_pointer):
                 return self.read_from_gcs(swc_pointer)
 
             # ZIP archive with SWC files

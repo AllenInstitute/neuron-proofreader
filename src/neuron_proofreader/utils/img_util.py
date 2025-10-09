@@ -9,6 +9,7 @@ Helper routines for reading and processing images.
 """
 
 from abc import ABC, abstractmethod
+from cloudvolume import CloudVolume
 from scipy.ndimage import zoom
 
 import numpy as np
@@ -127,21 +128,27 @@ class TensorStoreReader(ImageReader):
             return "zarr"
         elif ".n5" in img_path:
             return "n5"
-        else:
+        elif is_neuroglancer_precomputed(img_path):
             return "neuroglancer_precomputed"
+        else:
+            raise ValueError(f"Unsupported image format: {img_path}")
 
     def _load_image(self):
         """
         Loads image using the TensorStore library.
         """
+        # Extract metadata
+        bucket_name, path = util.parse_cloud_path(self.img_path)
+        storage_driver = get_storage_driver(self.img_path)
+
         # Load image
         self.img = ts.open(
             {
                 "driver": self.driver,
                 "kvstore": {
-                    "driver": "gcs",
-                    "bucket": "allen-nd-goog",
-                    "path": self.img_path,
+                    "driver": storage_driver,
+                    "bucket": bucket_name,
+                    "path": path,
                 },
                 "context": {
                     "cache_pool": {"total_bytes_limit": 1000000000},
@@ -153,11 +160,8 @@ class TensorStoreReader(ImageReader):
         ).result()
 
         # Check whether to permute axes
-        if self.driver == "neuroglancer_precomputed":
+        if bucket_name == "allen-nd-goog":
             self.img = self.img[ts.d["channel"][0]]
-            self.img = self.img[ts.d[0].transpose[2]]
-            self.img = self.img[ts.d[0].transpose[1]]
-        elif self.driver == "n5":
             self.img = self.img[ts.d[0].transpose[2]]
             self.img = self.img[ts.d[0].transpose[1]]
 
@@ -241,7 +245,7 @@ def init_reader(img_path):
     ImageReader
         Image reader.
     """
-    if img_path.startswith("s3://"):
+    if util.is_s3_path("s3://"):
         return ZarrReader(img_path)
     else:
         return TensorStoreReader(img_path)
@@ -297,6 +301,28 @@ def find_img_path(bucket_name, root_dir, dataset_name):
         if dataset_name in subdir:
             return subdir + "whole-brain/fused.zarr/"
     raise f"Dataset not found in {bucket_name} - {root_dir}"
+
+
+def get_storage_driver(self, img_path):
+    """
+    Gets the storage driver needed to read the image.
+
+    Parameters
+    ----------
+    img_path : str
+        Image path to be checked.
+
+    Returns
+    -------
+    str
+        Storage driver needed to read the image.
+    """
+    if util.is_s3_path(img_path):
+        return "s3"
+    elif self.is_gcs_path(img_path):
+        return "gcs"
+    else:
+        raise ValueError(f"Unsupported path type: {img_path}")
 
 
 def get_minimal_bbox(voxels, buffer=0):
@@ -405,6 +431,28 @@ def is_contained(voxel, shape, buffer=0):
     contained_above = all(0 <= v + buffer < s for v, s in zip(voxel, shape))
     contained_below = all(0 <= v - buffer < s for v, s in zip(voxel, shape))
     return contained_above and contained_below
+
+
+def is_neuroglancer_precomputed(path):
+    """
+    Checks if the path points to a neuroglancer precomputed dataset.
+
+    Parameters
+    ----------
+    path : str
+        Path to be checked.
+
+    Returns
+    -------
+    bool
+        Indication of whether the path points to a neuroglancer precomputed
+        dataset.
+    """
+    try:
+        vol = CloudVolume(path)
+        return all(k in vol.info for k in ["data_type", "scales", "type"])
+    except Exception:
+        return False
 
 
 def iou_3d(center1, center2, shape):

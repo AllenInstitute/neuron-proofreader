@@ -342,6 +342,23 @@ def write_txt(path, contents):
 
 
 # --- GCS utils ---
+def is_gcs_path(path):
+    """
+    Checks if the path is a GCS path.
+
+    Parameters
+    ----------
+    path : str
+        Path to be checked.
+
+    Returns
+    -------
+    bool
+        Indication of whether the path is a GCS path.
+    """
+    return path.startswith("gs://")
+
+
 def list_gcs_filenames(bucket_name, prefix, extension):
     """
     Lists all files in a GCS bucket with the given extension.
@@ -400,6 +417,23 @@ def list_gcs_subdirectories(bucket_name, prefix):
 
 
 # --- S3 utils ---
+def is_s3_path(path):
+    """
+    Checks if the path is an S3 path.
+
+    Parameters
+    ----------
+    path : str
+        Path to be checked.
+
+    Returns
+    -------
+    bool
+        Indication of whether the path is an S3 path.
+    """
+    return path.startswith("s3://")
+
+
 def list_s3_prefixes(bucket_name, prefix):
     """
     Lists all immediate subdirectories of a given S3 path (prefix).
