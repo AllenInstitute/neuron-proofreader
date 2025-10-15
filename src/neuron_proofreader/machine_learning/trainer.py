@@ -259,7 +259,7 @@ class Trainer:
 
         Returns
         -------
-        stats : Dict
+        stats : Dict[str, float]
             Dictionary of metric names to values.
         """
         # Reformat predictions
