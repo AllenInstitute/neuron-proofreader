@@ -53,19 +53,12 @@ class CNN3D(nn.Module):
 
         # Class attributes
         self.dropout = dropout
-        self.pool = nn.MaxPool3d(kernel_size=2, stride=2)
-        self.use_double_conv = use_double_conv
+        self.patch_shape = patch_shape
 
-        # Dynamically build convolutional layers
-        layers = list()
-        in_channels = 2
-        out_channels = n_feat_channels
-        for i in range(n_conv_layers):
-            k = 5 if i < 3 else 3
-            layers.append(self._init_conv_layer(in_channels, out_channels, k))
-            in_channels = out_channels
-            out_channels *= 2
-        self.conv_layers = nn.ModuleList(layers)
+        # Convolutional layers
+        self.conv_layers = init_cnn3d(
+            2, n_feat_channels, n_conv_layers, use_double_conv=use_double_conv
+        )
 
         # Output layer
         flat_size = self._get_flattened_size(patch_shape)
@@ -74,57 +67,11 @@ class CNN3D(nn.Module):
         # Initialize weights
         self.apply(self.init_weights)
 
-    def _init_conv_layer(
-        self, in_channels, out_channels, kernel_size
-    ):
-        """
-        Initializes a convolutional layer.
-
-        Parameters
-        ----------
-        in_channels : int
-            Number of channels that are input to this convolutional layer.
-        out_channels : int
-            Number of channels that are output from this convolutional layer.
-        kernel_size : int
-            Size of kernel used on convolutional layers.
-
-        Returns
-        -------
-        torch.nn.Sequential
-            Sequence of operations that define this layer.
-        """
-
-        def conv_block(in_channels, out_channels):
-            return nn.Sequential(
-                nn.Conv3d(
-                    in_channels,
-                    out_channels,
-                    kernel_size=kernel_size,
-                    padding="same"
-                ),
-                nn.BatchNorm3d(out_channels),
-                nn.LeakyReLU(inplace=True),
-            )
-
-        if self.use_double_conv:
-            return nn.Sequential(
-                conv_block(in_channels, out_channels),
-                conv_block(out_channels, out_channels),
-            )
-        else:
-            return conv_block(in_channels, out_channels)
-
-    def _get_flattened_size(self, token_shape):
+    def _get_flattened_size(self):
         """
         Compute the flattened feature vector size after applying a sequence
         of convolutional and pooling layers on an input tensor with the given
         shape.
-
-        Parameters
-        ----------
-        token_shape : Tuple[int]
-            Shape of input image patch.
 
         Returns
         -------
@@ -133,10 +80,8 @@ class CNN3D(nn.Module):
             pooling.
         """
         with torch.no_grad():
-            x = torch.zeros(1, 2, *token_shape)
-            for conv in self.conv_layers:
-                x = conv(x)
-                x = self.pool(x)
+            x = torch.zeros(1, 2, *self.patch_shape)
+            x = self.conv_layers(x)
             return x.view(1, -1).size(1)
 
     @staticmethod
@@ -177,12 +122,7 @@ class CNN3D(nn.Module):
         x : torch.Tensor
             Output of the neural network.
         """
-        # Convolutional layers
-        for conv in self.conv_layers:
-            x = conv(x)
-            x = self.pool(x)
-
-        # Output layer
+        x = self.conv_layers(x)
         x = x.view(x.size(0), -1)
         x = self.output(x)
         return x
@@ -214,17 +154,19 @@ class ViT3D(nn.Module):
         # Class attributes
         self.grid_size = [img_shape[i] // token_shape[i] for i in range(3)]
         self.in_channels = in_channels
-        self.n_tokens = np.prod(self.grid_size) + 1
         self.token_shape = token_shape
 
-        # Transformer architecture
+        # Token embedding
         self.cls_token = nn.Parameter(torch.empty(1, 1, emb_dim))
-        self.img_token_embed = ImageTokenEmbedding3D(
+        self.img_tokenizer = ImageTokenizer3D(
             in_channels, token_shape, emb_dim, img_shape
         )
-        self.pos_embedding = nn.Parameter(
-            torch.empty(1, self.n_tokens, emb_dim)
-        )
+
+        # Position embedding
+        n_tokens = self.img_tokenizer.count_tokens() + 1
+        self.pos_embedding = nn.Parameter(torch.empty(1, n_tokens, emb_dim))
+
+        # Transformer Blocks
         self.transformer = nn.Sequential(
             *[TransformerEncoderBlock(emb_dim, heads, mlp_dim) for _ in range(depth)]
         )
@@ -241,10 +183,8 @@ class ViT3D(nn.Module):
         nn.init.trunc_normal_(self.pos_embedding, std=0.02)
 
     def forward(self, x):
-        # Patchify input -> (b, n_tokens, emb_dim)
-        x = self.img_token_embed(x)
-
-        # Add cls token
+        # Tokenize input -> (b, n_tokens, emb_dim)
+        x = self.img_tokenizer(x)
         cls_tokens = self.cls_token.expand(x.size(0), -1, -1)
         x = torch.cat((cls_tokens, x), dim=1)
 
@@ -258,7 +198,7 @@ class ViT3D(nn.Module):
         return x
 
 
-class ImageTokenEmbedding3D(nn.Module):
+class ImageTokenizer3D(nn.Module):
     """
     A class for learning image token embeddings for transformer-based
     architectures.
@@ -269,6 +209,8 @@ class ImageTokenEmbedding3D(nn.Module):
         Dropout layer.
     emb_dim : int
         Dimension of the embedding space.
+    img_shape : Tuple[int]
+        Shape of the input image (D, H, W).
     pos_embedding : nn.Parameter
         Learnable position encoding.
     proj : nn.Conv3d
@@ -279,10 +221,10 @@ class ImageTokenEmbedding3D(nn.Module):
     """
 
     def __init__(
-        self, in_channels, token_shape, emb_dim, img_shape, dropout=0
+        self, in_channels, token_shape, emb_dim, img_shape, dropout=0.05
     ):
         """
-        Instantiates a ImageTokenEmbedding3D object.
+        Instantiates a ImageTokenizer3D object.
 
         Parameters
         ----------
@@ -296,22 +238,41 @@ class ImageTokenEmbedding3D(nn.Module):
             Shape of the input image (D, H, W).
         dropout : float, optional
             Dropout probability applied after adding positional embeddings.
-            Default is 0.
+            Default is 0.05.
         """
         # Call parent class
         super().__init__()
 
         # Class attributes
         self.emb_dim = emb_dim
+        self.img_shape = img_shape
         self.token_shape = token_shape
 
-        # Embedding
-        n_tokens = np.prod([s // ts for s, ts in zip(img_shape, token_shape)])
+        # Image embedding
+        cnn_out_channels = 16 * (2 ** (3 - 1))
+        self.tokenizer = init_cnn3d(in_channels, 16, 3)
+        self.proj = nn.Conv3d(cnn_out_channels, emb_dim, kernel_size=1)
+
+        # Positional embedding
+        n_tokens = self.count_tokens()
         self.pos_embedding = nn.Parameter(torch.randn(1, n_tokens, emb_dim))
-        self.proj = nn.Conv3d(
-            in_channels, emb_dim, kernel_size=token_shape, stride=token_shape
-        )
         self.dropout = nn.Dropout(p=dropout)
+
+    def count_tokens(self):
+        """
+        Counts the number of tokens that are generated given the patch shape,
+        CCN3D architecture, and embedding dimension.
+
+        Returns
+        -------
+        int
+            Number of tokens generated by tokenizer.
+        """
+        with torch.no_grad():
+            dummy = torch.zeros(1, 2, *self.img_shape)
+            feats = self.tokenizer(dummy)
+            feats = self.proj(feats)
+            return feats.flatten(2).shape[-1]
 
     def forward(self, x):
         """
@@ -328,7 +289,11 @@ class ImageTokenEmbedding3D(nn.Module):
         torch.Tensor
             Token embeddings of shape (B, N, E).
         """
+        # Embed image
+        x = self.tokenizer(x)
         x = self.proj(x)
+
+        # Tokenize
         x = rearrange(x, "b c d h w -> b (d h w) c")
         x = x + self.pos_embedding
         return self.dropout(x)
@@ -401,7 +366,61 @@ class TransformerEncoderBlock(nn.Module):
         return x
 
 
-# --- Helpers ---
+# --- Build Simple Neural Networks ---
+def init_cnn3d(in_channels, n_feat_channels, n_layers, use_double_conv=True):
+    layers = list()
+    in_channels = in_channels
+    out_channels = n_feat_channels
+    for i in range(n_layers):
+        # Build layer
+        k = 5 if i < 3 else 3
+        layers.append(
+            init_conv_layer(in_channels, out_channels, k, use_double_conv)
+        )
+
+        # Update channel sizes
+        in_channels = out_channels
+        out_channels *= 2
+    return nn.Sequential(*layers)
+
+
+def init_conv_layer(in_channels, out_channels, kernel_size, use_double_conv):
+    """
+    Initializes a convolutional layer.
+
+    Parameters
+    ----------
+    in_channels : int
+        Number of channels that are input to this convolutional layer.
+    out_channels : int
+        Number of channels that are output from this convolutional layer.
+    kernel_size : int
+        Size of kernel used on convolutional layers.
+    use_double_conv : bool
+        Indication of whether to use double convolution.
+
+    Returns
+    -------
+    layers : torch.nn.Sequential
+        Sequence of operations that define this convolutional layer.
+    """
+    # Convolution
+    layers = [
+        nn.Conv3d(in_channels, out_channels, kernel_size, padding=kernel_size//2),
+        nn.BatchNorm3d(out_channels),
+        nn.GELU(),
+    ]
+    if use_double_conv:
+        layers += [
+            nn.Conv3d(out_channels, out_channels, kernel_size, padding=kernel_size//2),
+            nn.BatchNorm3d(out_channels),
+            nn.GELU(),
+        ]
+    # Pooling
+    layers.append(nn.MaxPool3d(kernel_size=2))
+    return nn.Sequential(*layers)
+
+
 def init_feedforward(input_dim, output_dim, n_layers):
     layers = list()
     input_dim_i = input_dim
