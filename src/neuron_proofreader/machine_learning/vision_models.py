@@ -61,7 +61,8 @@ class CNN3D(nn.Module):
         in_channels = 2
         out_channels = n_feat_channels
         for i in range(n_conv_layers):
-            layers.append(self._init_conv_layer(in_channels, out_channels, 3))
+            k = 5 if i < 3 else 3
+            layers.append(self._init_conv_layer(in_channels, out_channels, k))
             in_channels = out_channels
             out_channels *= 2
         self.conv_layers = nn.ModuleList(layers)
