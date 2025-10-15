@@ -108,21 +108,26 @@ class Reader:
 
         # Path to...
         if isinstance(swc_pointer, str):
-            # GCS object
+            # Single SWC file in GCS
+            if util.is_gcs_path(swc_pointer) and swc_pointer.endswith(".swc"):
+                bucket_name, path = util.parse_cloud_path(swc_pointer)
+                return [self.read_from_gcs_swc(bucket_name, path)]
+
+            # GCS directory
             if util.is_gcs_path(swc_pointer):
                 return self.read_from_gcs(swc_pointer)
 
             # ZIP archive with SWC files
-            if ".zip" in swc_pointer:
+            if swc_pointer.endswith(".zip"):
                 return self.read_from_zip(swc_pointer)
 
-            # Path to single SWC file
-            if ".swc" in swc_pointer:
+            # Single SWC file
+            if swc_pointer.endswith(".swc"):
                 return self.read_from_path(swc_pointer)
 
-            raise Exception(f"Path is invalid - {swc_pointer}")
+            raise Exception(f"Path is invalid {swc_pointer}")
 
-        raise Exception(f"SWC Pointer is invalid - {swc_pointer}")
+        raise Exception(f"SWC Pointer is invalid {swc_pointer}")
 
     # --- Read subroutines ---
     def read_from_paths(self, swc_paths):
@@ -291,7 +296,7 @@ class Reader:
             return self.read_from_gcs_zips(bucket_name, zip_paths)
 
         # Error
-        raise Exception(f"GCS Pointer is invalid -{gcs_path}-")
+        raise Exception(f"GCS Pointer is invalid {gcs_path}")
 
     def read_from_gcs_swcs(self, bucket_name, swc_paths):
         """
@@ -526,7 +531,7 @@ class Reader:
 
 
 # --- Write ---
-def write_points(zip_path, points, color=None, prefix="", radius=10):
+def write_points(zip_path, points, color=None, prefix="", radius=10, write_mode="w"):
     """
     Writes a list of 3D points to individual SWC files in the specified
     directory.
@@ -546,7 +551,7 @@ def write_points(zip_path, points, color=None, prefix="", radius=10):
     radius : float, optional
         Radius to be used in SWC file. Default is 10.
     """
-    zip_writer = ZipFile(zip_path, "w")
+    zip_writer = ZipFile(zip_path, write_mode)
     for i, xyz in enumerate(points):
         filename = prefix + str(i + 1) + ".swc"
         to_zipped_point(zip_writer, filename, xyz, color=color, radius=radius)

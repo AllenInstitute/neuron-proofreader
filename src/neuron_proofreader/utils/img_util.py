@@ -162,8 +162,8 @@ class TensorStoreReader(ImageReader):
         # Check whether to permute axes
         if bucket_name == "allen-nd-goog":
             self.img = self.img[ts.d["channel"][0]]
-            self.img = self.img[ts.d[0].transpose[2]]
-            self.img = self.img[ts.d[0].transpose[1]]
+            #self.img = self.img[ts.d[0].transpose[2]]
+            #self.img = self.img[ts.d[0].transpose[1]]
 
     def read(self, center, shape):
         """
@@ -417,7 +417,7 @@ def is_contained(voxel, shape, buffer=0):
     voxel : Tuple[int]
         Voxel coordinates to be checked.
     shape : Tuple[int]
-        Shape of image volume.
+        Shape of image.
     buffer : int, optional
         Number of voxels to pad the bounds by when checking containment.
         Default 0.
@@ -455,7 +455,7 @@ def is_neuroglancer_precomputed(path):
         return False
 
 
-def iou_3d(center1, center2, shape):
+def iou_3d(center1, center2, shape1):
     """
     Compute IoU between two 3D axis-aligned boxes of the same shape.
 
@@ -465,8 +465,8 @@ def iou_3d(center1, center2, shape):
         3D center coordinate of box 1.
     center2 : Tuple[int]
         3D center coordinate of box 2.
-    shape : Tuple[int]
-        Shape of boxes.
+    shape1 : Tuple[int]
+        Shape of box for center 1.
 
     Returns
     -------
@@ -475,10 +475,10 @@ def iou_3d(center1, center2, shape):
     """
     c1 = np.array(center1, dtype=float)
     c2 = np.array(center2, dtype=float)
-    s = np.array(shape, dtype=float) / 2.0
+    s1 = np.array(shape1, dtype=float) / 2.0
 
-    min1, max1 = c1 - s, c1 + s
-    min2, max2 = c2 - s, c2 + s
+    min1, max1 = c1 - s1, c1 + s1
+    min2, max2 = c2 - s1, c2 + s1
 
     # Intersection box dimensions
     inter_min = np.maximum(min1, min2)
@@ -486,8 +486,23 @@ def iou_3d(center1, center2, shape):
     inter_dims = np.maximum(inter_max - inter_min, 0.0)
     inter_vol = np.prod(inter_dims)
 
-    vol = np.prod(2 * s)
+    vol = np.prod(2 * s1)
     return inter_vol / (2 * vol - inter_vol) if vol > 0 else 0.0
+
+
+def compute_iou3d(c1, c2, s1, s2):
+    c1, s1, c2, s2 = map(np.asarray, (c1, s1, c2, s2))
+    min1, max1 = c1 - s1 / 2, c1 + s1 / 2
+    min2, max2 = c2 - s2 / 2, c2 + s2 / 2
+
+    overlap_min = np.maximum(min1, min2)
+    overlap_max = np.minimum(max1, max2)
+    overlap = np.maximum(overlap_max - overlap_min, 0)
+    inter = np.prod(overlap)
+    vol1 = np.prod(s1)
+    vol2 = np.prod(s2)
+    union = vol1 + vol2 - inter
+    return inter / union if union > 0 else 0
 
 
 def normalize(img):

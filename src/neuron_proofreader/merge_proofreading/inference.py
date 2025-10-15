@@ -12,6 +12,7 @@ image segmentation.
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from torch.nn.functional import sigmoid
 from torch.utils.data import IterableDataset
+from time import time
 from tqdm import tqdm
 
 import networkx as nx
@@ -72,6 +73,7 @@ class MergeDetector:
         self.graph.node_radius[:] = 1  # temp
 
         # Iterate over dataset
+        t0 = time()
         merge_sites = list()
         confidences = list()
         for nodes, x_nodes in self.dataset:
@@ -87,8 +89,10 @@ class MergeDetector:
 
         # Non-maximum suppression of detected sites
         merge_sites = self.filter_with_nms(merge_sites, confidences)
-        print("# Detected Merge Sites:", len(merge_sites))
+        rate = self.dataset.distance_traversed / (time() - t0)
+        print("\n# Detected Merge Sites:", len(merge_sites))
         print(f"Distance Traversed: {self.dataset.distance_traversed:.2f}μm")
+        print(f"Merge Proofreading Rate: {rate:.2f}μm/s")
 
         # Optionally, remove merge mistakes from graphs
         if self.remove_detected_sites:
@@ -224,7 +228,6 @@ class IterableGraphDataset(IterableDataset):
         """
         # Find fragment IDs to check
         valid_ids = self.find_fragments_to_search()
-        print("# Fragments to Search:", len(valid_ids))
 
         # Search graph
         visited_ids = set()
@@ -238,10 +241,6 @@ class IterableGraphDataset(IterableDataset):
         """
         Generates metadata (nodes, patch_centers) used to generate batches
         for the connected component containing the given root node.
-
-        Parameters
-        ----------
-        None
 
         Returns
         -------
@@ -317,9 +316,7 @@ class IterableGraphDataset(IterableDataset):
         for nodes in nx.connected_components(self.graph):
             # Compute path length
             node = util.sample_once(list(nodes))
-            l = self.graph.path_length_of_component(
-                node, max_depth=self.min_size
-            )
+            l = self.graph.path_length(root=node, max_depth=self.min_size)
 
             # Check if path length satisfies threshold
             if l > self.min_size:
