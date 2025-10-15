@@ -455,9 +455,9 @@ def is_neuroglancer_precomputed(path):
         return False
 
 
-def iou_3d(center1, center2, shape1):
+def compute_iou3d(c1, c2, s1, s2):
     """
-    Compute IoU between two 3D axis-aligned boxes of the same shape.
+    Computes IoU between two 3D axis-aligned boxes.
 
     Parameters
     ----------
@@ -467,30 +467,14 @@ def iou_3d(center1, center2, shape1):
         3D center coordinate of box 2.
     shape1 : Tuple[int]
         Shape of box for center 1.
+    shape2 : Tuple[int]
+        Shape of box for center 2.
 
     Returns
     -------
     float
         IoU between the boxes
     """
-    c1 = np.array(center1, dtype=float)
-    c2 = np.array(center2, dtype=float)
-    s1 = np.array(shape1, dtype=float) / 2.0
-
-    min1, max1 = c1 - s1, c1 + s1
-    min2, max2 = c2 - s1, c2 + s1
-
-    # Intersection box dimensions
-    inter_min = np.maximum(min1, min2)
-    inter_max = np.minimum(max1, max2)
-    inter_dims = np.maximum(inter_max - inter_min, 0.0)
-    inter_vol = np.prod(inter_dims)
-
-    vol = np.prod(2 * s1)
-    return inter_vol / (2 * vol - inter_vol) if vol > 0 else 0.0
-
-
-def compute_iou3d(c1, c2, s1, s2):
     c1, s1, c2, s2 = map(np.asarray, (c1, s1, c2, s2))
     min1, max1 = c1 - s1 / 2, c1 + s1 / 2
     min2, max2 = c2 - s2 / 2, c2 + s2 / 2
