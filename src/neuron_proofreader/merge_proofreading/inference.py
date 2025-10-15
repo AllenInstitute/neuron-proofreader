@@ -132,7 +132,7 @@ class MergeDetector:
                 if i in merge_sites_set:
                     xyz_i = self.graph.node_xyz[i]
                     iou = img_util.iou_3d(xyz_i, xyz_root, self.patch_shape)
-                    if iou > 0.35:
+                    if iou > 0.3:
                         merge_sites_set.remove(i)
                         self.graph.node_radius[i] = 1
 
