@@ -132,7 +132,7 @@ class MergeDetector:
                 if i in merge_sites_set:
                     xyz_i = self.graph.node_xyz[i]
                     iou = img_util.iou_3d(xyz_i, xyz_root, self.patch_shape)
-                    if iou > 0.3:
+                    if iou > 0.35:
                         merge_sites_set.remove(i)
                         self.graph.node_radius[i] = 1
 
@@ -316,9 +316,7 @@ class IterableGraphDataset(IterableDataset):
         for nodes in nx.connected_components(self.graph):
             # Compute path length
             node = util.sample_once(list(nodes))
-            l = self.graph.path_length_of_component(
-                node, max_depth=self.min_size
-            )
+            l = self.graph.path_length(root=node, max_depth=self.min_size)
 
             # Check if path length satisfies threshold
             if l > self.min_size:

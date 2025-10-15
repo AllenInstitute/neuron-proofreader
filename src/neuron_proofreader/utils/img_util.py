@@ -477,8 +477,8 @@ def iou_3d(center1, center2, shape1):
     c2 = np.array(center2, dtype=float)
     s1 = np.array(shape1, dtype=float) / 2.0
 
-    min1, max1 = c1 - s1 / 2, c1 + s1 / 2
-    min2, max2 = c2 - s1 / 2, c2 + s1 / 2
+    min1, max1 = c1 - s1, c1 + s1
+    min2, max2 = c2 - s1, c2 + s1
 
     # Intersection box dimensions
     inter_min = np.maximum(min1, min2)
