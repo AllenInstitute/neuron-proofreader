@@ -125,9 +125,9 @@ class Reader:
             if swc_pointer.endswith(".swc"):
                 return self.read_from_path(swc_pointer)
 
-            raise Exception(f"Path is invalid - {swc_pointer}")
+            raise Exception(f"Path is invalid {swc_pointer}")
 
-        raise Exception(f"SWC Pointer is invalid - {swc_pointer}")
+        raise Exception(f"SWC Pointer is invalid {swc_pointer}")
 
     # --- Read subroutines ---
     def read_from_paths(self, swc_paths):
@@ -296,7 +296,7 @@ class Reader:
             return self.read_from_gcs_zips(bucket_name, zip_paths)
 
         # Error
-        raise Exception(f"GCS Pointer is invalid -{gcs_path}-")
+        raise Exception(f"GCS Pointer is invalid {gcs_path}")
 
     def read_from_gcs_swcs(self, bucket_name, swc_paths):
         """

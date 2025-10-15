@@ -354,7 +354,7 @@ class SkeletonGraph(nx.Graph):
             zip_writer.writestr(filename, text_buffer.getvalue())
 
     # --- Helpers ---
-    def path_length_of_component(self, root, max_depth=np.inf):
+    def path_length(self, max_depth=np.inf, root=None):
         """
         Computes the path length of the connected component that contains the
         given root node.
