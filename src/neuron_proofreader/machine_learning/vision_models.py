@@ -53,12 +53,18 @@ class CNN3D(nn.Module):
 
         # Class attributes
         self.dropout = dropout
-        self.patch_shape = patch_shape
+        self.pool = nn.MaxPool3d(kernel_size=2, stride=2)
+        self.use_double_conv = use_double_conv
 
-        # Convolutional layers
-        self.conv_layers = init_cnn3d(
-            2, n_feat_channels, n_conv_layers, use_double_conv=use_double_conv
-        )
+        # Dynamically build convolutional layers
+        layers = list()
+        in_channels = 2
+        out_channels = n_feat_channels
+        for i in range(n_conv_layers):
+            layers.append(self._init_conv_layer(in_channels, out_channels, 3))
+            in_channels = out_channels
+            out_channels *= 2
+        self.conv_layers = nn.ModuleList(layers)
 
         # Output layer
         flat_size = self._get_flattened_size(patch_shape)
