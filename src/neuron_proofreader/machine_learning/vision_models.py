@@ -373,7 +373,6 @@ def init_cnn3d(in_channels, n_feat_channels, n_layers, use_double_conv=True):
     out_channels = n_feat_channels
     for i in range(n_layers):
         # Build layer
-        #k = 5 if i < 3 else 3
         layers.append(
             init_conv_layer(in_channels, out_channels, 3, use_double_conv)
         )
