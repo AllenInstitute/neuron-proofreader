@@ -165,6 +165,7 @@ class ViT3D(nn.Module):
         # Position embedding
         n_tokens = self.img_tokenizer.count_tokens() + 1
         self.pos_embedding = nn.Parameter(torch.empty(1, n_tokens, emb_dim))
+        print("# Tokens:", n_tokens)
 
         # Transformer Blocks
         self.transformer = nn.Sequential(
@@ -221,7 +222,13 @@ class ImageTokenizer3D(nn.Module):
     """
 
     def __init__(
-        self, in_channels, token_shape, emb_dim, img_shape, dropout=0.05
+        self, in_channels,
+        token_shape,
+        emb_dim,
+        img_shape,
+        dropout=0.05,
+        n_cnn_layers=4,
+        n_cnn_channels=32
     ):
         """
         Instantiates a ImageTokenizer3D object.
@@ -239,6 +246,9 @@ class ImageTokenizer3D(nn.Module):
         dropout : float, optional
             Dropout probability applied after adding positional embeddings.
             Default is 0.05.
+        n_cnn_layers : int, optional
+            Number of layers in the CNN that generates the initial token
+            embedding.
         """
         # Call parent class
         super().__init__()
@@ -249,8 +259,8 @@ class ImageTokenizer3D(nn.Module):
         self.token_shape = token_shape
 
         # Image embedding
-        cnn_out_channels = 16 * (2 ** (3 - 1))
-        self.tokenizer = init_cnn3d(in_channels, 16, 3)
+        cnn_out_channels = n_cnn_channels * (2 ** (n_cnn_layers - 1))
+        self.tokenizer = init_cnn3d(in_channels, n_cnn_channels, n_cnn_layers)
         self.proj = nn.Conv3d(cnn_out_channels, emb_dim, kernel_size=1)
 
         # Positional embedding
