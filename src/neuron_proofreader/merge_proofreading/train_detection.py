@@ -11,6 +11,7 @@ model to detect merge errors.
 
 from concurrent.futures import as_completed, ThreadPoolExecutor
 from scipy.spatial import KDTree
+from torch.utils.data import Dataset, DataLoader
 
 import networkx as nx
 import numpy as np
@@ -21,7 +22,7 @@ from neuron_proofreader.skeleton_graph import SkeletonGraph
 from neuron_proofreader.utils import img_util, ml_util, swc_util, util
 
 
-class MergeSiteDataset:
+class MergeSiteDataset(Dataset):
     """
     Dataset class for loading and processing merge site data. The core data
     structure is the attribute "merge_sites_df" which contains metadata about
@@ -388,7 +389,7 @@ class MergeSiteDataset:
         return swc_id in self.merge_graphs[brain_id].get_swc_ids()
 
 
-class MergeSiteDataloader:
+class MergeSiteDataLoader(DataLoader):
     """
     DataLoader that uses multithreading to read image patches from the cloud
     to form batches.
@@ -414,6 +415,7 @@ class MergeSiteDataloader:
         dataset,
         idxs,
         batch_size=32,
+        sampler=None,
         use_random_sites=False,
         use_transform=False
     ):
@@ -436,9 +438,10 @@ class MergeSiteDataloader:
             Indication of whether to use data augmentation during training.
             Default is False.
         """
+        # Call parent class
+        super().__init__(dataset, batch_size=batch_size, sampler=sampler)
+
         # Instance attributes
-        self.batch_size = batch_size
-        self.dataset = dataset
         self.idxs = self._load_idxs(idxs)
         self.use_random_sites = use_random_sites
         self.use_transform = use_transform
