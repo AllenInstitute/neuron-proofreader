@@ -349,6 +349,17 @@ class MergeSiteDataset(Dataset):
 
     # --- Helpers ---
     def clip_fragments_to_groundtruth(self, brain_id, graph):
+        """
+        Removes any node from the given fragment that is more than 100μm from
+        the ground truth graph.
+
+        Parameters
+        ----------
+        brain_id : str
+            Unique identifier of whole-brain dataset.
+        graph : SkeletonGraph
+            Fragment to be clipped.
+        """
         assert brain_id in self.gt_graphs, "Must load GT before fragments!"
         kdtree = KDTree(self.gt_graphs[brain_id].node_xyz)
         for i, xyz in enumerate(graph.node_xyz):
