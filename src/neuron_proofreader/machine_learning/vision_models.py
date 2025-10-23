@@ -59,7 +59,7 @@ class CNN3D(nn.Module):
         )
 
         # Output layer
-        flat_size = self._get_flattened_size(patch_shape)
+        flat_size = self._get_flattened_size()
         self.output = init_feedforward(flat_size, output_dim, 3)
 
         # Initialize weights
