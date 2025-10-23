@@ -10,6 +10,7 @@ fragments). It then stores the relevant information into the graph structure.
 
 """
 
+from collections import defaultdict
 from io import StringIO
 from scipy.spatial import KDTree
 
@@ -330,23 +331,20 @@ class SkeletonGraph(nx.Graph):
             x, y, z = tuple(self.node_xyz[node])
             r = self.node_radius[node] if preserve_radius else 2
             node_id = len(node_to_idx) + 1
+            parent_id = node_to_idx[parent]
             node_to_idx[node] = node_id
-            text_buffer.write("\n" + f"{node_id} 2 {x} {y} {z} {r} {parent}")
+            text_buffer.write(f"\n{node_id} 2 {x} {y} {z} {r} {parent_id}")
 
         # Main
         with StringIO() as text_buffer:
             # Preamble
-            text_buffer.write("\n" + "# id, type, z, y, x, r, pid")
+            text_buffer.write("\n# id, type, z, y, x, r, pid")
 
             # Write entries
-            node_to_idx = dict()
+            node_to_idx = defaultdict(lambda: -1)
+            write_entry(root, -1)
             for i, j in nx.dfs_edges(self, source=root):
-                # Special Case: Root
-                if len(node_to_idx) == 0:
-                    write_entry(i, -1)
-
-                # General Case: Non-Root
-                write_entry(j, node_to_idx[i])
+                write_entry(j, i)
 
             # Finish
             filename = self.get_swc_id(i)
