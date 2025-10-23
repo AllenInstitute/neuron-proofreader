@@ -25,13 +25,13 @@ class CNN3D(nn.Module):
         self,
         patch_shape,
         output_dim=1,
-        dropout=0.1,
+        dropout=0,
         n_conv_layers=5,
         n_feat_channels=16,
         use_double_conv=True
     ):
         """
-        Constructs a ConvNet object.
+        Instantiates a CNN3D object.
 
         Parameters
         ----------
@@ -40,8 +40,7 @@ class CNN3D(nn.Module):
         output_dim : int, optional
             Dimension of output. Default is 1.
         dropout : float, optional
-            Fraction of values to randomly drop during training. Default is
-            0.1.
+            Fraction of values to randomly drop during training. Default is 0.
         n_conv_layers : int, optional
             Number of convolutional layers. Default is 5.
         use_double_conv : bool, optional
@@ -109,7 +108,7 @@ class CNN3D(nn.Module):
 
     def forward(self, x):
         """
-        Passes an input vector "x" through this neural network.
+        Passes the given input through this neural network.
 
         Parameters
         ----------
@@ -138,28 +137,37 @@ class ViT3D(nn.Module):
 
     def __init__(
         self,
-        in_channels=2,
         img_shape=(128, 128, 128),
-        token_shape=(8, 8, 8),
         emb_dim=512,
         depth=6,
         heads=8,
         mlp_dim=1024,
         output_dim=1
     ):
+        """
+        Instantiates a ViT3D object.
+
+        Parameters
+        ----------
+        img_shape : Tuple[int], optional
+            Shape of the input image. Default is (128, 128, 128).
+        emb_dim : int, optional
+            Dimension of the embedding space. Default is 512.
+        depth : int, optional
+            Number of transformer blocks. Default is 6.
+        heads : int, optional
+            Number of attention heads in each transformer block. Default 8.
+        mlp_dim : int, optional
+            Dimension of MLP embedding space. Default is 1024.
+        output_dim : int, optional
+            Dimension of output. Default is 1.
+        """
         # Call parent class
         super().__init__()
 
-        # Class attributes
-        self.grid_size = [img_shape[i] // token_shape[i] for i in range(3)]
-        self.in_channels = in_channels
-        self.token_shape = token_shape
-
         # Token embedding
         self.cls_token = nn.Parameter(torch.empty(1, 1, emb_dim))
-        self.img_tokenizer = ImageTokenizer3D(
-            in_channels, token_shape, emb_dim, img_shape
-        )
+        self.img_tokenizer = ImageTokenizer3D(2, emb_dim, img_shape)
 
         # Position embedding
         n_tokens = self.img_tokenizer.count_tokens() + 1
@@ -176,13 +184,40 @@ class ViT3D(nn.Module):
         self.output = init_feedforward(emb_dim, output_dim, 2)
 
         # Initialize weights
-        self._init_wgts()
+        self._init_weights()
 
-    def _init_wgts(self):
+    def _init_weights(self):
+        """
+        Initializes the model's weights.
+        """
+        # Initialize token embedding
         nn.init.trunc_normal_(self.cls_token, std=0.02)
         nn.init.trunc_normal_(self.pos_embedding, std=0.02)
 
+        # Initialize Transformer and output layers
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_uniform_(module.weight)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+            elif isinstance(module, nn.LayerNorm):
+                nn.init.ones_(module.weight)
+                nn.init.zeros_(module.bias)
+
     def forward(self, x):
+        """
+        Passes the given input through this neural network.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input vector of features.
+
+        Returns
+        -------
+        x : torch.Tensor
+            Output of the neural network.
+        """
         # Tokenize input -> (b, n_tokens, emb_dim)
         x = self.img_tokenizer(x)
         cls_tokens = self.cls_token.expand(x.size(0), -1, -1)
@@ -216,17 +251,14 @@ class ImageTokenizer3D(nn.Module):
     proj : nn.Conv3d
         Convolutional layer that generates a learnable projection of the
         tokens.
-    token_shape : Tuple[int]
-        Shape of each token (D, H, W).
     """
 
     def __init__(
-        self, in_channels,
-        token_shape,
+        self,
         emb_dim,
         img_shape,
         dropout=0.05,
-        n_cnn_layers=4,
+        n_cnn_layers=3,
         n_cnn_channels=32
     ):
         """
@@ -234,10 +266,6 @@ class ImageTokenizer3D(nn.Module):
 
         Parameters
         ----------
-        in_channels : int
-            Number of input channels in the image.
-        token_shape : Tuple[int]
-            Shape of each token (D, H, W).
         emb_dim : int
             Dimension of the embedding space.
         img_shape : Tuple[int]
@@ -247,7 +275,7 @@ class ImageTokenizer3D(nn.Module):
             Default is 0.05.
         n_cnn_layers : int, optional
             Number of layers in the CNN that generates the initial token
-            embedding.
+            embedding. Default is 3.
         """
         # Call parent class
         super().__init__()
@@ -255,11 +283,10 @@ class ImageTokenizer3D(nn.Module):
         # Class attributes
         self.emb_dim = emb_dim
         self.img_shape = img_shape
-        self.token_shape = token_shape
 
         # Image embedding
         cnn_out_channels = n_cnn_channels * (2 ** (n_cnn_layers - 1))
-        self.tokenizer = init_cnn3d(in_channels, n_cnn_channels, n_cnn_layers)
+        self.tokenizer = init_cnn3d(2, n_cnn_channels, n_cnn_layers)
         self.proj = nn.Conv3d(cnn_out_channels, emb_dim, kernel_size=1)
 
         # Positional embedding
@@ -377,6 +404,25 @@ class TransformerEncoderBlock(nn.Module):
 
 # --- Build Simple Neural Networks ---
 def init_cnn3d(in_channels, n_feat_channels, n_layers, use_double_conv=True):
+    """
+    Initializes a convolutional neural network.
+
+    Parameters
+    ----------
+    in_channels : int
+        Number of channels that are input to this convolutional layer.
+    out_channels : int
+        Number of channels that are output from this convolutional layer.
+    n_layers : int
+        Number of layers in the network.
+    use_double_conv : bool, optional
+        Indication of whether to use double convolution. Default is True.
+
+    Returns
+    -------
+    layers : torch.nn.Sequential
+        Sequence of operations that define the network.
+    """
     layers = list()
     in_channels = in_channels
     out_channels = n_feat_channels
@@ -430,6 +476,18 @@ def init_conv_layer(in_channels, out_channels, kernel_size, use_double_conv):
 
 
 def init_feedforward(input_dim, output_dim, n_layers):
+    """
+    Initializes a feed forward neural network.
+
+    Parameters
+    ----------
+    input_dim : int
+        Dimension of the input.
+    output_dim : int
+        Dimension of the output of this network.
+    n_layers : int
+        Number of layers in the network.
+    """
     layers = list()
     input_dim_i = input_dim
     output_dim_i = input_dim // 2

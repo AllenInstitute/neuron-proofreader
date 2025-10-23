@@ -323,13 +323,13 @@ class MergeSiteDataset(Dataset):
             # Check if node is close to merge site
             xyz = graph.node_xyz[node]
             d, _ = self.merge_site_kdtrees[brain_id].query(xyz)
-            if d > 40:
+            if d > 100:
                 break
         return brain_id, graph, node, False
 
     def get_img_patch(self, brain_id, center):
         img_patch = self.img_readers[brain_id].read(center, self.patch_shape)
-        return img_util.normalize(np.minimum(img_patch, 400))
+        return img_util.normalize(np.minimum(img_patch, 300))
 
     def get_label_mask(self, subgraph):
         # Initializations
