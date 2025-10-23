@@ -26,13 +26,8 @@ class ImageTransforms:
         augmentation to an image and segmentation patch.
         """
         # Instance attributes
-        self.geometric_transforms = [
-            RandomFlip3D(),
-            RandomRotation3D(),
-        ]
-        self.intensity_transforms = transforms.Compose(
-                [RandomContrast3D(), RandomNoise3D()]
-            )
+        self.geometric_transforms = [RandomFlip3D(), RandomRotation3D()]
+        self.intensity_transforms = transforms.Compose([RandomNoise3D()])
 
     def __call__(self, patch_id, patches):
         """
