@@ -304,7 +304,7 @@ class IterableGraphDataset(IterableDataset):
         batch = np.empty((len(patch_centers), 2,) + self.patch_shape)
         for i, center in enumerate(patch_centers):
             s = img_util.get_slices(center, self.patch_shape)
-            batch[i, 0, ...] = img[s]
+            batch[i, 0, ...] = np.minimum(img[s], 300)
             batch[i, 1, ...] = label_mask[s]
 
         # Normalize image

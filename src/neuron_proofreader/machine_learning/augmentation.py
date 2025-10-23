@@ -26,13 +26,8 @@ class ImageTransforms:
         augmentation to an image and segmentation patch.
         """
         # Instance attributes
-        self.geometric_transforms = [
-            RandomFlip3D(),
-            RandomRotation3D(),
-        ]
-        self.intensity_transforms = transforms.Compose(
-                [RandomContrast3D(), RandomNoise3D()]
-            )
+        self.geometric_transforms = [RandomFlip3D(), RandomRotation3D()]
+        self.intensity_transforms = transforms.Compose([RandomNoise3D()])
 
     def __call__(self, patch_id, patches):
         """
@@ -136,7 +131,7 @@ class RandomRotation3D:
             Rotated 3D image and segmentation patch.
         """
         for axes in self.axes:
-            if random.random() > 0.4:
+            if random.random() > 0.5:
                 angle = random.uniform(*self.angles)
                 patches[0, ...] = rotate3d(patches[0, ...], angle, axes)
                 patches[1, ...] = rotate3d(patches[1, ...], angle, axes)
@@ -208,7 +203,7 @@ class RandomContrast3D:
         ----------
         factor_range : Tuple[float], optional
             Tuple of integers representing the range of contrast factors.
-            Default is (0.8, 1.1).
+            Default is (0.8, 1.2).
         """
         self.factor_range = factor_range
 
