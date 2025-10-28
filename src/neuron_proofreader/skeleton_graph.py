@@ -330,7 +330,7 @@ class SkeletonGraph(nx.Graph):
         def write_entry(node, parent):
             x, y, z = tuple(self.node_xyz[node])
             r = self.node_radius[node] if preserve_radius else 2
-            node_id = len(node_to_idx) + 1
+            node_id = cnt
             parent_id = node_to_idx[parent]
             node_to_idx[node] = node_id
             text_buffer.write(f"\n{node_id} 2 {x} {y} {z} {r} {parent_id}")
@@ -341,9 +341,15 @@ class SkeletonGraph(nx.Graph):
             text_buffer.write("\n# id, type, z, y, x, r, pid")
 
             # Write entries
+            cnt = 1
             node_to_idx = defaultdict(lambda: -1)
-            write_entry(root, -1)
-            for i, j in nx.dfs_edges(self, source=root):
+            for i, j in nx.dfs_edges(self):
+                # Special Case: Root
+                if len(node_to_idx) == 0:
+                    write_entry(i, -1)
+
+                # General Case: Non-Root
+                cnt += 1
                 write_entry(j, i)
 
             # Finish
