@@ -244,14 +244,29 @@ class SkeletonGraph(nx.Graph):
         return [i for i in self.nodes if self.degree[i] == 1]
 
     def get_nodes_with_component_id(self, component_id):
+        """
+        Gets all nodes with the given componenet ID.
+
+        Parameters
+        ----------
+        component_id : int
+            Unique identifier of connected component to be queried.
+
+        Returns
+        -------
+        Set[int]
+            Nodes with the given component ID.
+        """
         return set(np.where(self.node_component_id == component_id)[0])
 
     def get_rooted_subgraph(self, root, radius):
         # Initializations
         subgraph = SkeletonGraph()
-        node_mapping = {root: 0}
+        subgraph.add_node(0)
+        idxs = [root]
 
         # Extract graph
+        node_mapping = {root: 0}
         queue = [(root, 0)]
         visited = {root}
         while queue:
@@ -266,9 +281,11 @@ class SkeletonGraph(nx.Graph):
                     subgraph.add_edge(node_mapping[i], node_mapping[j])
                     queue.append((j, dist_j))
                     visited.add(j)
+                    idxs.append(j)
 
         # Store coordinates
-        idxs = np.array(list(node_mapping.keys()), dtype=int)
+        idxs = np.array(idxs, dtype=int)
+        subgraph.node_radius = self.node_radius[idxs]
         subgraph.node_xyz = self.node_xyz[idxs]
         return subgraph
 
