@@ -17,6 +17,7 @@ import networkx as nx
 import numpy as np
 import random
 
+from neuron_proofreader import exp
 from neuron_proofreader.machine_learning.augmentation import ImageTransforms
 from neuron_proofreader.skeleton_graph import SkeletonGraph
 from neuron_proofreader.utils import img_util, ml_util, swc_util, util
@@ -33,7 +34,7 @@ class MergeSiteDataset(Dataset):
     anisotropy : Tuple[float], optional
         Image to physical coordinates scaling factors to account for the
         anisotropy of the microscope.
-    context_radius : int, optional
+    subgraph_radius : int, optional
         Radius (in microns) around merge sites used to extract rooted
         subgraph.
     gt_graphs : dict[str, SkeletonGraph]
@@ -61,7 +62,7 @@ class MergeSiteDataset(Dataset):
         self,
         merge_sites_df,
         anisotropy=(1.0, 1.0, 1.0),
-        context_radius=200,
+        subgraph_radius=100,
         multiscale=0,
         node_spacing=5,
         patch_shape=(96, 96, 96),
@@ -77,9 +78,9 @@ class MergeSiteDataset(Dataset):
         anisotropy : Tuple[float], optional
             Image to physical coordinates scaling factors to account for the
             anisotropy of the microscope.
-        context_radius : int, optional
+        subgraph_radius : int, optional
             Radius (in microns) around merge sites used to extract rooted
-            subgraph. Default is 200um.
+            subgraph. Default is 100μm.
         multiscale : int, optional
             Level in the image pyramid that the voxel coordinate must index
             into. Default is 0.
@@ -91,7 +92,7 @@ class MergeSiteDataset(Dataset):
         """
         # Instance attributes
         self.anisotropy = anisotropy
-        self.context_radius = context_radius
+        self.subgraph_radius = subgraph_radius
         self.node_spacing = node_spacing
         self.merge_sites_df = merge_sites_df
         self.multiscale = multiscale
@@ -231,7 +232,7 @@ class MergeSiteDataset(Dataset):
         voxel = img_util.to_voxels(xyz, self.anisotropy, self.multiscale)
 
         # Extract subgraph and image patches centered at site
-        subgraph = graph.get_rooted_subgraph(node, self.context_radius)
+        subgraph = graph.get_rooted_subgraph(node, self.subgraph_radius)
         img_patch = self.get_img_patch(brain_id, voxel)
         label_patch = self.get_label_mask(subgraph)
 
@@ -489,15 +490,23 @@ class MergeSiteDataLoader(DataLoader):
                     )
                 )
 
-            # Process results
+            # Process results -- temp
             patch_shape = (batch_size, 2,) + self.dataset.patch_shape
             patches = np.empty(patch_shape, dtype=np.float32)
             labels = np.empty((batch_size, 1), dtype=np.float32)
+            point_clouds = np.empty((batch_size, 3, 2000), dtype=np.float32)
             for i, thread in enumerate(as_completed(threads)):
-                patch, _, label = thread.result()
+                patch, subgraph, label = thread.result()
                 patches[i] = patch
                 labels[i] = label
-        return ml_util.to_tensor(patches), ml_util.to_tensor(labels)
+                point_clouds[i] = exp.subgraph_to_point_cloud(subgraph)
+
+        x = exp.TensorDict({
+            "img": ml_util.to_tensor(patches),
+            "point_cloud": ml_util.to_tensor(point_clouds)
+        })
+        return x, ml_util.to_tensor(labels)
+        #return ml_util.to_tensor(patches), ml_util.to_tensor(labels) - temp
 
     def _load_idxs(self, idxs):
         """
