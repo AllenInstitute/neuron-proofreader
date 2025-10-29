@@ -100,6 +100,7 @@ class Trainer:
         self.criterion = nn.BCEWithLogitsLoss()
         self.model = model.to(device)
         self.optimizer = optim.AdamW(self.model.parameters(), lr=lr)
+        self.scaler = torch.cuda.amp.GradScaler(enabled=True)
         self.scheduler = CosineAnnealingLR(self.optimizer, T_max=25)
         self.writer = SummaryWriter(log_dir=log_dir)
 
@@ -155,9 +156,9 @@ class Trainer:
             hat_y_i, loss_i = self.forward_pass(x_i, y_i)
 
             # Backward pass
-            self.optimizer.zero_grad(set_to_none=True)
-            loss_i.backward()
-            self.optimizer.step()
+            self.scaler.scale(loss_i).backward()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
 
             # Store results
             y.extend(ml_util.to_cpu(y_i, True).flatten().tolist())
@@ -224,7 +225,7 @@ class Trainer:
         loss : torch.Tensor
             Computed loss value.
         """
-        with torch.autocast(device_type="cuda", dtype=torch.float16):  # temp
+        with torch.autocast(device_type="cuda", dtype=torch.float16):
             x = x.to(self.device, non_blocking=True)
             y = y.to(self.device, non_blocking=True)
             hat_y = self.model(x)

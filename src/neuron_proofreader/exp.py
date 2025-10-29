@@ -60,7 +60,7 @@ def sample_cylinder_between_points(p1, p2, r, n_samples=25):
     return points
 
 
-def subgraph_to_point_cloud(graph, n_points=2000):
+def subgraph_to_point_cloud(graph, n_points=3200):
     point_cloud = list()
     for n1, n2 in graph.edges:
         # Use average radius
