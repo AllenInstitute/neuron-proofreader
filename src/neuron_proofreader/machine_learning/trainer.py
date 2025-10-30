@@ -479,9 +479,9 @@ class DistributedTrainer(Trainer):
             # Report results
             if rank == 0:
                 new_best = self.check_model_performance(val_stats, epoch)
+                print(f"\nEpoch {epoch}: " + ("New Best!" if new_best else " "))
                 self.report_stats(train_stats, is_train=True)
                 self.report_stats(val_stats, is_train=False)
-                print(f"\nEpoch {epoch}: " + ("New Best!" if new_best else " "))
 
             # Step scheduler
             self.scheduler.step()
