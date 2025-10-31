@@ -96,14 +96,10 @@ class HeteroGraphDataset:
         ----------
         graph : networkx.Graph
             Graph used by gnn to classify proposals.
-        proposals : list
-            List of proposals to be classified.
-        x_nodes : numpy.ndarray
-            Feature matrix generated from nodes in "graph".
-        x_branches : numpy.ndarray
-            Feature matrix generated from branches in "graph".
-        x_proposals : numpy.ndarray
-            Feature matrix generated from "proposals" in "graph".
+        proposals : List[Frozenset[int]]
+            Proposals to be classified.
+        x_dict : dict
+            ...
         y_proposals : numpy.ndarray
             Ground truth of proposals.
         idx_to_id : dict
@@ -414,7 +410,7 @@ class HeteroGraphMultiModalDataset(HeteroGraphDataset):
                     self.idxs_proposals["idx_to_id"][n - 2] = e_2
 
 
-# -- util --
+# -- Helpers --
 def node_intersection(idx_map, e1, e2):
     """
     Computes the common node between "e1" and "e2" in the case where these

@@ -167,7 +167,7 @@ class ViT3D(nn.Module):
 
         # Token embedding
         self.cls_token = nn.Parameter(torch.empty(1, 1, emb_dim))
-        self.img_tokenizer = ImageTokenizer3D(2, emb_dim, img_shape)
+        self.img_tokenizer = ImageTokenizer3D(emb_dim, img_shape)
 
         # Position embedding
         n_tokens = self.img_tokenizer.count_tokens() + 1

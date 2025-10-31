@@ -494,19 +494,11 @@ class MergeSiteDataLoader(DataLoader):
             patch_shape = (batch_size, 2,) + self.dataset.patch_shape
             patches = np.empty(patch_shape, dtype=np.float32)
             labels = np.empty((batch_size, 1), dtype=np.float32)
-            point_clouds = np.empty((batch_size, 3, 3200), dtype=np.float32)
             for i, thread in enumerate(as_completed(threads)):
                 patch, subgraph, label = thread.result()
                 patches[i] = patch
                 labels[i] = label
-                point_clouds[i] = exp.subgraph_to_point_cloud(subgraph)
-
-        x = exp.TensorDict({
-            "img": ml_util.to_tensor(patches),
-            "point_cloud": ml_util.to_tensor(point_clouds)
-        })
-        return x, ml_util.to_tensor(labels)
-        #return ml_util.to_tensor(patches), ml_util.to_tensor(labels) - temp
+        return ml_util.to_tensor(patches), ml_util.to_tensor(labels)
 
     def _load_idxs(self, idxs):
         """
