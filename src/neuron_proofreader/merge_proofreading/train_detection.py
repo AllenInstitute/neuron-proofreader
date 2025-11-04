@@ -366,8 +366,9 @@ class MergeSiteDataset(Dataset):
         for i, xyz in enumerate(graph.node_xyz):
             if i in graph:
                 d, _ = kdtree.query(xyz)
-                if d > 100:
+                if d > 128:
                     graph.remove_node(i)
+        graph.reassign_component_ids()
 
     def __len__(self):
         """
@@ -498,7 +499,14 @@ class MergeSiteDataLoader(DataLoader):
                 patch, subgraph, label = thread.result()
                 patches[i] = patch
                 labels[i] = label
-        return ml_util.to_tensor(patches), ml_util.to_tensor(labels)
+                point_clouds[i] = exp.subgraph_to_point_cloud(subgraph)
+
+        batch = exp.TensorDict({
+            "img": ml_util.to_tensor(patches),
+            "point_cloud": ml_util.to_tensor(point_clouds)
+        })
+        return batch, ml_util.to_tensor(labels)
+        #return ml_util.to_tensor(patches), ml_util.to_tensor(labels) - temp
 
     def _load_idxs(self, idxs):
         """

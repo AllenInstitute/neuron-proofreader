@@ -19,6 +19,7 @@ import networkx as nx
 import numpy as np
 import torch
 
+from neuron_proofreader import exp
 from neuron_proofreader.utils import img_util, ml_util, util
 
 
@@ -44,6 +45,7 @@ class MergeDetector:
         self.batch_size = batch_size
         self.device = device
         self.graph = graph
+        self.node_preds = np.ones((graph.number_of_nodes()), dtype=np.float16)
         self.patch_shape = patch_shape
         self.remove_detected_sites = remove_detected_sites
         self.step_size = step_size
@@ -70,7 +72,6 @@ class MergeDetector:
         # Find fragment IDs to search
         approx_length = self.graph.number_of_edges() * self.graph.node_spacing
         pbar = tqdm(total=int(approx_length / self.step_size))
-        self.graph.node_radius[:] = 1  # temp
 
         # Iterate over dataset
         t0 = time()
@@ -83,8 +84,7 @@ class MergeDetector:
                 merge_sites.extend(nodes[idxs].tolist())
                 confidences.extend(y_nodes[idxs].tolist())
 
-            # temp
-            self.graph.node_radius[np.array(nodes)] = 10 * y_nodes
+            self.node_preds[np.array(nodes)] = 10 * y_nodes
             pbar.update(self.batch_size)
 
         # Non-maximum suppression of detected sites
@@ -100,6 +100,19 @@ class MergeDetector:
         return merge_sites
 
     def predict(self, x_nodes):
+        """
+        Predicts merge site likelihoods for the given node features.
+
+        Parameters
+        ----------
+        x_nodes : torch.Tensor
+            Node features.
+
+        Returns
+        -------
+        numpy.ndarray
+            Predicted merge site likelihoods.
+        """
         with torch.no_grad():
             x_nodes = x_nodes.to(self.device)
             y_nodes = sigmoid(self.model(x_nodes))
@@ -163,6 +176,7 @@ class IterableGraphDataset(IterableDataset):
         min_size=0,
         prefetch=128,
         step_size=10,
+        subgraph_radius=100
     ):
         # Call parent class
         super().__init__()
@@ -176,6 +190,7 @@ class IterableGraphDataset(IterableDataset):
         self.patch_shape = patch_shape
         self.prefetch = prefetch
         self.step_size = step_size
+        self.subgraph_radius = subgraph_radius
 
         # Image reader
         self.img_reader = img_util.init_reader(img_path)
@@ -207,7 +222,7 @@ class IterableGraphDataset(IterableDataset):
                         # Process completed thread
                         nodes, patch_centers = pending.pop(thread)
                         img, offset = thread.result()
-                        yield self.get_batch(img, offset, patch_centers, nodes)
+                        yield self.get_multimodal_batch(img, offset, patch_centers, nodes)
 
                         # Continue submitting threads
                         submit_thread()
@@ -310,7 +325,34 @@ class IterableGraphDataset(IterableDataset):
         # Normalize image
         mn, mx = np.percentile(batch[0, 0, ...], [1, 99.9])
         batch[:, 0, ...] = np.clip((batch[:, 0, ...] - mn) / (mx - mn), 0, 1)
-        return nodes, torch.tensor(batch, dtype=torch.float)
+        return nodes, torch.tensor(batch, dtype=torch.float), _
+
+    def get_multimodal_batch(self, img, offset, patch_centers, nodes):
+        # Initializations
+        label_mask = self.get_label_mask(nodes, img.shape, offset)
+        patch_centers -= offset
+        batch_size = len(patch_centers)
+
+        # Populate batch array
+        patches = np.empty((batch_size, 2,) + self.patch_shape)
+        point_clouds = np.empty((batch_size, 3, 3200), dtype=np.float32)
+        for i, (center, node) in enumerate(zip(patch_centers, nodes)):
+            s = img_util.get_slices(center, self.patch_shape)
+            patch = np.minimum(img[s], 300)
+            mn, mx = np.percentile(patch, [1, 99.9])
+
+            patches[i, 0, ...] = np.clip((patch - mn) / (mx - mn), 0, 1)
+            patches[i, 1, ...] = label_mask[s]
+
+            subgraph = self.graph.get_rooted_subgraph(node, self.subgraph_radius)
+            point_clouds[i] = exp.subgraph_to_point_cloud(subgraph)
+
+        # Compile batch dictionary
+        batch = exp.TensorDict({
+            "img": ml_util.to_tensor(patches),
+            "point_cloud": ml_util.to_tensor(point_clouds)
+        })
+        return nodes, batch
 
     # --- Helpers ---
     def find_fragments_to_search(self):

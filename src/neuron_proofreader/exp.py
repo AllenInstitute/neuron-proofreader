@@ -60,6 +60,36 @@ def sample_cylinder_between_points(p1, p2, r, n_samples=25):
     return points
 
 
+def sample_cylinder_boundary(p1, p2, r, n_samples=25):
+    p1 = np.array(p1)
+    p2 = np.array(p2)
+    axis = p2 - p1
+    axis_length = np.linalg.norm(axis)
+    if axis_length == 0:
+        return np.tile(p1, (n_samples, 1))  # degenerate
+
+    axis_dir = axis / axis_length
+
+    # Build orthogonal basis
+    if np.allclose(axis_dir, [0, 0, 1]):
+        ortho1 = np.array([1, 0, 0])
+    else:
+        ortho1 = np.cross(axis_dir, [0, 0, 1])
+        ortho1 /= np.linalg.norm(ortho1)
+    ortho2 = np.cross(axis_dir, ortho1)
+
+    # Random samples along the axis
+    t_values = np.random.rand(n_samples)
+    centers = p1 + np.outer(t_values, axis)
+
+    # Sample points only on the circular boundary
+    angles = np.random.rand(n_samples) * 2 * np.pi
+    offsets = r * (np.outer(np.cos(angles), ortho1) + np.outer(np.sin(angles), ortho2))
+
+    points = centers + offsets
+    return points
+
+
 def subgraph_to_point_cloud(graph, n_points=3200):
     point_cloud = list()
     for n1, n2 in graph.edges:
@@ -68,7 +98,7 @@ def subgraph_to_point_cloud(graph, n_points=3200):
         r2 = graph.node_radius[n2]
         r = (r1 + r2) / 2
 
-        pts = sample_cylinder_between_points(
+        pts = sample_cylinder_boundary(
             graph.node_xyz[n1], graph.node_xyz[n2], r
         )
         point_cloud.append(pts)
