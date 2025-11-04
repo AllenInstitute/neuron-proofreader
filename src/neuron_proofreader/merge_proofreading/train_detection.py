@@ -495,7 +495,6 @@ class MergeSiteDataLoader(DataLoader):
             patch_shape = (batch_size, 2,) + self.dataset.patch_shape
             patches = np.empty(patch_shape, dtype=np.float32)
             labels = np.empty((batch_size, 1), dtype=np.float32)
-            point_clouds = np.empty((batch_size, 3, 3200), dtype=np.float32)
             for i, thread in enumerate(as_completed(threads)):
                 patch, subgraph, label = thread.result()
                 patches[i] = patch
