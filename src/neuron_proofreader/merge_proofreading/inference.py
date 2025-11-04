@@ -100,6 +100,19 @@ class MergeDetector:
         return merge_sites
 
     def predict(self, x_nodes):
+        """
+        Predicts merge site likelihoods for the given node features.
+
+        Parameters
+        ----------
+        x_nodes : torch.Tensor
+            Node features.
+
+        Returns
+        -------
+        numpy.ndarray
+            Predicted merge site likelihoods.
+        """
         with torch.no_grad():
             x_nodes = x_nodes.to(self.device)
             y_nodes = sigmoid(self.model(x_nodes))
