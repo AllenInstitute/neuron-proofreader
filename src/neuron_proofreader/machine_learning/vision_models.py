@@ -286,8 +286,10 @@ class ImageTokenizer3D(nn.Module):
 
         # Image embedding
         cnn_out_channels = n_cnn_channels * (2 ** (n_cnn_layers - 1))
-        self.tokenizer = init_cnn3d(2, n_cnn_channels, n_cnn_layers)
         self.proj = nn.Conv3d(cnn_out_channels, emb_dim, kernel_size=1)
+        self.tokenizer = init_cnn3d(
+            2, n_cnn_channels, n_cnn_layers, use_double_conv=False
+        )
 
         # Positional embedding
         n_tokens = self.count_tokens()

@@ -222,7 +222,7 @@ class IterableGraphDataset(IterableDataset):
                         # Process completed thread
                         nodes, patch_centers = pending.pop(thread)
                         img, offset = thread.result()
-                        yield self.get_multimodal_batch(img, offset, patch_centers, nodes)
+                        yield self.get_batch(img, offset, patch_centers, nodes)
 
                         # Continue submitting threads
                         submit_thread()
@@ -348,10 +348,7 @@ class IterableGraphDataset(IterableDataset):
             point_clouds[i] = exp.subgraph_to_point_cloud(subgraph)
 
         # Compile batch dictionary
-        batch = exp.TensorDict({
-            "img": ml_util.to_tensor(patches),
-            "point_cloud": ml_util.to_tensor(point_clouds)
-        })
+        batch = ml_util.to_tensor(patches)
         return nodes, batch
 
     # --- Helpers ---
