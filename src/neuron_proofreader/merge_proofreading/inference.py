@@ -147,7 +147,7 @@ class MergeDetector:
                     iou = img_util.compute_iou3d(
                         xyz_i, xyz_root, self.patch_shape, self.patch_shape
                     )
-                    if iou > 0.3:
+                    if iou > 0.35:
                         merge_sites_set.remove(i)
                         self.node_preds[i] = 1
 
