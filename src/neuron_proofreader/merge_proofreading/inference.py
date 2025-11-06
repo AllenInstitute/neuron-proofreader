@@ -45,7 +45,7 @@ class MergeDetector:
         self.batch_size = batch_size
         self.device = device
         self.graph = graph
-        self.node_preds = np.ones((graph.number_of_nodes()), dtype=np.float16)
+        self.node_preds = np.ones((len(graph.node_xyz)), dtype=np.float16)
         self.patch_shape = patch_shape
         self.remove_detected_sites = remove_detected_sites
         self.step_size = step_size
@@ -325,7 +325,7 @@ class IterableGraphDataset(IterableDataset):
         # Normalize image
         mn, mx = np.percentile(batch[0, 0, ...], [1, 99.9])
         batch[:, 0, ...] = np.clip((batch[:, 0, ...] - mn) / (mx - mn), 0, 1)
-        return nodes, torch.tensor(batch, dtype=torch.float), _
+        return nodes, torch.tensor(batch, dtype=torch.float)
 
     def get_multimodal_batch(self, img, offset, patch_centers, nodes):
         # Initializations
