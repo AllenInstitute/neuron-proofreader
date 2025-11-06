@@ -348,7 +348,10 @@ class IterableGraphDataset(IterableDataset):
             point_clouds[i] = exp.subgraph_to_point_cloud(subgraph)
 
         # Compile batch dictionary
-        batch = ml_util.to_tensor(patches)
+        batch = exp.TensorDict({
+            "img": ml_util.to_tensor(patches),
+            "point_cloud": ml_util.to_tensor(point_clouds)
+        })
         return nodes, batch
 
     # --- Helpers ---
