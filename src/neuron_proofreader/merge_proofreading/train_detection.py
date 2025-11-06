@@ -532,11 +532,11 @@ class MergeSiteDataLoader(DataLoader):
 
 
 # -- Helpers --
-def get_brain_segmentation_pairs(merge_sites_df, idxs):
+def get_brain_segmentation_pairs(merge_sites_df):
     brain_segmentation_pairs = set()
-    for idx in idxs:
-        brain_id = merge_sites_df["brain_id"][idx]
-        segmentation_id = merge_sites_df["segmentation_id"][idx]
+    for i in range(len(merge_sites_df)):
+        brain_id = merge_sites_df["brain_id"][i]
+        segmentation_id = merge_sites_df["segmentation_id"][i]
         brain_segmentation_pairs.add((brain_id, segmentation_id))
     return brain_segmentation_pairs
 
