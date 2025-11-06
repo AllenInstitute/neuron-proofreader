@@ -184,7 +184,6 @@ class MergeSiteDataset(Dataset):
 
         # Postprocess and store graph
         self.clip_fragments_to_groundtruth(brain_id, graph)
-        graph.relabel_nodes()
         self.merge_graphs[brain_id] = graph
 
     def load_gt_graphs(self, brain_id, img_path, swc_pointer):
@@ -370,6 +369,7 @@ class MergeSiteDataset(Dataset):
                 d, _ = kdtree.query(xyz)
                 if d > 128:
                     graph.remove_node(i)
+        graph.relabel_nodes()
         graph.reassign_component_ids()
 
     def __len__(self):

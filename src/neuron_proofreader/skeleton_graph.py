@@ -330,8 +330,8 @@ class SkeletonGraph(nx.Graph):
         self, zip_writer, root, preserve_radius=False
     ):
         """
-        Writes the graph to an SWC file format, which is then stored in a ZIP
-        archive.
+        Writes the connected component containing the given root node to a
+        zipped SWC file.
 
         Parameters
         ----------
@@ -355,12 +355,12 @@ class SkeletonGraph(nx.Graph):
         # Main
         with StringIO() as text_buffer:
             # Preamble
-            text_buffer.write("\n# id, type, z, y, x, r, pid")
+            text_buffer.write("# id, type, z, y, x, r, pid")
 
             # Write entries
             cnt = 1
             node_to_idx = defaultdict(lambda: -1)
-            for i, j in nx.dfs_edges(self):
+            for i, j in nx.dfs_edges(self, source=root):
                 # Special Case: Root
                 if len(node_to_idx) == 0:
                     write_entry(i, -1)
