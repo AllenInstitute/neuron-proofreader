@@ -45,7 +45,7 @@ class MergeDetector:
         self.batch_size = batch_size
         self.device = device
         self.graph = graph
-        self.node_preds = np.ones((graph.number_of_nodes()), dtype=np.float16)
+        self.node_preds = np.ones((len(graph.node_xyz)), dtype=np.float16)
         self.patch_shape = patch_shape
         self.remove_detected_sites = remove_detected_sites
         self.step_size = step_size
@@ -222,7 +222,7 @@ class IterableGraphDataset(IterableDataset):
                         # Process completed thread
                         nodes, patch_centers = pending.pop(thread)
                         img, offset = thread.result()
-                        yield self.get_multimodal_batch(img, offset, patch_centers, nodes)
+                        yield self.get_batch(img, offset, patch_centers, nodes)
 
                         # Continue submitting threads
                         submit_thread()
@@ -325,7 +325,7 @@ class IterableGraphDataset(IterableDataset):
         # Normalize image
         mn, mx = np.percentile(batch[0, 0, ...], [1, 99.9])
         batch[:, 0, ...] = np.clip((batch[:, 0, ...] - mn) / (mx - mn), 0, 1)
-        return nodes, torch.tensor(batch, dtype=torch.float), _
+        return nodes, torch.tensor(batch, dtype=torch.float)
 
     def get_multimodal_batch(self, img, offset, patch_centers, nodes):
         # Initializations
@@ -348,10 +348,7 @@ class IterableGraphDataset(IterableDataset):
             point_clouds[i] = exp.subgraph_to_point_cloud(subgraph)
 
         # Compile batch dictionary
-        batch = exp.TensorDict({
-            "img": ml_util.to_tensor(patches),
-            "point_cloud": ml_util.to_tensor(point_clouds)
-        })
+        batch = ml_util.to_tensor(patches)
         return nodes, batch
 
     # --- Helpers ---
