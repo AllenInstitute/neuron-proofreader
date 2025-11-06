@@ -13,8 +13,10 @@ from concurrent.futures import as_completed, ThreadPoolExecutor
 from scipy.spatial import KDTree
 from torch.utils.data import Dataset, DataLoader
 
+import ast
 import networkx as nx
 import numpy as np
+import pandas as pd
 import random
 
 from neuron_proofreader import exp
@@ -558,6 +560,14 @@ def get_gt_merge_sites(merge_sites_df, brain_id):
     """
     idx_mask = merge_sites_df["brain_id"] == brain_id
     return np.array(merge_sites_df.loc[idx_mask, "xyz"].tolist())
+
+
+def load_merge_sites_df(path):
+    merge_sites_df = pd.read_csv(path)
+    merge_sites_df["brain_id"] = merge_sites_df["brain_id"].apply(str)
+    merge_sites_df["segment_id"] = merge_sites_df["segment_id"].apply(str)
+    merge_sites_df["xyz"] = merge_sites_df["xyz"].apply(ast.literal_eval)
+    return merge_sites_df
 
 
 def shift_voxel(voxel, center, patch_shape):
