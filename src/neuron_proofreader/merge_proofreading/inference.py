@@ -94,7 +94,7 @@ class MergeDetector:
         print(f"Distance Traversed: {self.dataset.distance_traversed:.2f}μm")
         print(f"Merge Proofreading Rate: {rate:.2f}μm/s")
 
-        # Optionally, remove merge mistakes from graphs
+        # Remove merge mistakes (optional)
         if self.remove_detected_sites:
             pass
         return merge_sites
@@ -222,7 +222,7 @@ class IterableGraphDataset(IterableDataset):
                         # Process completed thread
                         nodes, patch_centers = pending.pop(thread)
                         img, offset = thread.result()
-                        yield self.get_batch(img, offset, patch_centers, nodes)
+                        yield self.get_multimodal_batch(img, offset, patch_centers, nodes)
 
                         # Continue submitting threads
                         submit_thread()
@@ -319,12 +319,8 @@ class IterableGraphDataset(IterableDataset):
         batch = np.empty((len(patch_centers), 2,) + self.patch_shape)
         for i, center in enumerate(patch_centers):
             s = img_util.get_slices(center, self.patch_shape)
-            batch[i, 0, ...] = np.minimum(img[s], 300)
+            batch[i, 0, ...] = img_util.normalize(np.minimum(img[s], 300))
             batch[i, 1, ...] = label_mask[s]
-
-        # Normalize image
-        mn, mx = np.percentile(batch[0, 0, ...], [1, 99.9])
-        batch[:, 0, ...] = np.clip((batch[:, 0, ...] - mn) / (mx - mn), 0, 1)
         return nodes, torch.tensor(batch, dtype=torch.float)
 
     def get_multimodal_batch(self, img, offset, patch_centers, nodes):
@@ -338,10 +334,7 @@ class IterableGraphDataset(IterableDataset):
         point_clouds = np.empty((batch_size, 3, 3200), dtype=np.float32)
         for i, (center, node) in enumerate(zip(patch_centers, nodes)):
             s = img_util.get_slices(center, self.patch_shape)
-            patch = np.minimum(img[s], 300)
-            mn, mx = np.percentile(patch, [1, 99.9])
-
-            patches[i, 0, ...] = np.clip((patch - mn) / (mx - mn), 0, 1)
+            patches[i, 0, ...] = img_util.normalize(np.minimum(img[s], 300))
             patches[i, 1, ...] = label_mask[s]
 
             subgraph = self.graph.get_rooted_subgraph(node, self.subgraph_radius)
@@ -390,9 +383,9 @@ class IterableGraphDataset(IterableDataset):
             is_contained = img_util.is_contained(voxel, img_shape, buffer=3)
             if is_contained:
                 label_mask[
-                    voxel[0] - 3: voxel[0] + 3,
-                    voxel[1] - 3: voxel[1] + 3,
-                    voxel[2] - 3: voxel[2] + 3
+                    voxel[0] - 2: voxel[0] + 3,
+                    voxel[1] - 2: voxel[1] + 3,
+                    voxel[2] - 2: voxel[2] + 3
                 ] = 1
             # Update queue
             if is_contained:

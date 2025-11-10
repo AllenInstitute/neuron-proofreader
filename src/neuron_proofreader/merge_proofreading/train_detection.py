@@ -346,7 +346,7 @@ class MergeSiteDataset(Dataset):
             voxel = shift_voxel(voxel, center, self.patch_shape)
             if img_util.is_contained(voxel, self.patch_shape, buffer=3):
                 i, j, k = voxel
-                label_mask[i-3:i+3, j-3:j+3, k-3:k+3] = 1
+                label_mask[i-2:i+3, j-2:j+3, k-2:k+3] = 1
         return label_mask
 
     # --- Helpers ---
@@ -496,6 +496,7 @@ class MergeSiteDataLoader(DataLoader):
             # Process results -- temp
             patch_shape = (batch_size, 2,) + self.dataset.patch_shape
             patches = np.empty(patch_shape, dtype=np.float32)
+            point_clouds = np.empty((batch_size, 3, 3200), dtype=np.float32)
             labels = np.empty((batch_size, 1), dtype=np.float32)
             for i, thread in enumerate(as_completed(threads)):
                 patch, subgraph, label = thread.result()

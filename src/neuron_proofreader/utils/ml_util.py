@@ -138,7 +138,12 @@ def line_graph(edges):
 
 
 def load_model(model, model_path, device="cuda"):
-    model.load_state_dict(torch.load(model_path, map_location=device))
+    state_dict = torch.load(model_path, map_location=device)
+    new_state_dict = dict()
+    for key, val in state_dict.items():
+        key = key.replace("module.", "")
+        new_state_dict[key] = val
+    model.load_state_dict(new_state_dict)
     model.to(device)
     model.eval()
 
