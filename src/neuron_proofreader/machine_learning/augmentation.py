@@ -12,7 +12,6 @@ from scipy.ndimage import rotate, zoom
 
 import numpy as np
 import random
-import torchvision.transforms as transforms
 
 
 class ImageTransforms:
@@ -22,38 +21,27 @@ class ImageTransforms:
     """
     def __init__(self):
         """
-        Initializes a GeometricTransforms instance that applies geomtery-based
-        augmentation to an image and segmentation patch.
+        Initializes an ImageTransforms instance that applies augmentation to
+        an image and segmentation patch.
         """
         # Instance attributes
-        self.geometric_transforms = [RandomFlip3D(), RandomRotation3D()]
-        self.intensity_transforms = transforms.Compose([RandomNoise3D()])
+        self.transforms = [
+            RandomFlip3D(), RandomRotation3D(), # RandomNoise3D(), RandomContrast()
+        ]
 
-    def __call__(self, patch_id, patches):
+    def __call__(self, patches):
         """
         Applies geometric transforms to the input image and segmentation
         patch.
 
         Parameters
         ----------
-        patch_id : hashable
-            Unique identifier for patches.
         patches : numpy.ndarray
             Image with the shape (2, H, W, D), where "patches[0, ...]" is from
             the input image and "patches[1, ...]" is from the segmentation.
-
-        Returns
-        -------
-        patches : numpy.ndarray
-            Transformed 3D image and segmentation patch.
         """
-        # Geometric transforms
-        for transform in self.geometric_transforms:
-            patches = transform(patches)
-
-        # Intensity transforms
-        patches[0, ...] = self.intensity_transforms(patches[0, ...])
-        return patch_id, patches
+        for transform in self.transforms:
+            transform(patches)
 
 
 # --- Geometric Transforms ---

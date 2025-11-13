@@ -89,6 +89,30 @@ def get_batch(graph, proposals, batch_size, flagged_proposals=set()):
     return batch
 
 
+# --- Data Structures ---
+class TensorDict(dict):
+
+    def to(self, device, non_blocking=False):
+        def move(v):
+            if torch.is_tensor(v):
+                # Ensure float tensors are float32 (not double)
+                if v.dtype == torch.float64:
+                    v = v.float()
+                return v.to(device, non_blocking=non_blocking)
+            elif hasattr(v, "to"):
+                v = v.to(device)
+                # Also normalize float dtype for PyG Data, Batch, etc.
+                if hasattr(v, "pos") and isinstance(v.pos, torch.Tensor):
+                    if v.pos.dtype == torch.float64:
+                        v.pos = v.pos.float()
+                return v
+            elif isinstance(v, dict):
+                return {kk: move(vv) for kk, vv in v.items()}
+            else:
+                return v
+        return TensorDict({k: move(v) for k, v in self.items()})
+
+
 # --- Miscellaneous ---
 def get_inputs(data, device="cpu"):
     """
