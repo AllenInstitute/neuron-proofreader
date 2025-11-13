@@ -4,8 +4,8 @@ Created on Wed July 2 11:00:00 2025
 @author: Anna Grim
 @email: anna.grim@alleninstitute.org
 
-Dataset and dataloader utilities for processing merge site data to train
-model to detect merge errors.
+Dataset and dataloader utilities for processing merge site data to train model
+to detect merge errors.
 
 """
 
@@ -13,16 +13,26 @@ from concurrent.futures import as_completed, ThreadPoolExecutor
 from scipy.spatial import KDTree
 from torch.utils.data import Dataset, DataLoader
 
-import ast
 import networkx as nx
 import numpy as np
 import pandas as pd
 import random
 
-from neuron_proofreader import exp
 from neuron_proofreader.machine_learning.augmentation import ImageTransforms
+from neuron_proofreader.machine_learning.point_clouds import (
+    subgraph_to_point_cloud,
+)
+from neuron_proofreader.merge_proofreading.merge_dataloading import (
+    get_brain_merge_sites
+)
 from neuron_proofreader.skeleton_graph import SkeletonGraph
-from neuron_proofreader.utils import img_util, ml_util, util
+from neuron_proofreader.utils import (
+    geometry_util,
+    img_util,
+    ml_util,
+    swc_util,
+    util,
+)
 
 
 # --- Datasets ---
@@ -124,17 +134,31 @@ class MergeSiteDataset(Dataset):
         Parameters
         ----------
         brain_id : str
-            Unique identifier for the whole-brain dataset.
+            Unique identifier for a whole-brain dataset.
         swc_pointer : str
             Pointer to SWC files to be loaded into a graph.
         """
         # Load graphs
         graph = self.init_graph(swc_pointer)
+
+        # Filter non-merge components
+        idxs = self.merge_sites_df["brain_id"] == brain_id
+        merged_segment_ids = self.merge_sites_df["segment_id"][idxs].values
+        for swc_id in graph.get_swc_ids():
+            segment_id = swc_util.get_segment_id(swc_id)
+            if str(segment_id) not in merged_segment_ids:
+                component_id = util.find_key(
+                    graph.component_id_to_swc_id, swc_id
+                )
+                nodes = graph.get_nodes_with_component_id(component_id)
+                graph.remove_nodes(nodes)
+
+        # Post process fragments
         self.clip_fragments_to_groundtruth(brain_id, graph)
         self.graphs[brain_id] = graph
 
         # Build merge site kdtrees
-        pts = get_gt_merge_sites(self.merge_sites_df, brain_id)
+        pts = get_brain_merge_sites(self.merge_sites_df, brain_id)
         self.merge_site_kdtrees[brain_id] = KDTree(pts)
 
     def load_gt_graphs(self, brain_id, swc_pointer):
@@ -145,7 +169,7 @@ class MergeSiteDataset(Dataset):
         Parameters
         ----------
         brain_id : str
-            Unique identifier for the whole-brain dataset.
+            Unique identifier for a whole-brain dataset.
         swc_pointer : str
             Pointer to SWC files to be loaded into graph.
         """
@@ -159,7 +183,7 @@ class MergeSiteDataset(Dataset):
         Parameters
         ----------
         brain_id : str
-            Unique identifier for the whole-brain dataset.
+            Unique identifier for a whole-brain dataset.
         swc_pointer : str
             Pointer to SWC files to be loaded into graph.
         """
@@ -183,6 +207,7 @@ class MergeSiteDataset(Dataset):
             New dataset instance containing only the specified subset.
         """
         import copy
+
         new_dataset = cls.__new__(cls)
         new_dataset.__dict__ = copy.deepcopy(self.__dict__)
         new_dataset.remove_nonindexed_fragments(idxs)
@@ -270,7 +295,7 @@ class MergeSiteDataset(Dataset):
         Returns
         -------
         brain_id : str
-            Unique identifier of the brain containing the site.
+            Unique identifier for a whole-brain dataset containing the site.
         node : int
             Node ID of the site.
         """
@@ -292,7 +317,7 @@ class MergeSiteDataset(Dataset):
         Returns
         -------
         brain_id : str
-            Unique identifier of the brain containing the site.
+            Unique identifier of the whole-brain dataset containing the site.
         node : int
             Node ID of the site.
         """
@@ -308,9 +333,7 @@ class MergeSiteDataset(Dataset):
             elif outcome > 0.3 and outcome < 0.4:
                 node = util.sample_once(self.graphs[brain_id].get_leafs())
             else:
-                node = util.sample_once(
-                    self.graphs[brain_id].get_branchings()
-                )
+                node = util.sample_once(self.graphs[brain_id].get_branchings())
 
             # Check if node is close to merge site
             xyz = self.graphs[brain_id].node_xyz[node]
@@ -349,25 +372,20 @@ class MergeSiteDataset(Dataset):
         ----------
         subgraph : SkeletonGraph
             Rooted subgraph centered at the site node.
-    
+
         Returns
         -------
         segment_mask : numpy.ndarray
             Binary mask for a given subgraph within a patch.
         """
-        # Initializations
         segment_mask = np.zeros(self.patch_shape)
-        xyz = subgraph.node_xyz[0]
-        center = img_util.to_voxels(xyz, self.anisotropy)
-
-        # Populate label mask
-        for i in subgraph.nodes:
-            xyz = subgraph.node_xyz[i]
-            voxel = img_util.to_voxels(xyz, self.anisotropy)
-            voxel = shift_voxel(voxel, center, self.patch_shape)
-            if img_util.is_contained(voxel, self.patch_shape, buffer=3):
-                i, j, k = voxel
-                segment_mask[i-2:i+3, j-2:j+3, k-2:k+3] = 1
+        for node1, node2 in subgraph.edges:
+            voxel1 = subgraph.get_local_voxel(node1, 0, self.patch_shape)
+            voxel2 = subgraph.get_local_voxel(node2, 0, self.patch_shape)
+            for voxel in geometry_util.make_digital_line(voxel1, voxel2):
+                if img_util.is_contained(voxel, self.patch_shape, buffer=1):
+                    s = img_util.get_slices(voxel, (3, 3, 3))
+                    segment_mask[s] = 1
         return segment_mask
 
     # --- Helpers ---
@@ -379,7 +397,7 @@ class MergeSiteDataset(Dataset):
         Parameters
         ----------
         brain_id : str
-            Unique identifier of whole-brain dataset.
+            Unique identifier for a whole-brain dataset.
         graph : SkeletonGraph
             Fragment graph to be clipped.
         """
@@ -401,7 +419,7 @@ class MergeSiteDataset(Dataset):
         int
             Number of positive and negative examples of merge sites.
         """
-        return 2 * len(self.merge_sites_df)
+        return 2 * len(self.merge_sites_df) - 1
 
     def count_fragments(self):
         """
@@ -491,6 +509,26 @@ class MergeSiteTrainDataset(MergeSiteDataset):
         return patches, subgraph, label
 
     def get_site(self, idx):
+        """
+        Retrieves a merge or nonmerge site specified by the given index.
+
+        Parameters
+        ----------
+        idx : int
+            Index of site to retrieve. Positive indices correspond to merge
+            sites, non-positive indices correspond to non-merge sites.
+
+        Returns
+        -------
+        brain_id : str
+            Unique identifier of the brain containing the site.
+        graph : SkeletonGraph
+            Graph containing the site.
+        node : int
+            Node ID of the site.
+        label : int
+            1 if the example is positive and 0 otherwise.
+        """
         if idx > 0:
             brain_id, node = self.get_indexed_site(self.merge_sites_df, idx)
         else:
@@ -535,7 +573,7 @@ class MergeSiteValDataset(MergeSiteDataset):
         """
         nonmerge_sites = list()
         for i in range(len(self.merge_sites_df)):
-            brain_id, _, node, _ = self.get_random_negative_site()
+            brain_id, node = self.get_random_negative_site()
             xyz = self.graphs[brain_id].node_xyz[node]
             nonmerge_sites.append({"brain_id": brain_id, "xyz": xyz})
         return pd.DataFrame(nonmerge_sites)
@@ -612,6 +650,21 @@ class MergeSiteDataLoader(DataLoader):
             yield self._load_batch(batch_idxs)
 
     def _load_batch(self, batch_idxs):
+        """
+        Loads a batch of samples from the dataset using multithreading.
+
+        Parameters
+        ----------
+        batch_idxs : List[int]
+            Indices of the dataset items to include in the batch.
+
+        Returns
+        -------
+        patches : torch.Tensor
+            Image patches for the batch.
+        labels : torch.Tensor
+            Labels corresponding to each patch.
+        """
         with ThreadPoolExecutor() as executor:
             # Assign threads
             threads = list()
@@ -626,6 +679,21 @@ class MergeSiteDataLoader(DataLoader):
         return ml_util.to_tensor(patches), ml_util.to_tensor(labels)
 
     def _load_multimodal_batch(self, batch_idxs):
+        """
+        Loads a batch of samples from the dataset using multithreading.
+
+        Parameters
+        ----------
+        batch_idxs : List[int]
+            Indices of the dataset items to include in the batch.
+
+        Returns
+        -------
+        batch : Dict[str, torch.Tensor]
+            Dictionary that maps modality names to batch features.
+        labels : torch.Tensor
+            Labels corresponding to each patch.
+        """
         with ThreadPoolExecutor() as executor:
             # Assign threads
             threads = list()
@@ -638,105 +706,13 @@ class MergeSiteDataLoader(DataLoader):
             point_clouds = np.zeros((self.batch_size, 3, 3600))
             for i, thread in enumerate(as_completed(threads)):
                 patches[i], subgraph, labels[i] = thread.result()
-                point_clouds[i] = exp.subgraph_to_point_cloud(subgraph)
+                point_clouds[i] = subgraph_to_point_cloud(subgraph)
 
         # Set batch dictionary
-        batch = ml_util.TensorDict({
-            "img": ml_util.to_tensor(patches),
-            "point_cloud": ml_util.to_tensor(point_clouds)
-        })
+        batch = ml_util.TensorDict(
+            {
+                "img": ml_util.to_tensor(patches),
+                "point_cloud": ml_util.to_tensor(point_clouds),
+            }
+        )
         return batch, ml_util.to_tensor(labels)
-
-
-# -- Helpers --
-def get_brain_segmentation_pairs(merge_sites_df):
-    """
-    Extracts unique (brain_id, segmentation_id) pairs from a merge sites
-    dataframe.
-
-    Parameters
-    ----------
-    merge_sites_df : pandas.DataFrame
-        DataFrame containing merge site information. Must have columns:
-            - 'brain_id' : unique identifier of the whole-brain dataset
-            - 'segmentation_id' : unique identifier of the segmentation
-
-    Returns
-    -------
-    brain_segmentation_pairs : Set[Tuple[str]]
-        Unique (brain_id, segmentation_id) pairs from a merge sites dataframe.
-    """
-    brain_segmentation_pairs = set()
-    for i in range(len(merge_sites_df)):
-        brain_id = merge_sites_df["brain_id"][i]
-        segmentation_id = merge_sites_df["segmentation_id"][i]
-        brain_segmentation_pairs.add((brain_id, segmentation_id))
-    return brain_segmentation_pairs
-
-
-def get_gt_merge_sites(merge_sites_df, brain_id):
-    """
-    Gets the xyz coordinates of ground truth merge sites for a given brain.
-
-    Parameters
-    ----------
-    merge_sites_df : pandas.DataFrame
-        DataFrame containing merge sites, must contain the columns:
-        "brain_id", "segmentation_id", "segment_id", and "xyz".
-    brain_id : str
-        Unique identifier for a whole-brain dataset.
-
-    Returns
-    -------
-    numpy.ndarray
-        Ground-truth merge sites (xyz coordinates) for a given brain.
-    """
-    idx_mask = merge_sites_df["brain_id"] == brain_id
-    return np.array(merge_sites_df.loc[idx_mask, "xyz"].tolist())
-
-
-def load_merge_sites_df(path):
-    """
-    Loads a merge sites dataframe from a CSV file and process its columns.
-
-    Parameters
-    ----------
-    path : str
-        Path to the CSV file containing merge site data. The CSV must include
-        the columns: 'brain_id', 'segment_id', and 'xyz'.
-
-    Returns
-    -------
-    merge_sites_df : pandas.DataFrame
-        Processed dataframe with the following modifications:
-            - 'brain_id' and 'segment_id' converted to strings.
-            - 'xyz' converted from string representation to tuple
-    """
-    merge_sites_df = pd.read_csv(path)
-    merge_sites_df["brain_id"] = merge_sites_df["brain_id"].apply(str)
-    merge_sites_df["segment_id"] = merge_sites_df["segment_id"].apply(str)
-    merge_sites_df["xyz"] = merge_sites_df["xyz"].apply(ast.literal_eval)
-    return merge_sites_df
-
-
-def shift_voxel(voxel, center, patch_shape):
-    """
-    Shifts a voxel coordinate relative to a patch center within a given patch
-    shape.
-
-    Parameters
-    ----------
-    voxel : Tuple[int]
-        Voxel coordinates to be shifted.
-    center : Tuple[int]
-        Voxel coordinates of the patch center.
-    patch_shape : Tuple[int]
-        Shape of the patch used to center the voxel.
-
-    Returns
-    -------
-    Tuple[int]
-        Shifted voxel coordinates.
-    """
-    voxel = [v - c + s // 2 for v, c, s in zip(voxel, center, patch_shape)]
-    return tuple(voxel)

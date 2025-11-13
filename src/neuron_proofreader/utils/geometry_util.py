@@ -628,30 +628,61 @@ def dist(v_1, v_2, metric="l2"):
         return distance.euclidean(v_1, v_2)
 
 
-def make_line(xyz_1, xyz_2, n_steps):
+def make_line(p1, p2, n_steps):
     """
     Generates a series of points representing a straight line between two 3D
     coordinates.
 
     Parameters
     ----------
-    xyz_1 : tuple or array-like
-        The starting 3D coordinate (x, y, z) of the line.
-    xyz_2 : tuple or array-like
-        The ending 3D coordinate (x, y, z) of the line.
+    p1 : Tuple[float]
+        Start coordinate of line.
+    p2 : Tuple[float]
+        End coordinate of line.
     n_steps : int
-        The number of steps to interpolate between the two coordinates.
+        Number of steps to interpolate between the two coordinates.
 
     Returns
     -------
     numpy.ndarray
-        An array of shape (n_steps, 3) containing the interpolated 3D
-        coordinates representing the straight line between xyz_1 and xyz_2.
+        Coordinates representing the straight line between p1 and p2.
     """
-    xyz_1 = np.array(xyz_1)
-    xyz_2 = np.array(xyz_2)
+    p1 = np.array(p1)
+    p2 = np.array(p2)
     t_steps = np.linspace(0, 1, n_steps)
-    return np.array([(1 - t) * xyz_1 + t * xyz_2 for t in t_steps], dtype=int)
+    return np.array([(1 - t) * p1 + t * p2 for t in t_steps], dtype=int)
+
+
+def make_digital_line(p1, p2):
+    """
+    Generates integer voxel coordinates along a 3D line between p1 and p2.
+
+    Parameters
+    ----------
+    p1 : Tuple[int]
+        Start coordinate of line.
+    p2 : Tuple[int]
+        End coordinate of line.
+
+    Returns
+    -------
+    line : numpy.ndarray
+        Voxel coordinates representing the straight line between p1 and p2.
+    """
+    # Convert coordinates to arrays
+    p1 = np.array(p1, dtype=int)
+    p2 = np.array(p2, dtype=int)
+
+    # Determine number of points
+    diff = p2 - p1
+    n = np.max(np.abs(diff))
+    if n == 0:
+        return p1[None, :]
+
+    # Generate line
+    t = np.linspace(0, 1, n + 1)
+    line = np.round(p1 + np.outer(t, diff)).astype(int)
+    return line
 
 
 def normalize(vector, norm="l2"):
@@ -673,7 +704,7 @@ def normalize(vector, norm="l2"):
     return vector / abs(dist(np.zeros((3)), vector, metric=norm))
 
 
-def nearest_neighbor(pts, xyz):
+def nearest_neighbor(pts, query_pt):
     """
     Finds the nearest neighbor in a list of 3D coordinates to a given target
     coordinate.
@@ -681,21 +712,19 @@ def nearest_neighbor(pts, xyz):
     Parameters
     ----------
     pts : numpy.ndarray
-        Array of 3D coordinates to search for the nearest neighbor.
-    xyz : numpy.ndarray
-        The target 3D coordinate xyz to find the nearest neighbor to.
+        3D coordinates to search for the nearest neighbor.
+    query_pt : numpy.ndarray
+        3D coordinate to query.
 
     Returns
     -------
-    Tuple[int, float]
-        A tuple containing the index of the nearest neighbor in "pts" and
-        the distance between the target coordinate `xyz` and its nearest
-        neighbor.
+    best_pt : Tuple[float]
+        Nearest neighbor in a list of 3D coordiantes to a given target.
     """
     best_dist = np.inf
-    best_xyz = None
-    for i, xyz_i in enumerate(pts):
-        if dist(xyz, xyz_i) < best_dist:
-            best_dist = dist(xyz, xyz_i)
-            best_xyz = xyz_i
-    return best_xyz
+    best_pt = None
+    for pt in pts:
+        if dist(query_pt, pt) < best_dist:
+            best_dist = dist(query_pt, pt)
+            best_pt = pt
+    return best_pt

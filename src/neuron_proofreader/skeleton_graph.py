@@ -284,6 +284,50 @@ class SkeletonGraph(nx.Graph):
         """
         return [i for i in self.nodes if self.degree[i] == 1]
 
+    def get_voxel(self, i):
+        """
+        Gets the voxel coordinate of the given node.
+
+        Parameters
+        ----------
+        i : int
+            Node ID.
+
+        Returns
+        -------
+        float
+            Voxel coordinate of the given node.
+        """
+        return img_util.to_voxels(self.node_xyz[i], self.anisotropy)
+
+    def get_local_voxel(self, node, node_center, patch_shape):
+        """
+        Computes the local voxel coordinate of the given node within the image
+        patch defined by "node_center" and "patch_shape".
+
+        Parameters
+        ----------
+        node : int
+            Node in image patch.
+        node_center : int
+            Node at the center of an image patch.
+        patch_shape : Tuple[int]
+            Shape of the patch used to center the voxel.
+
+        Returns
+        -------
+        Tuple[int]
+            Local voxel coordinate of the given node within the image patch
+            defined by "node_center" and "patch_shape".
+        """
+        # Get global voxel coordinates
+        voxel = self.get_voxel(node)
+        voxel_center = self.get_voxel(node_center)
+
+        # Compute local voxel coordinate
+        offset = [c - s // 2 for c, s in zip(voxel_center, patch_shape)]
+        return tuple([v - o for v, o in zip(voxel, offset)])
+
     def get_nodes_with_component_id(self, component_id):
         """
         Gets all nodes with the given componenet ID.
@@ -302,7 +346,7 @@ class SkeletonGraph(nx.Graph):
 
     def get_rooted_subgraph(self, root, radius):
         # Initializations
-        subgraph = SkeletonGraph()
+        subgraph = SkeletonGraph(anisotropy=self.anisotropy)
         subgraph.add_node(0)
         idxs = [root]
 
@@ -416,6 +460,42 @@ class SkeletonGraph(nx.Graph):
             zip_writer.writestr(filename, text_buffer.getvalue())
 
     # --- Helpers ---
+    def dist(self, i, j):
+        """
+        Computes the Euclidean distance between nodes "i" and "j".
+
+        Parameters
+        ----------
+        i : int
+            Node ID.
+        j : int
+            Node ID.
+
+        Returns
+        -------
+        float
+            Euclidean distance between nodes "i" and "j".
+        """
+        return geometry_util.dist(self.node_xyz[i], self.node_xyz[j])
+
+    def find_closest_node(self, xyz):
+        """
+        Finds the closest node to the given xyz coordinate.
+
+        Parameters
+        ----------
+        xyz : ArrayLike
+            Coordinate to be queried.
+
+        Returns
+        -------
+        node : int
+            Closest node to the given xyz coordinate.
+        """
+        assert self.kdtree, "KD-Tree attribute has not be set!"
+        _, node = self.kdtree.query(xyz)
+        return node
+
     def path_length(self, max_depth=np.inf, root=None):
         """
         Computes the path length of the connected component that contains the
@@ -443,55 +523,8 @@ class SkeletonGraph(nx.Graph):
                 break
         return length
 
-    def dist(self, i, j):
-        """
-        Computes the Euclidean distance between nodes "i" and "j".
-
-        Parameters
-        ----------
-        i : int
-            Node ID.
-        j : int
-            Node ID.
-
-        Returns
-        -------
-        float
-            Euclidean distance between nodes "i" and "j".
-        """
-        return geometry_util.dist(self.node_xyz[i], self.node_xyz[j])
-
-    def get_voxel(self, i):
-        """
-        Gets the voxel coordinate of the given node.
-
-        Parameters
-        ----------
-        i : int
-            Node ID.
-
-        Returns
-        -------
-        float
-            Voxel coordinate of the given node.
-        """
-        return img_util.to_voxels(self.node_xyz[i], self.anisotropy)
-
     def set_kdtree(self):
         """
         Initializes KD-Tree from node xyz coordinates.
         """
         self.kdtree = KDTree(self.node_xyz)
-
-    def find_closest_node(self, xyz):
-        """
-        Finds the closest node to the given xyz coordinate.
-
-        Parameters
-        ----------
-        xyz : ArrayLike
-            Coordinate to be queried.
-        """
-        assert self.kdtree, "KD-Tree attribute has not be set!"
-        _, idx = self.kdtree.query(xyz)
-        return idx
