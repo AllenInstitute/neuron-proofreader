@@ -295,7 +295,7 @@ class MergeSiteDataset(Dataset):
         Returns
         -------
         brain_id : str
-            Unique identifier for a whole-brain dataset containing the site.
+            Unique identifier for the whole-brain dataset containing the site.
         node : int
             Node ID of the site.
         """
