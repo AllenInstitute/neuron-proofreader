@@ -24,6 +24,21 @@ from neuron_proofreader.utils import (
 
 
 class SkeletonGraph(nx.Graph):
+    """
+    A custom subclass of NetworkX tailored for graphs constructed from SWC
+    files, where each connected component represents a single SWC file. The
+    graph is organized hierarchically into two levels of representation:
+
+        1. Irreducible structure — reduced graph where edges represent paths
+           between leaf and branching nodes in the original morphology.
+
+        2. Dense structure — the full, fine-grained graph reconstructed from
+           the SWC files, preserving detailed spatial geometry.
+
+    Attributes
+    ----------
+    ...
+    """
 
     def __init__(
         self,
@@ -121,7 +136,7 @@ class SkeletonGraph(nx.Graph):
 
     def _add_edge(self, edge_id, attrs, component_id):
         """
-        Adds an edge to "self".
+        Adds an edge to the graph.
 
         Parameters
         ----------
@@ -161,7 +176,22 @@ class SkeletonGraph(nx.Graph):
                 self.node_component_id[new_id] = component_id
         self.add_edge(new_id, end)
 
+    # --- Update Structure ---
+    def reassign_component_ids(self):
+        """
+        Reassigns component IDs for all connected components in the graph.
+        """
+        component_id_to_swc_id = dict()
+        for i, nodes in enumerate(nx.connected_components(self)):
+            nodes = np.array(list(nodes), dtype=int)
+            component_id_to_swc_id[i + 1] = self.get_swc_id(nodes[0])
+            self.node_component_id[nodes] = i + 1
+        self.component_id_to_swc_id = component_id_to_swc_id
+
     def relabel_nodes(self):
+        """
+        Reassigns contiguous node IDs and update all dependent structures.
+        """
         # Set node ids
         old_node_ids = np.array(self.nodes, dtype=int)
         new_node_ids = np.arange(len(old_node_ids))
@@ -180,21 +210,32 @@ class SkeletonGraph(nx.Graph):
         for (i, j) in old_irr_edge_ids:
             self.irreducible.add_edge(old_to_new[i], old_to_new[j])
 
+        # Update attributes
         self.node_radius = self.node_radius[old_node_ids]
         self.node_xyz = self.node_xyz[old_node_ids]
         self.node_component_id = self.node_component_id[old_node_ids]
-        self.reassign_component_ids()
 
-    def reassign_component_ids(self):
+        self.reassign_component_ids()
+        self.set_kdtree()
+
+    def remove_nodes(self, nodes, relabel_nodes=True):
         """
-        Reassigns component IDs for all connected components in the graph.
+        Removes nodes from both the main graph and the irreducible subgraph.
+
+        Parameters
+        ----------
+        nodes : container
+            Node IDs to remove from the graph.
+        relabel_nodes : bool, optional
+            Indication of whether to relabel nodes. Default is True.
         """
-        component_id_to_swc_id = dict()
-        for i, nodes in enumerate(nx.connected_components(self)):
-            nodes = np.array(list(nodes), dtype=int)
-            component_id_to_swc_id[i + 1] = self.get_swc_id(nodes[0])
-            self.node_component_id[nodes] = i + 1
-        self.component_id_to_swc_id = component_id_to_swc_id
+        # Remove nodes
+        self.remove_nodes_from(nodes)
+        self.irreducible.remove_nodes_from(nodes)
+
+        # Update node labels (if applicable)
+        if relabel_nodes:
+            self.relabel_nodes()
 
     # --- Getters ---
     def get_branchings(self):
@@ -341,7 +382,7 @@ class SkeletonGraph(nx.Graph):
             Root node of connected component to be written to an SWC file.
         preserve_radius : bool, optional
             Indication of whether to preserve radii of nodes or use default
-            radius of 2um. Default is False.
+            radius of 2μm. Default is False.
         """
         # Subroutines
         def write_entry(node, parent):
@@ -436,13 +477,21 @@ class SkeletonGraph(nx.Graph):
         """
         return img_util.to_voxels(self.node_xyz[i], self.anisotropy)
 
-    def init_kdtree(self):
+    def set_kdtree(self):
         """
         Initializes KD-Tree from node xyz coordinates.
         """
         self.kdtree = KDTree(self.node_xyz)
 
-    def query_node(self, xyz):
-        # this breaks if node is deleted after kdtree was built
+    def find_closest_node(self, xyz):
+        """
+        Finds the closest node to the given xyz coordinate.
+
+        Parameters
+        ----------
+        xyz : ArrayLike
+            Coordinate to be queried.
+        """
+        assert self.kdtree, "KD-Tree attribute has not be set!"
         _, idx = self.kdtree.query(xyz)
         return idx
