@@ -14,6 +14,8 @@ import ast
 import numpy as np
 import pandas as pd
 
+TEST_BRAIN = "653159"
+
 
 # --- Load Skeletons ---
 def load_fragments(dataset, merge_sites_df, is_test=False):
@@ -186,7 +188,7 @@ def get_brain_ids(merge_sites_df, is_test=False):
     List[str]
         Brain IDs of datasests to be loaded.
     """
-    return ["653159"] if is_test else merge_sites_df["brain_id"].unique()
+    return [TEST_BRAIN] if is_test else merge_sites_df["brain_id"].unique()
 
 
 def read_idxs(path, is_test=False):
@@ -207,4 +209,7 @@ def read_idxs(path, is_test=False):
         Indices extracted from the CSV file.
     """
     idxs = list(pd.read_csv(path)["Indexes"])
-    return np.arange(128) if is_test else idxs
+    if is_test:
+        return merge_sites_df[merge_sites_df["brain_id"] == TEST_BRAIN]
+    else:
+        return merge_sites_df

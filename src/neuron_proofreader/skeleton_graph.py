@@ -127,7 +127,6 @@ class SkeletonGraph(nx.Graph):
                 - "edges": dictionary of edge attributes.
         component_id : int
             Unique identifier for the connected component being added.
-        
         """
         # Set component id
         self.component_id_to_swc_id[component_id] = irreducibles["swc_id"]
