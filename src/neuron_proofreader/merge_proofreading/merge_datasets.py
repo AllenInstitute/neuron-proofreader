@@ -187,7 +187,7 @@ class MergeSiteDataset(Dataset):
         swc_pointer : str
             Pointer to SWC files to be loaded into graph.
         """
-        self.img_readers[brain_id] = img_util.init_reader(img_path)
+        self.img_readers[brain_id] = img_util.TensorStoreReader(img_path)
 
     # --- Create Subclass Dataset ---
     def subset(self, cls, idxs):
@@ -378,14 +378,16 @@ class MergeSiteDataset(Dataset):
         segment_mask : numpy.ndarray
             Binary mask for a given subgraph within a patch.
         """
+        center = subgraph.get_voxel(0)
         segment_mask = np.zeros(self.patch_shape)
         for node1, node2 in subgraph.edges:
-            voxel1 = subgraph.get_local_voxel(node1, 0, self.patch_shape)
-            voxel2 = subgraph.get_local_voxel(node2, 0, self.patch_shape)
-            for voxel in geometry_util.make_digital_line(voxel1, voxel2):
-                if img_util.is_contained(voxel, self.patch_shape, buffer=1):
-                    s = img_util.get_slices(voxel, (3, 3, 3))
-                    segment_mask[s] = 1
+            # Get local voxel coordinates
+            voxel1 = subgraph.get_local_voxel(node1, center, self.patch_shape)
+            voxel2 = subgraph.get_local_voxel(node2, center, self.patch_shape)
+
+            # Populate mask
+            voxels = geometry_util.make_digital_line(voxel1, voxel2)
+            img_util.annotate_voxels(segment_mask, voxels, kernel_size=3)
         return segment_mask
 
     # --- Helpers ---

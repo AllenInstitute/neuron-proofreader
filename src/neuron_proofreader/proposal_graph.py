@@ -52,6 +52,7 @@ class ProposalGraph(SkeletonGraph):
         segmentation_path=None,
         smooth_bool=True,
         soma_centroids=None,
+        use_anisotropy=True,
         verbose=False,
     ):
         """
@@ -82,25 +83,16 @@ class ProposalGraph(SkeletonGraph):
             Default is True.
         soma_centroids : List[Tuple[float]] or None, optional
             Phyiscal coordinates of soma centroids. Default is None.
+        use_anisotropy : bool, optional
+            Indication of whether to apply anisotropy to SWC files. Note: set
+            to False when SWC files are in physical coordinates. Default is
+            False.
         verbose : bool, optional
             Indication of whether to display a progress bar while building
             ProposalGraph. Default is True.
         """
         # Call parent class
         super().__init__()
-
-        # Graph Loader
-        self.graph_loader = gutil.GraphLoader(
-            anisotropy=anisotropy,
-            min_size=min_size,
-            node_spacing=node_spacing,
-            prune_depth=prune_depth,
-            remove_high_risk_merges=remove_high_risk_merges,
-            segmentation_path=segmentation_path,
-            smooth_bool=smooth_bool,
-            soma_centroids=soma_centroids,
-            verbose=verbose,
-        )
 
         # Instance attributes - Graph
         self.anisotropy = anisotropy
@@ -116,6 +108,20 @@ class ProposalGraph(SkeletonGraph):
         self.proposals = set()
         self.n_merges_blocked = 0
         self.n_proposals_blocked = 0
+
+        # Graph Loader
+        anisotropy = anisotropy if use_anisotropy else (1.0, 1.0, 1.0)
+        self.graph_loader = gutil.GraphLoader(
+            anisotropy=anisotropy,
+            min_size=min_size,
+            node_spacing=node_spacing,
+            prune_depth=prune_depth,
+            remove_high_risk_merges=remove_high_risk_merges,
+            segmentation_path=segmentation_path,
+            smooth_bool=smooth_bool,
+            soma_centroids=soma_centroids,
+            verbose=verbose,
+        )
 
     def load(self, swc_pointer):
         """

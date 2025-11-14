@@ -50,8 +50,8 @@ def run(graph, search_radius, complex_bool=False, long_range_bool=True):
     # Main
     for leaf in iterable:
         # Check fragment satisfies size requirement
-        length = graph.path_length_of_component(
-            leaf, graph.min_size_with_proposals
+        length = graph.path_length(
+            max_depth=graph.min_size_with_proposals, root=leaf
         )
         if length < graph.min_size_with_proposals:
             continue
