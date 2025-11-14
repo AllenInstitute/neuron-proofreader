@@ -78,11 +78,11 @@ class FeatureGenerator:
         self.patch_shape = patch_shape
 
         # Readers
-        self.img_reader = img_util.init_reader(img_path)
+        self.img_reader = img_util.TensorStoreReader(img_path)
         if segmentation_path:
-            self.labels_reader = img_util.init_reader(segmentation_path)
+            self.segmentation_reader = img_util.TensorStoreReader(segmentation_path)
         else:
-            self.labels_reader = None
+            self.segmentation_reader = None
 
     @classmethod
     def get_n_profile_points(cls):
@@ -145,10 +145,7 @@ class FeatureGenerator:
         """
         # Generate features
         skel_features = self.proposal_skeletal(proposals, radius)
-        if self.is_multimodal:
-            patches, profiles = self.proposal_patches(proposals)
-        else:
-            profiles = self.proposal_profiles(proposals)
+        patches, profiles = self.proposal_patches(proposals)
 
         # Concatenate image profiles
         for p in proposals:
@@ -245,33 +242,6 @@ class FeatureGenerator:
         return skeletal_features
 
     # --- Image features ---
-    def proposal_profiles(self, proposals):
-        """
-        Generates an image intensity profile along proposals.
-
-        Parameters
-        ----------
-        proposals : List[Frozenset[int]]
-            Proposals for which features will be generated.
-
-        Returns
-        -------
-        dict
-            Dictonary such that each item is a proposal id and image
-            intensity profile.
-        """
-        with ThreadPoolExecutor() as executor:
-            # Assign threads
-            threads = list()
-            for proposal in proposals:
-                threads.append(executor.submit(self.get_profile, proposal))
-
-            # Store results
-            profiles = dict()
-            for thread in as_completed(threads):
-                profiles.update(thread.result())
-        return profiles
-
     def proposal_patches(self, proposals):
         """
         Generates an image intensity profile along the proposal.
@@ -301,48 +271,9 @@ class FeatureGenerator:
                 profiles[proposal] = profile_i
         return patches, profiles
 
-    def get_profile(self, proposal):
-        """
-        Gets the image intensity profile given xyz coordinates that form a
-        path.
-
-        Parameters
-        ----------
-        proposal : Frozenset[int]
-            Identifier of profile.
-
-        Returns
-        -------
-        dict
-            Dictionary that maps an ID (e.g. node, edge, or proposal) to its
-            profile.
-        """
-        # Compute bounding box
-        xyz_pts = self.graph.proposal_attr(proposal, "xyz")
-        center, shape = self.compute_bbox(xyz_pts)
-
-        # Read image patch
-        patch = self.img_reader.read(center, shape)
-        mx = np.percentile(patch, 99.9)
-        patch = np.minimum(patch / mx, 1)
-
-        # Get image profile
-        profile = list()
-        for voxel in self.get_profile_line(center, shape, proposal):
-            try:
-                profile.append(patch[tuple(voxel)])
-            except:
-                profile.append(0)
-        profile.extend([np.mean(profile), np.std(profile)])
-        return {proposal: profile}
-
     def get_patches(self, proposal):
         # Compute bounding box
-        xyz_pts = self.graph.proposal_attr(proposal, "xyz")
-        center, shape = self.compute_bbox(xyz_pts)
-
-        # Compute profile coordinates
-        # to do...
+        center, shape = self.compute_bbox(proposal)
 
         # Get patches
         img_patch, profile = self.get_img_patch(center, shape, proposal)
@@ -351,29 +282,20 @@ class FeatureGenerator:
         return proposal, patches, profile
 
     def get_img_patch(self, center, shape, proposal):
-        # Get image patch
-        try:
-            patch = self.img_reader.read(center, shape)
-            intensity = np.percentile(patch, 99.9)
-            patch = np.minimum(patch / intensity, 1)
-        except Exception as e:
-            print("Except:", e)
-            print("proposal length:", self.graph.proposal_length(proposal))
-            print("center:", center)
-            print("shape:", shape)
-            print("img.shape:", self.img_reader.shape())
-            patch = np.zeros(shape)
+        # Read image patch
+        patch = self.img_reader.read(center, shape)
+        patch = img_util.normalize(np.minimum(patch, 300))
 
         # Get image profile
-        profile_path = self.get_profile_line(center, shape, proposal)
+        profile_path = self.get_profile_line(center, shape, proposal, 16)
         profile = [patch[tuple(voxel)] for voxel in profile_path]
         profile.extend([np.mean(profile), np.std(profile)])
         return img_util.resize(patch, self.patch_shape), profile
 
     def get_label_patch(self, center, shape, proposal):
         # Read label patch
-        if self.labels_reader:
-            patch = self.labels_reader.read(center, shape)
+        if self.segmentation_reader:
+            patch = self.segmentation_reader.read(center, shape)
         else:
             patch = np.zeros(shape)
 
@@ -386,34 +308,35 @@ class FeatureGenerator:
         return img_util.resize(patch, self.patch_shape)
 
     def annotate_proposal(self, patch, center, shape, proposal):
-        profile_path = self.get_profile_line(center, shape, proposal, False)
-        img_util.fill_path(patch, profile_path, val=3)
+        profile_path = self.get_profile_line(center, shape, proposal)
+        img_util.annotate_voxels(patch, profile_path, kernel_size=5, val=3)
 
     def annotate_edge(self, patch, center, shape, i):
         edge_xyz = np.vstack(self.graph.edge_attr(i, "xyz"))
         voxels = self.get_local_coordinates(center, shape, edge_xyz)
-        voxels = get_inbounds(voxels, patch.shape)
-        img_util.fill_path(patch, voxels, val=2)
+        img_util.annotate_voxels(patch, voxels, kernel_size=5, val=2)
 
     # --- Helpers ---
-    def compute_bbox(self, xyz_pts):
+    def compute_bbox(self, proposal):
         # Compute bounds
-        voxels = [self.to_voxels(xyz) for xyz in xyz_pts]
-        bounds = img_util.get_minimal_bbox(voxels, self.context)
+        node1, node2 = proposal
+        voxel1 = self.graph.get_voxel(node1)
+        voxel2 = self.graph.get_voxel(node2)
+        bounds = img_util.get_minimal_bbox([voxel1, voxel2], self.context)
 
         # Transform into square
-        center = np.mean(voxels, axis=0).astype(int)
+        center = [int((v1 + v2) / 2) for v1, v2 in zip(voxel1, voxel2)]
         length = np.max([u - l for u, l in zip(bounds["max"], bounds["min"])])
         return center, (length, length, length)
 
-    def get_profile_line(self, center, shape, proposal, fixed_len=True):
-        # Convert proposal xyz to local voxel coordinates
-        proposal_xyz = self.graph.proposal_attr(proposal, "xyz")
-        voxels = self.get_local_coordinates(center, shape, proposal_xyz)
-
-        # Draw line along proposal
-        n_pts = 16 if fixed_len else geometry_util.dist(voxels[0], voxels[-1])
-        return geometry_util.make_line(voxels[0], voxels[-1], int(n_pts))
+    def get_profile_line(self, center, shape, proposal, n_points=None):
+        node1, node2 = proposal
+        voxel1 = self.graph.get_local_voxel(node1, center, shape)
+        voxel2 = self.graph.get_local_voxel(node2, center, shape)
+        if n_points:
+            return geometry_util.make_line(voxel1, voxel2, n_points)
+        else:
+            return geometry_util.make_digital_line(voxel1, voxel2)
 
     def get_local_coordinates(self, center, shape, xyz_pts):
         offset = np.array([c - s // 2 for c, s in zip(center, shape)])
@@ -473,16 +396,6 @@ def init_idx_mapping(idx_to_id):
 
 
 # --- Helpers ---
-def get_inbounds(voxels, shape):
-    filtered_voxels = list()
-    for voxel in voxels:
-        lower_bound_bool = all(v > 0 for v in voxel)
-        upper_bound_bool = all(v < s - 1 for v, s in zip(voxel, shape))
-        if lower_bound_bool and upper_bound_bool:
-            filtered_voxels.append(voxel)
-    return filtered_voxels
-
-
 def get_node_dict():
     """
     Returns the number of features for different node types.
@@ -490,7 +403,7 @@ def get_node_dict():
     Returns
     -------
     dict
-        A dictionary containing the number of features for each node type
+        Dictionary containing the number of features for each node type
     """
     return {"branch": 2, "proposal": 34}
 

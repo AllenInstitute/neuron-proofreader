@@ -9,14 +9,14 @@ Helper routines for reading and processing images.
 """
 
 from abc import ABC, abstractmethod
-from cloudvolume import CloudVolume
+from matplotlib.colors import ListedColormap
 from scipy.ndimage import zoom
 
-import numpy as np
+import json
 import matplotlib.pyplot as plt
-import s3fs
+import numpy as np
+import os
 import tensorstore as ts
-import zarr
 
 from neuron_proofreader.utils import util
 
@@ -37,7 +37,6 @@ class ImageReader(ABC):
         is_segmentation : bool, optional
             Indication of whether image is a segmentation.
         """
-        self.img = None
         self.img_path = img_path
         self._load_image()
 
@@ -112,12 +111,17 @@ class TensorStoreReader(ImageReader):
         img_path : str
             Path to image.
         """
-        self.driver = self.init_driver(img_path)
+        self.driver = self.get_driver(img_path)
         super().__init__(img_path)
 
-    def init_driver(self, img_path):
+    def get_driver(self, img_path):
         """
         Gets the storage driver needed to read the image.
+
+        Parameters
+        ----------
+        img_path : str
+            Path to image
 
         Returns
         -------
@@ -158,12 +162,6 @@ class TensorStoreReader(ImageReader):
                 "recheck_cached_data": "open",
             }
         ).result()
-
-        # Check whether to permute axes
-        if bucket_name == "allen-nd-goog":
-            self.img = self.img[ts.d["channel"][0]]
-            #self.img = self.img[ts.d[0].transpose[2]]
-            #self.img = self.img[ts.d[0].transpose[1]]
 
     def read(self, center, shape):
         """
@@ -206,81 +204,144 @@ class TensorStoreReader(ImageReader):
         return thread_id, int(self.img[voxel].read().result())
 
 
-class ZarrReader(ImageReader):
+# --- Visualization ---
+def make_segmentation_colormap(mask, seed=42):
     """
-    Class that reads image with Zarr library.
-    """
-
-    def __init__(self, img_path):
-        """
-        Instantiates ZarrReader object.
-
-        Parameters
-        ----------
-        img_path : str
-            Path to image.
-        """
-        super().__init__(img_path)
-
-    def _load_image(self):
-        """
-        Loads image using the Zarr library.
-        """
-        store = s3fs.S3Map(root=self.img_path, s3=s3fs.S3FileSystem(anon=True))
-        self.img = zarr.open(store, mode="r")
-        assert self.img.ndim in (3, 5), f"Invalid Img Shape {self.img.shape}!"
-
-
-def init_reader(img_path):
-    """
-    Initializes an image reader based on where image is stored in cloud.
+    Creates a matplotlib ListedColormap for a segmentation mask. Ensures label
+    0 maps to black and all other labels get distinct random colors.
 
     Parameters
     ----------
-    img_path : str
-        Path to image.
+    mask : numpy.ndarray
+        Segmentation mask with integer labels. Assumes label 0 is background.
+    seed : int, optional
+        Random seed for color reproducibility. Default is 42.
 
     Returns
     -------
-    ImageReader
-        Image reader.
+    ListedColormap
+        Colormap with black for background and unique colors for other labels.
     """
-    if util.is_s3_path(img_path):
-        return ZarrReader(img_path)
-    else:
-        return TensorStoreReader(img_path)
+    n_labels = int(mask.max()) + 1
+    rng = np.random.default_rng(seed)
+    colors = [(0, 0, 0)]
+    colors += list(rng.uniform(0.2, 1.0, size=(n_labels - 1, 3)))
+    return ListedColormap(colors)
 
 
-# --- Helpers ---
-def fill_path(img, path, val=-1):
+def plot_mips(img, vmax=None):
     """
-    Fills a given path in a 3D image array with a specified value.
+    Plots the Maximum Intensity Projections (MIPs) of a 3D image along the XY,
+    XZ, and YZ axes.
 
     Parameters
     ----------
     img : numpy.ndarray
-        The 3D image array to fill the path in.
-    path : iterable
-        A list or iterable containing 3D coordinates (x, y, z) representing
-        the path.
-    val : int, optional
-        The value to fill the path with. Default is -1.
+        Input 3D image to generate MIPs from.
+    vmax : None or float
+        Brightness intensity used as upper limit of the colormap. Default is
+        None.
+    """
+    vmax = vmax or np.percentile(img, 99.9)
+    fig, axs = plt.subplots(1, 3, figsize=(10, 4))
+    axs_names = ["XY", "XZ", "YZ"]
+    for i in range(3):
+        mip = np.max(img, axis=i)
+        axs[i].imshow(mip, vmax=vmax)
+        axs[i].set_title(axs_names[i], fontsize=16)
+        axs[i].set_xticks([])
+        axs[i].set_yticks([])
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_segmentation_mips(segmentation):
+    """
+    Plots maximum intensity projections (MIPs) of a segmentation.
+
+    Parameters
+    ----------
+    segmentation : numpy.ndarray
+        Segmentation to be visualized.
+    """
+    # Initialize plot
+    fig, axs = plt.subplots(1, 3, figsize=(10, 4))
+    axs_names = ["XY", "XZ", "YZ"]
+    cmap = make_segmentation_colormap(segmentation)
+
+    # Plot MIPs
+    for i in range(3):
+        mip = np.max(segmentation, axis=i)
+
+        axs[i].imshow(mip, cmap=cmap, interpolation="none")
+        axs[i].set_title(axs_names[i], fontsize=16)
+        axs[i].set_xticks([])
+        axs[i].set_yticks([])
+    plt.tight_layout()
+
+
+# --- Helpers ---
+def compute_iou3d(c1, c2, s1, s2):
+    """
+    Computes IoU between two 3D axis-aligned boxes.
+
+    Parameters
+    ----------
+    center1 : Tuple[int]
+        3D center coordinate of box 1.
+    center2 : Tuple[int]
+        3D center coordinate of box 2.
+    shape1 : Tuple[int]
+        Shape of box for center 1.
+    shape2 : Tuple[int]
+        Shape of box for center 2.
 
     Returns
     -------
-    numpy.ndarray
-        The modified image array with the path filled with the specified value.
+    float
+        IoU between the boxes
     """
-    for xyz in path:
-        x, y, z = tuple(np.floor(xyz).astype(int))
-        img[x - 2: x + 3, y - 2: y + 3, z - 2: z + 3] = val
-    return img
+    c1, s1, c2, s2 = map(np.asarray, (c1, s1, c2, s2))
+    min1, max1 = c1 - s1 / 2, c1 + s1 / 2
+    min2, max2 = c2 - s2 / 2, c2 + s2 / 2
+
+    overlap_min = np.maximum(min1, min2)
+    overlap_max = np.minimum(max1, max2)
+    overlap = np.maximum(overlap_max - overlap_min, 0)
+    inter = np.prod(overlap)
+    vol1 = np.prod(s1)
+    vol2 = np.prod(s2)
+    union = vol1 + vol2 - inter
+    return inter / union if union > 0 else 0
 
 
-def find_img_path(bucket_name, root_dir, dataset_name):
+def annotate_voxels(img, voxels, kernel_size=3, val=1):
     """
-    Finds the path to an image in a GCS bucket for the dataset given by
-    "dataset_name".
+    Annotates a set of voxel coordinates in a 3D image by filling a patch
+    around each voxel with a given value.
+
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Image to modify in-place.
+    voxels : Iterable[Tuple[int]]
+        Voxel coordinates to annotate.
+    kernel_size : int, optional
+        Size of kernel used to fill around each voxel. Default is 3.
+    val : int, optional
+        Value to write into each patch. Default is 1.
+    """
+    buffer = (kernel_size - 1) // 2
+    shape = (kernel_size, kernel_size, kernel_size)
+    for voxel in voxels:
+        if is_contained(voxel, img.shape, buffer=buffer):
+            s = get_slices(voxel, shape)
+            img[s] = val
+
+
+def find_img_path(bucket_name, root_dir, brain_id):
+    """
+    Finds the path to a whole-brain dataset stored in a GCS bucket.
 
     Parameters:
     ----------
@@ -298,8 +359,9 @@ def find_img_path(bucket_name, root_dir, dataset_name):
         Path of the found dataset subdirectory within the specified GCS bucket.
     """
     for subdir in util.list_gcs_subdirectories(bucket_name, root_dir):
-        if dataset_name in subdir:
-            return subdir + "whole-brain/fused.zarr/"
+        if brain_id in subdir:
+            img_path = f"gs://{bucket_name}/{subdir}whole-brain/fused.zarr"
+            return img_path
     raise f"Dataset not found in {bucket_name} - {root_dir}"
 
 
@@ -403,7 +465,7 @@ def get_slices(center, shape):
     Tuple[slice]
         Slice objects used to index into the image.
     """
-    start = [c - d // 2 for c, d in zip(center, shape)]
+    start = [int(c - d // 2) for c, d in zip(center, shape)]
     return tuple(slice(s, s + d) for s, d in zip(start, shape))
 
 
@@ -433,60 +495,35 @@ def is_contained(voxel, shape, buffer=0):
     return contained_above and contained_below
 
 
-def is_neuroglancer_precomputed(path):
+def is_neuroglancer_precomputed(img_path):
     """
-    Checks if the path points to a neuroglancer precomputed dataset.
+    Checks if the path points to a Neuroglancer precomputed dataset.
 
     Parameters
     ----------
-    path : str
-        Path to be checked.
+    img_path : str
+        Path to be checked (can be local, GCS, or S3).
 
     Returns
     -------
     bool
-        Indication of whether the path points to a neuroglancer precomputed
-        dataset.
+        True if the path appears to be a Neuroglancer precomputed dataset.
     """
+    info_path = os.path.join(img_path, "info")
     try:
-        vol = CloudVolume(path)
-        return all(k in vol.info for k in ["data_type", "scales", "type"])
+        spec = {
+            "driver": "file",
+            "kvstore": {
+                "driver": "file",
+                "path": info_path
+            }
+        }
+        info_store = ts.open(spec, open=True).result()
+        info_json = info_store.read().result().decode("utf-8")
+        info = json.loads(info_json)
+        return all(k in info for k in ["data_type", "scales", "type"])
     except Exception:
         return False
-
-
-def compute_iou3d(c1, c2, s1, s2):
-    """
-    Computes IoU between two 3D axis-aligned boxes.
-
-    Parameters
-    ----------
-    center1 : Tuple[int]
-        3D center coordinate of box 1.
-    center2 : Tuple[int]
-        3D center coordinate of box 2.
-    shape1 : Tuple[int]
-        Shape of box for center 1.
-    shape2 : Tuple[int]
-        Shape of box for center 2.
-
-    Returns
-    -------
-    float
-        IoU between the boxes
-    """
-    c1, s1, c2, s2 = map(np.asarray, (c1, s1, c2, s2))
-    min1, max1 = c1 - s1 / 2, c1 + s1 / 2
-    min2, max2 = c2 - s2 / 2, c2 + s2 / 2
-
-    overlap_min = np.maximum(min1, min2)
-    overlap_max = np.minimum(max1, max2)
-    overlap = np.maximum(overlap_max - overlap_min, 0)
-    inter = np.prod(overlap)
-    vol1 = np.prod(s1)
-    vol2 = np.prod(s2)
-    union = vol1 + vol2 - inter
-    return inter / union if union > 0 else 0
 
 
 def normalize(img):
@@ -505,8 +542,8 @@ def normalize(img):
         Normalized image.
     """
     try:
-        mn, mx = np.percentile(img, [1, 99.5])
-        return np.clip((img - mn) / max((mx - mn), 1), 0, 1)
+        mn, mx = np.percentile(img, [1, 99.9])
+        return np.clip((img - mn) / (mx - mn + 1e-5), 0, 1)
     except Exception as e:
         print("Image Normalization Failed:", e)
         return np.zeros(img.shape)
@@ -534,31 +571,6 @@ def pad_to_shape(img, target_shape, pad_value=0):
     for s, t in zip(img.shape, target_shape):
         pads.append(((t - s) // 2, (t - s + 1) // 2))
     return np.pad(img, pads, mode='constant', constant_values=pad_value)
-
-
-def plot_mips(img, vmax=None):
-    """
-    Plots the Maximum Intensity Projections (MIPs) of a 3D image along the XY,
-    XZ, and YZ axes.
-
-    Parameters
-    ----------
-    img : numpy.ndarray
-        Input 3D image to generate MIPs from.
-    vmax : None or float
-        Brightness intensity used as upper limit of the colormap. Default is None.
-    """
-    vmax = vmax or np.percentile(img, 99.9)
-    fig, axs = plt.subplots(1, 3, figsize=(10, 4))
-    axs_names = ["XY", "XZ", "YZ"]
-    for i in range(3):
-        mip = np.max(img, axis=i)
-        axs[i].imshow(mip, vmax=vmax)
-        axs[i].set_title(axs_names[i], fontsize=16)
-        axs[i].set_xticks([])
-        axs[i].set_yticks([])
-    plt.tight_layout()
-    plt.show()
 
 
 def resize(img, new_shape):

@@ -300,32 +300,28 @@ class SkeletonGraph(nx.Graph):
         """
         return img_util.to_voxels(self.node_xyz[i], self.anisotropy)
 
-    def get_local_voxel(self, node, node_center, patch_shape):
+    def get_local_voxel(self, node, center, patch_shape):
         """
         Computes the local voxel coordinate of the given node within the image
-        patch defined by "node_center" and "patch_shape".
+        patch defined by "center" and "patch_shape".
 
         Parameters
         ----------
         node : int
             Node in image patch.
-        node_center : int
-            Node at the center of an image patch.
+        center : int
+            Voxel coordinate of the center of the image patch.
         patch_shape : Tuple[int]
-            Shape of the patch used to center the voxel.
+            Shape of the image patch..
 
         Returns
         -------
         Tuple[int]
             Local voxel coordinate of the given node within the image patch
-            defined by "node_center" and "patch_shape".
+            defined by "center" and "patch_shape".
         """
-        # Get global voxel coordinates
         voxel = self.get_voxel(node)
-        voxel_center = self.get_voxel(node_center)
-
-        # Compute local voxel coordinate
-        offset = [c - s // 2 for c, s in zip(voxel_center, patch_shape)]
+        offset = [c - s // 2 for c, s in zip(center, patch_shape)]
         return tuple([v - o for v, o in zip(voxel, offset)])
 
     def get_nodes_with_component_id(self, component_id):
