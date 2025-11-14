@@ -16,7 +16,7 @@ import pandas as pd
 
 
 # --- Load Skeletons ---
-def load_fragments(dataset, merge_sites_df, idxs, is_test=False):
+def load_fragments(dataset, merge_sites_df, is_test=False):
     """
     Loads neuron fragments for a selected set of merge-site indices into
     dataset.
@@ -28,9 +28,6 @@ def load_fragments(dataset, merge_sites_df, idxs, is_test=False):
     merge_sites_df : pandas.DataFrame
         DataFrame containing merge sites, must contain the columns:
         "brain_id", "segmentation_id", "segment_id", and "xyz".
-    idxs : List[int]
-        Indices of "merge_sites_df" specifying which merge sites should be
-        loaded.
     is_test : bool, optional
         Indication of whether this is a test run so only fragments from a
         single brain should be loaded. Default is False.
@@ -171,7 +168,7 @@ def load_merge_sites_df(path, is_test=False):
 
 
 # --- Helpers ---
-def get_brain_ids(merge_sites_df, is_test):
+def get_brain_ids(merge_sites_df, is_test=False):
     """
     Gets brain IDs of datasets to be loaded.
 
@@ -192,7 +189,7 @@ def get_brain_ids(merge_sites_df, is_test):
     return ["653159"] if is_test else merge_sites_df["brain_id"].unique()
 
 
-def read_idxs(path):
+def read_idxs(path, is_test=False):
     """
     Reads a list of indexes from a CSV file.
 
@@ -200,10 +197,14 @@ def read_idxs(path):
     ----------
     path : str
         Path to the CSV file.
+    is_test : bool, optional
+        Indication of whether this is a test run so only fragments from a
+        single brain should be loaded. Default is False.
 
     Returns
     -------
     List[int]
         Indices extracted from the CSV file.
     """
-    return list(pd.read_csv(path)["Indexes"])
+    idxs = list(pd.read_csv(path)["Indexes"])
+    return np.arange(128) if is_test else idxs

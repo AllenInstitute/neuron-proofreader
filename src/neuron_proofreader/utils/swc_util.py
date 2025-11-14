@@ -67,13 +67,13 @@ class Reader:
         ----------
         swc_pointer : str or List[str]
             Object that points to SWC files to be read, must be one of:
-                - file_path (str): Path to single SWC file
-                - dir_path (str): Path to local directory with SWC files
-                - zip_path (str): Path to local ZIP with SWC files
-                - zip_dir_path (str): Path to local directory of ZIPs with SWC files
-                - gcs_dir_path (str): Path to GCS directory with SWC files
-                - gcs_zip_dir_path (str): Path to GCS directory with ZIPs of SWC files
-                - path_list (List[str]): List of paths to local SWC files
+                - file_path: Path to single SWC file
+                - dir_path: Path to local directory with SWC files
+                - zip_path: Path to local ZIP with SWC files
+                - zip_dir_path: Path to local directory of ZIPs with SWC files
+                - gcs_dir_path: Path to GCS directory with SWC files
+                - gcs_zip_dir_path: Path to GCS directory with ZIPs of SWC files
+                - path_list: List of paths to local SWC files
 
         Returns
         -------
@@ -531,7 +531,9 @@ class Reader:
 
 
 # --- Write ---
-def write_points(zip_path, points, color=None, prefix="", radius=10, write_mode="w"):
+def write_points(
+    zip_path, points, color=None, prefix="", radius=10, write_mode="w"
+):
     """
     Writes a list of 3D points to individual SWC files in the specified
     directory.

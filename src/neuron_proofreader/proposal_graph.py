@@ -44,7 +44,7 @@ class ProposalGraph(SkeletonGraph):
     def __init__(
         self,
         anisotropy=(1.0, 1.0, 1.0),
-        min_size=30.0,
+        min_size=0,
         min_size_with_proposals=0,
         node_spacing=1,
         prune_depth=20.0,
@@ -64,15 +64,14 @@ class ProposalGraph(SkeletonGraph):
             Image to physical coordinates scaling factors to account for the
             anisotropy of the microscope. Default is (1.0, 1.0, 1.0).
         min_size : float, optional
-            Minimum path length of fragments loaded into the ProposalGraph.
-            Default is 30.0um.
+            Minimum path length of fragments loaded into graph. Default is 0.
         min_size_with_proposals : float, optional
             Minimum fragment path length required for proposals. Default is 0.
-        node_spacing : int, optional
+        node_spacing : float, optional
             Distance between points in edges.
-        prune_depth : int, optional
+        prune_depth : float, optional
             Branches with length less than "prune_depth" microns are removed.
-            Default is 16.0um.
+            Default is 20um.
         remove_high_risk_merges : bool, optional
             Indication of whether to remove high risk merge sites (i.e. close
             branching points). Default is False.
@@ -89,7 +88,7 @@ class ProposalGraph(SkeletonGraph):
             False.
         verbose : bool, optional
             Indication of whether to display a progress bar while building
-            ProposalGraph. Default is True.
+            graph. Default is True.
         """
         # Call parent class
         super().__init__()

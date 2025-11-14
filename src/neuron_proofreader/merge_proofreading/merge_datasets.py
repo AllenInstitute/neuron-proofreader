@@ -108,24 +108,6 @@ class MergeSiteDataset(Dataset):
         self.merge_site_kdtrees = dict()
 
     # --- Load Data ---
-    def init_graph(self, swc_pointer):
-        """
-        Initializes a SkeletonGraph built from SWC files.
-
-        Parameters
-        ----------
-        swc_pointer : str
-            Pointer to SWC files to be loaded into a graph.
-
-        Returns
-        -------
-        graph : SkeletonGraph
-            Graph with loaded data from SWC files.
-        """
-        graph = SkeletonGraph(node_spacing=self.node_spacing)
-        graph.load(swc_pointer)
-        return graph
-
     def load_fragment_graphs(self, brain_id, swc_pointer):
         """
         Loads fragments containing merge mistakes for a whole-brain dataset,
@@ -139,7 +121,8 @@ class MergeSiteDataset(Dataset):
             Pointer to SWC files to be loaded into a graph.
         """
         # Load graphs
-        graph = self.init_graph(swc_pointer)
+        graph = SkeletonGraph(node_spacing=self.node_spacing)
+        graph.load(swc_pointer)
 
         # Filter non-merge components
         idxs = self.merge_sites_df["brain_id"] == brain_id
@@ -151,7 +134,8 @@ class MergeSiteDataset(Dataset):
                     graph.component_id_to_swc_id, swc_id
                 )
                 nodes = graph.get_nodes_with_component_id(component_id)
-                graph.remove_nodes(nodes)
+                graph.remove_nodes(nodes, relabel_nodes=False)
+        graph.relabel_nodes()
 
         # Post process fragments
         self.clip_fragments_to_groundtruth(brain_id, graph)
@@ -173,7 +157,9 @@ class MergeSiteDataset(Dataset):
         swc_pointer : str
             Pointer to SWC files to be loaded into graph.
         """
-        self.gt_graphs[brain_id] = self.init_graph(swc_pointer)
+        node_spacing = 2 * self.node_spacing
+        self.gt_graphs[brain_id] = SkeletonGraph(node_spacing=node_spacing)
+        self.gt_graphs[brain_id].load(swc_pointer)
 
     def load_image(self, brain_id, img_path):
         """
@@ -300,8 +286,7 @@ class MergeSiteDataset(Dataset):
             Node ID of the site.
         """
         # Check if site has a fragment
-        if not self.has_fragment(idx):
-            print(f"Site {idx} does not have fragment")
+        if idx > 0 and not self.has_fragment(idx):
             return self.get_random_negative_site()
 
         # Extract site info
@@ -603,9 +588,9 @@ class MergeSiteValDataset(MergeSiteDataset):
             1 if the example is positive and 0 otherwise.
         """
         sites_df = self.merge_sites_df if idx > 0 else self.nonmerge_sites
-        brain_id, graph, node = self.get_indexed_site(sites_df, idx)
+        brain_id, node = self.get_indexed_site(sites_df, idx)
         label = 1 if idx > 0 else 0
-        return brain_id, graph, node, label
+        return brain_id, node, label
 
 
 # --- DataLoaders ---
@@ -643,7 +628,7 @@ class MergeSiteDataLoader(DataLoader):
             Generates batch of examples used during training and validation.
         """
         # Set indices
-        idxs = np.arange(-len(self.dataset), len(self.dataset))
+        idxs = np.arange(-len(self.dataset) // 2, len(self.dataset) // 2)
         random.shuffle(idxs)
 
         # Iterate over indices
