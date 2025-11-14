@@ -162,11 +162,18 @@ def load_merge_sites_df(path, is_test=False):
             - 'brain_id' and 'segment_id' converted to strings.
             - 'xyz' converted from string representation to tuple
     """
+    # Read and process
     merge_sites_df = pd.read_csv(path)
     merge_sites_df["brain_id"] = merge_sites_df["brain_id"].apply(str)
     merge_sites_df["segment_id"] = merge_sites_df["segment_id"].apply(str)
     merge_sites_df["xyz"] = merge_sites_df["xyz"].apply(ast.literal_eval)
-    return merge_sites_df[0:128] if is_test else merge_sites_df
+
+    # Check whether test run
+    if is_test:
+        idx_mask = merge_sites_df["brain_id"] == TEST_BRAIN
+        return merge_sites_df[idx_mask].reset_index(drop=True)
+    else:
+        return merge_sites_df
 
 
 # --- Helpers ---
@@ -208,8 +215,4 @@ def read_idxs(path, is_test=False):
     List[int]
         Indices extracted from the CSV file.
     """
-    idxs = list(pd.read_csv(path)["Indexes"])
-    if is_test:
-        return merge_sites_df[merge_sites_df["brain_id"] == TEST_BRAIN]
-    else:
-        return merge_sites_df
+    return list(pd.read_csv(path)["Indexes"])
