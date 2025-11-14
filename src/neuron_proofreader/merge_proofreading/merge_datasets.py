@@ -11,7 +11,6 @@ to detect merge errors.
 
 from concurrent.futures import as_completed, ThreadPoolExecutor
 from scipy.spatial import KDTree
-from time import time
 from torch.utils.data import Dataset, DataLoader
 
 import networkx as nx
@@ -287,8 +286,7 @@ class MergeSiteDataset(Dataset):
             Node ID of the site.
         """
         # Check if site has a fragment
-        if not self.has_fragment(idx):
-            print(f"Site {idx} does not have fragment")
+        if idx > 0 and not self.has_fragment(idx):
             return self.get_random_negative_site()
 
         # Extract site info
@@ -590,9 +588,9 @@ class MergeSiteValDataset(MergeSiteDataset):
             1 if the example is positive and 0 otherwise.
         """
         sites_df = self.merge_sites_df if idx > 0 else self.nonmerge_sites
-        brain_id, graph, node = self.get_indexed_site(sites_df, idx)
+        brain_id, node = self.get_indexed_site(sites_df, idx)
         label = 1 if idx > 0 else 0
-        return brain_id, graph, node, label
+        return brain_id, node, label
 
 
 # --- DataLoaders ---
@@ -630,7 +628,7 @@ class MergeSiteDataLoader(DataLoader):
             Generates batch of examples used during training and validation.
         """
         # Set indices
-        idxs = np.arange(-len(self.dataset), len(self.dataset))
+        idxs = np.arange(-len(self.dataset) // 2, len(self.dataset) // 2)
         random.shuffle(idxs)
 
         # Iterate over indices

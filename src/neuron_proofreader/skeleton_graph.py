@@ -45,10 +45,28 @@ class SkeletonGraph(nx.Graph):
         anisotropy=(1.0, 1.0, 1.0),
         min_size=0,
         node_spacing=1,
-        prune_depth=20.0,
-        smooth_bool=True,
+        prune_depth=20,
         verbose=False,
     ):
+        """
+        Instantiates a SkeletonGraph object.
+
+        Parameters
+        ----------
+        anisotropy : Tuple[float], optional
+            Image to physical coordinates scaling factors to account for the
+            anisotropy of the microscope. Default is (1.0, 1.0, 1.0).
+        min_size : float, optional
+            Minimum path length of fragments loaded into graph. Default is 0.
+        node_spacing : float, optional
+            Distance (in microns) between neighboring nodes. Default 1μm.
+        prune_depth : float, optional
+            Branches with length less than "prune_depth" microns are removed.
+            Default is 20μm.
+        verbose : bool, optional
+            Indication of whether to display a progress bar while building
+            graph. Default is True.
+        """
         # Call parent class
         super().__init__()
 
@@ -63,13 +81,20 @@ class SkeletonGraph(nx.Graph):
             anisotropy=anisotropy,
             min_size=min_size,
             node_spacing=node_spacing,
-            smooth_bool=smooth_bool,
             prune_depth=prune_depth,
             verbose=verbose,
         )
 
     # --- Build Graph ---
     def load(self, swc_pointer):
+        """
+        Loads SWC files into graph.
+
+        Parameters
+        ----------
+        swc_pointer : str
+            Object that points to SWC files to be read.
+        """
         # Extract irreducible components from SWC files
         irreducibles = self.graph_loader.run(swc_pointer)
         n = 0
@@ -90,6 +115,20 @@ class SkeletonGraph(nx.Graph):
             component_id += 1
 
     def add_connected_component(self, irreducibles, component_id):
+        """
+        Adds a new connected component to the graph.
+
+        Parameters
+        ----------
+        irreducibles : dict
+            Dictionary with the following required fields:
+                - "swc_id": SWC ID of the component.
+                - "nodes": dictionary of node attributes.
+                - "edges": dictionary of edge attributes.
+        component_id : int
+            Unique identifier for the connected component being added.
+        
+        """
         # Set component id
         self.component_id_to_swc_id[component_id] = irreducibles["swc_id"]
 
@@ -110,10 +149,8 @@ class SkeletonGraph(nx.Graph):
         Parameters
         ----------
         node_dict : dict
-            Dictionary mapping original node IDs (e.g., from an SWC file) to
-            their attributes. Each value must be a dictionary containing:
-                - "radius" : float
-                - "xyz"    : array-like of shape (3,)
+            Dictionary mapping original node IDs to their attributes. Each
+            value must be a dictionary containing the keys "radius" and "xyz".
         component_id : str
             Connected component ID used to map node IDs back to SWC IDs via
             "self.component_id_to_swc_id".
@@ -144,7 +181,7 @@ class SkeletonGraph(nx.Graph):
             Edge to be added.
         attrs : dict
             Dictionary of attributes of "edge" obtained from an SWC file.
-        component_id : str
+        component_id : int
             Connected component ID used to map node IDs back to SWC IDs via
             "self.component_id_to_swc_id".
         """
@@ -341,6 +378,21 @@ class SkeletonGraph(nx.Graph):
         return set(np.where(self.node_component_id == component_id)[0])
 
     def get_rooted_subgraph(self, root, radius):
+        """
+        Gets a rooted subgraph with the given radius (in microns).
+
+        Parameters
+        ----------
+        root : int
+            Node ID of root.
+        radius : float
+            Depth (in microns) of subgraph.
+
+        Returns
+        -------
+        subgraph : SkeletonGraph
+            Rooted subgraph.
+        """
         # Initializations
         subgraph = SkeletonGraph(anisotropy=self.anisotropy)
         subgraph.add_node(0)
@@ -400,6 +452,18 @@ class SkeletonGraph(nx.Graph):
 
     # --- Writer ---
     def to_zipped_swcs(self, zip_path, preserve_radius=False):
+        """
+        Writes the graph to a ZIP archive of SWC files, where each file
+        corresponds to a connected component.
+
+        Parameters
+        ----------
+        zip_path : str
+            Path to ZIP archive that SWC files are to be written to.
+        preserve_radius : bool, optional
+            Indication of whether to set radius as node radius or 2μm.
+            Default is False.
+        """
         with zipfile.ZipFile(zip_path, "w") as zip_writer:
             for nodes in nx.connected_components(self):
                 root = util.sample_once(nodes)
@@ -426,6 +490,16 @@ class SkeletonGraph(nx.Graph):
         """
         # Subroutines
         def write_entry(node, parent):
+            """
+            Writes a line of an SWC file for the given node.
+
+            Parameters
+            ----------
+            node : int
+                Node ID.
+            parent : int
+                Node ID of parent.
+            """
             x, y, z = tuple(self.node_xyz[node])
             r = self.node_radius[node] if preserve_radius else 2
             node_id = cnt
