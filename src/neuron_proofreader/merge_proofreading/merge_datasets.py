@@ -290,6 +290,7 @@ class MergeSiteDataset(Dataset):
             return self.get_random_negative_site()
 
         # Extract site info
+        idx = abs(idx)
         brain_id = sites_df["brain_id"].iloc[idx]
         xyz = sites_df["xyz"].iloc[idx]
         node = self.graphs[brain_id].find_closest_node(xyz)
@@ -310,20 +311,22 @@ class MergeSiteDataset(Dataset):
         brain_id = util.sample_once(list(self.graphs.keys()))
 
         # Sample node on graph
+        outcome = random.random()
         while True:
             # Sample node
-            outcome = random.random()
             if outcome <= 0.3:
                 node = util.sample_once(self.graphs[brain_id].nodes)
             elif outcome > 0.3 and outcome < 0.4:
                 node = util.sample_once(self.graphs[brain_id].get_leafs())
             else:
                 node = util.sample_once(self.graphs[brain_id].get_branchings())
+                if self.check_nearby_branching(brain_id, node):
+                    continue
 
             # Check if node is close to merge site
             xyz = self.graphs[brain_id].node_xyz[node]
             d, _ = self.merge_site_kdtrees[brain_id].query(xyz)
-            if d > 128:
+            if d > 50:
                 break
         return brain_id, node
 
@@ -376,6 +379,52 @@ class MergeSiteDataset(Dataset):
         return segment_mask
 
     # --- Helpers ---
+    def __len__(self):
+        """
+        Returns the number of positive and negative examples of merge sites.
+
+        Returns
+        -------
+        int
+            Number of positive examples of merge sites.
+        """
+        return len(self.merge_sites_df)
+
+    def check_nearby_branching(self, brain_id, root, max_depth=20):
+        """
+        Checks if there is a branching node within a specified depth from the
+        given node.
+
+        Parameters
+        ----------
+        brain_id : str
+            Unique identifier for graph to be searched.
+        root : int
+            Node ID.
+        max_depth : float, optional
+            Maximum depth (in microns) of search. Default is 20μm.
+
+        Returns
+        -------
+        bool
+            Indication of whether there is a nearby branching node.
+        """
+        queue = [(root, 0)]
+        visited = set([root])
+        while queue:
+            # Visit node
+            i, d_i = queue.pop()
+            if self.graphs[brain_id].degree[i] > 2 and d_i > 0:
+                return True
+
+            # Update queue
+            for j in self.graphs[brain_id].neighbors(i):
+                d_j = d_i + self.graphs[brain_id].dist(i, j)
+                if j not in visited and d_j < max_depth:
+                    queue.append((j, d_j))
+                    visited.add(j)
+        return False
+
     def clip_fragments_to_groundtruth(self, brain_id, graph):
         """
         Removes any node from the given fragment that is more than 100μm from
@@ -396,17 +445,6 @@ class MergeSiteDataset(Dataset):
                 if d > 128:
                     graph.remove_node(i)
         graph.relabel_nodes()
-
-    def __len__(self):
-        """
-        Returns the number of positive and negative examples of merge sites.
-
-        Returns
-        -------
-        int
-            Number of positive and negative examples of merge sites.
-        """
-        return 2 * len(self.merge_sites_df) - 1
 
     def count_fragments(self):
         """
