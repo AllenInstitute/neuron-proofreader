@@ -4,8 +4,8 @@ Created on Wed July 25 16:00:00 2025
 @author: Anna Grim
 @email: anna.grim@alleninstitute.org
 
-Code for a custom class for training neural networks to perform classification
-tasks within the GraphTrace pipeline.
+Code for a custom class for training neural networks to perform neuron
+proofreading classification tasks.
 
 """
 
