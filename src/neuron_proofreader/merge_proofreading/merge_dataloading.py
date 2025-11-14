@@ -14,7 +14,7 @@ import ast
 import numpy as np
 import pandas as pd
 
-TEST_BRAIN = "653159"
+TEST_BRAIN = "685221"
 
 
 # --- Load Skeletons ---
@@ -210,6 +210,7 @@ def read_idxs(path, is_test=False):
     """
     idxs = list(pd.read_csv(path)["Indexes"])
     if is_test:
-        return merge_sites_df[merge_sites_df["brain_id"] == TEST_BRAIN]
+        idx_mask = merge_sites_df["brain_id"] == TEST_BRAIN
+        return merge_sites_df[idx_mask].reset_index(drop=True)
     else:
         return merge_sites_df
