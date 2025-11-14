@@ -11,6 +11,7 @@ to detect merge errors.
 
 from concurrent.futures import as_completed, ThreadPoolExecutor
 from scipy.spatial import KDTree
+from time import time
 from torch.utils.data import Dataset, DataLoader
 
 import networkx as nx
@@ -108,24 +109,6 @@ class MergeSiteDataset(Dataset):
         self.merge_site_kdtrees = dict()
 
     # --- Load Data ---
-    def init_graph(self, swc_pointer):
-        """
-        Initializes a SkeletonGraph built from SWC files.
-
-        Parameters
-        ----------
-        swc_pointer : str
-            Pointer to SWC files to be loaded into a graph.
-
-        Returns
-        -------
-        graph : SkeletonGraph
-            Graph with loaded data from SWC files.
-        """
-        graph = SkeletonGraph(node_spacing=self.node_spacing)
-        graph.load(swc_pointer)
-        return graph
-
     def load_fragment_graphs(self, brain_id, swc_pointer):
         """
         Loads fragments containing merge mistakes for a whole-brain dataset,
@@ -139,7 +122,8 @@ class MergeSiteDataset(Dataset):
             Pointer to SWC files to be loaded into a graph.
         """
         # Load graphs
-        graph = self.init_graph(swc_pointer)
+        graph = SkeletonGraph(node_spacing=self.node_spacing)
+        graph.load(swc_pointer)
 
         # Filter non-merge components
         idxs = self.merge_sites_df["brain_id"] == brain_id
@@ -151,7 +135,8 @@ class MergeSiteDataset(Dataset):
                     graph.component_id_to_swc_id, swc_id
                 )
                 nodes = graph.get_nodes_with_component_id(component_id)
-                graph.remove_nodes(nodes)
+                graph.remove_nodes(nodes, relabel_nodes=False)
+        graph.relabel_nodes()
 
         # Post process fragments
         self.clip_fragments_to_groundtruth(brain_id, graph)
@@ -173,7 +158,9 @@ class MergeSiteDataset(Dataset):
         swc_pointer : str
             Pointer to SWC files to be loaded into graph.
         """
-        self.gt_graphs[brain_id] = self.init_graph(swc_pointer)
+        node_spacing = 2 * self.node_spacing
+        self.gt_graphs[brain_id] = SkeletonGraph(node_spacing=node_spacing)
+        self.gt_graphs[brain_id].load(swc_pointer)
 
     def load_image(self, brain_id, img_path):
         """
