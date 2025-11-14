@@ -666,7 +666,7 @@ class MergeSiteDataLoader(DataLoader):
             Generates batch of examples used during training and validation.
         """
         # Set indices
-        idxs = np.arange(-len(self.dataset), len(self.dataset))
+        idxs = np.arange(-len(self.dataset) // 2, len(self.dataset) // 2)
         random.shuffle(idxs)
 
         # Iterate over indices
