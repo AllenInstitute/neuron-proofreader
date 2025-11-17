@@ -73,7 +73,7 @@ class MergeSiteDataset(Dataset):
         anisotropy=(1.0, 1.0, 1.0),
         subgraph_radius=100,
         node_spacing=5,
-        patch_shape=(96, 96, 96),
+        patch_shape=(128, 128, 128),
     ):
         """
         Instantiates a MergeSiteDataset object.
@@ -92,7 +92,7 @@ class MergeSiteDataset(Dataset):
         node_spacing : int, optional
             Spacing between nodes in the graph. Default is 5μm.
         patch_shape : Tuple[int], optional
-            Shape of the 3D patches to extract. Default is (96, 96, 96).
+            Shape of the 3D patches to extract. Default is (128, 128, 128).
         """
         # Instance attributes
         self.anisotropy = anisotropy
