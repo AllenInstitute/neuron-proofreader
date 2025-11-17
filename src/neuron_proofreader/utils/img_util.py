@@ -28,7 +28,7 @@ class ImageReader(ABC):
 
     def __init__(self, img_path):
         """
-        Instantiates ImageReader object.
+        Instantiates an ImageReader object.
 
         Parameters
         ----------
@@ -104,7 +104,7 @@ class TensorStoreReader(ImageReader):
 
     def __init__(self, img_path):
         """
-        Instantiates TensorStoreReader object.
+        Instantiates a TensorStoreReader object.
 
         Parameters
         ----------
@@ -132,7 +132,7 @@ class TensorStoreReader(ImageReader):
             return "zarr"
         elif ".n5" in img_path:
             return "n5"
-        elif is_neuroglancer_precomputed(img_path):
+        elif is_precomputed(img_path):
             return "neuroglancer_precomputed"
         else:
             raise ValueError(f"Unsupported image format: {img_path}")
@@ -162,6 +162,12 @@ class TensorStoreReader(ImageReader):
                 "recheck_cached_data": "open",
             }
         ).result()
+
+        # Check whether to absorb channel
+        if bucket_name == "allen-nd-goog" and is_precomputed(self.img_path):
+            self.img = self.img[ts.d["channel"][0]]
+            self.img = self.img[ts.d[0].transpose[2]]
+            self.img = self.img[ts.d[0].transpose[1]]
 
     def read(self, center, shape):
         """
@@ -401,7 +407,7 @@ def get_minimal_bbox(voxels, buffer=0):
 
     Returns
     -------
-    Dict[str, numpy.ndarray]
+    bbox : Dict[str, numpy.ndarray]
         Bounding box.
     """
     bbox = {
@@ -424,7 +430,7 @@ def get_neighbors(voxel, shape):
 
     Returns
     -------
-    List[Tuple[int]]
+    neighbors : List[Tuple[int]]
          Voxel coordinates of the 26 neighbors of the given voxel.
     """
     # Initializations
@@ -495,7 +501,7 @@ def is_contained(voxel, shape, buffer=0):
     return contained_above and contained_below
 
 
-def is_neuroglancer_precomputed(img_path):
+def is_precomputed(img_path):
     """
     Checks if the path points to a Neuroglancer precomputed dataset.
 
@@ -509,19 +515,22 @@ def is_neuroglancer_precomputed(img_path):
     bool
         True if the path appears to be a Neuroglancer precomputed dataset.
     """
-    info_path = os.path.join(img_path, "info")
     try:
-        spec = {
-            "driver": "file",
-            "kvstore": {
-                "driver": "file",
-                "path": info_path
-            }
-        }
-        info_store = ts.open(spec, open=True).result()
-        info_json = info_store.read().result().decode("utf-8")
-        info = json.loads(info_json)
-        return all(k in info for k in ["data_type", "scales", "type"])
+        # Build kvstore spec
+        bucket_name, path = util.parse_cloud_path(img_path)
+        kv = {"driver": "gcs", "bucket": bucket_name, "path": path}
+
+        # Open the info file
+        store = ts.KvStore.open(kv).result()
+        raw = store.read(b"info").result()
+
+        # Only proceed if the key exists and has content
+        if raw.state != "missing" and raw.value:
+            info = json.loads(raw.value.decode("utf8"))
+            is_valid_type = info.get("type") in ("image", "segmentation")
+            if isinstance(info, dict) and is_valid_type and "scales" in info:
+                return True
+        return False
     except Exception:
         return False
 
@@ -591,11 +600,10 @@ def resize(img, new_shape):
     """
     depth, height, width = img.shape
     zoom_factors = np.array(new_shape) / np.array([depth, height, width])
-    resized_img = zoom(img, zoom_factors, order=1)
-    return resized_img
+    return zoom(img, zoom_factors, order=1)
 
 
-def to_physical(voxel, anisotropy, shift=(0, 0, 0)):
+def to_physical(voxel, anisotropy, offset=(0, 0, 0)):
     """
     Converts a voxel coordinate to a physical coordinate by applying the
     anisotropy scaling factors.
@@ -607,7 +615,7 @@ def to_physical(voxel, anisotropy, shift=(0, 0, 0)):
     anisotropy : ArrayLike
         Image to physical coordinates scaling factors to account for the
         anisotropy of the microscope.
-    shift : Tuple[int], optional
+    offset : Tuple[int], optional
         Shift to be applied to "voxel". Default is (0, 0, 0).
 
     Returns
@@ -616,7 +624,7 @@ def to_physical(voxel, anisotropy, shift=(0, 0, 0)):
         Physical coordinate.
     """
     voxel = voxel[::-1]
-    return tuple([voxel[i] * anisotropy[i] - shift[i] for i in range(3)])
+    return tuple([voxel[i] * anisotropy[i] - offset[i] for i in range(3)])
 
 
 def to_voxels(xyz, anisotropy, multiscale=0):
