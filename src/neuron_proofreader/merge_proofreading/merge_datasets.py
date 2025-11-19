@@ -226,7 +226,12 @@ class MergeSiteDataset(Dataset):
             self.graphs[brain_id].relabel_nodes()
 
         # Update merge sites df
-        self.merge_sites_df = self.merge_sites_df.iloc[idxs]
+        try:
+            self.merge_sites_df = self.merge_sites_df.iloc[idxs]
+        except:
+            print("# Merge Sites:", len(self.merge_sites_df))
+            print(idxs)
+            print(self.merge_sites_df)
         self.merge_sites_df = self.merge_sites_df.reset_index(drop=True)
 
     # --- Getters ---
@@ -319,8 +324,13 @@ class MergeSiteDataset(Dataset):
             elif outcome > 0.3 and outcome < 0.4:
                 node = util.sample_once(self.graphs[brain_id].get_leafs())
             else:
-                node = util.sample_once(self.graphs[brain_id].get_branchings())
-                if self.check_nearby_branching(brain_id, node):
+                branching_nodes = self.graphs[brain_id].get_branchings()
+                if len(branching_nodes) > 0:
+                    node = util.sample_once(branching_nodes)
+                    if self.check_nearby_branching(brain_id, node):
+                        continue
+                else:
+                    outcome = 0.1
                     continue
 
             # Check if node is close to merge site
