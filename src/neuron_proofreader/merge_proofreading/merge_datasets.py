@@ -319,8 +319,13 @@ class MergeSiteDataset(Dataset):
             elif outcome > 0.3 and outcome < 0.4:
                 node = util.sample_once(self.graphs[brain_id].get_leafs())
             else:
-                node = util.sample_once(self.graphs[brain_id].get_branchings())
-                if self.check_nearby_branching(brain_id, node):
+                branching_nodes = self.graphs[brain_id].get_branchings()
+                if len(branching_nodes) > 0:
+                    node = util.sample_once(branching_nodes)
+                    if self.check_nearby_branching(brain_id, node):
+                        continue
+                else:
+                    outcome = 0.1
                     continue
 
             # Check if node is close to merge site
