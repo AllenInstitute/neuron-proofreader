@@ -226,12 +226,7 @@ class MergeSiteDataset(Dataset):
             self.graphs[brain_id].relabel_nodes()
 
         # Update merge sites df
-        try:
-            self.merge_sites_df = self.merge_sites_df.iloc[idxs]
-        except:
-            print("# Merge Sites:", len(self.merge_sites_df))
-            print(idxs)
-            print(self.merge_sites_df)
+        self.merge_sites_df = self.merge_sites_df.iloc[idxs]
         self.merge_sites_df = self.merge_sites_df.reset_index(drop=True)
 
     # --- Getters ---
