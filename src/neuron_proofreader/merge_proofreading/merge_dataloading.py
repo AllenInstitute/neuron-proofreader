@@ -198,21 +198,18 @@ def get_brain_ids(merge_sites_df, is_test=False):
     return [TEST_BRAIN] if is_test else merge_sites_df["brain_id"].unique()
 
 
-def read_idxs(path, is_test=False):
+def read_idxs(path):
     """
-    Reads a list of indexes from a CSV file.
+    Reads a list of indices from a CSV file.
 
     Parameters
     ----------
     path : str
         Path to the CSV file.
-    is_test : bool, optional
-        Indication of whether this is a test run so only fragments from a
-        single brain should be loaded. Default is False.
 
     Returns
     -------
     List[int]
         Indices extracted from the CSV file.
     """
-    return list(pd.read_csv(path)["Indexes"])
+    return pd.read_csv(path)["Indices"]
