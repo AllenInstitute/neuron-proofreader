@@ -192,10 +192,8 @@ class MergeSiteDataset(Dataset):
         new_dataset : cls
             New dataset instance containing only the specified subset.
         """
-        import copy
-
         new_dataset = cls.__new__(cls)
-        new_dataset.__dict__ = copy.deepcopy(self.__dict__)
+        new_dataset.__dict__ = self.__dict__
         new_dataset.remove_nonindexed_fragments(idxs)
         return new_dataset
 
@@ -226,6 +224,10 @@ class MergeSiteDataset(Dataset):
             self.graphs[brain_id].relabel_nodes()
 
         # Update merge sites df
+        print("229 - len(self.merge_sites_df):", len(self.merge_sites_df))
+        print("230 - idxs:", idxs)
+        print("max(idxs):", np.max(idxs))
+        print("min(idxs):", np.idxs)
         self.merge_sites_df = self.merge_sites_df.iloc[idxs]
         self.merge_sites_df = self.merge_sites_df.reset_index(drop=True)
 

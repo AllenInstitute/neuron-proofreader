@@ -15,7 +15,6 @@ from scipy.ndimage import zoom
 import json
 import matplotlib.pyplot as plt
 import numpy as np
-import os
 import tensorstore as ts
 
 from neuron_proofreader.utils import util
