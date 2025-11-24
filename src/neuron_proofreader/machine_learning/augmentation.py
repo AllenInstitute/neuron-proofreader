@@ -24,6 +24,15 @@ class ImageTransforms:
         """
         Initializes an ImageTransforms instance that applies augmentation to
         an image and segmentation patch.
+
+        Parameters
+        ----------
+        use_geometric : bool, optional
+            Indication of whether to use geometric transforms. Default is
+            True.
+        use_intensity : bool, optional
+            Indication of whether to use transforms that alter the image
+            intensity distribution. Default is True.
         """
         # Instance attributes
         self.transforms = [

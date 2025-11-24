@@ -545,7 +545,8 @@ class MergeSiteTrainDataset(MergeSiteDataset):
         self.__dict__.update(subset_dataset.__dict__)
 
         # Instance attributes
-        self.transform = ImageTransforms()
+        self.transform_positive = ImageTransforms()
+        self.transform_negative = ImageTransforms(use_geometric=False)
 
     # --- Getters ---
     def __getitem__(self, idx):
