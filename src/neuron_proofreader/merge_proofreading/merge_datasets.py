@@ -568,14 +568,8 @@ class MergeSiteTrainDataset(MergeSiteDataset):
         label : int
             1 if the example is positive and 0 otherwise.
         """
-        # Call parent routine
         patches, subgraph, label = super().__getitem__(idx)
-
-        # Apply image augmentation (if applicable)
-        if label > 0:
-            self.transform_positive(patches)
-        else:
-            self.transform_negative(patches)
+        self.transform(patches)
         return patches, subgraph, label
 
     def get_site(self, idx):

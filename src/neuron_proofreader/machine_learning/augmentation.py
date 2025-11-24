@@ -16,10 +16,11 @@ import random
 
 class ImageTransforms:
     """
-    Class that applies a sequence of transforms to a 3D image and
-    segmentation patch.
+    Class that applies a sequence of transforms to a 3D image and segmentation
+    patch.
     """
-    def __init__(self, use_geometric=True, use_intensity=True):
+
+    def __init__(self):
         """
         Initializes an ImageTransforms instance that applies augmentation to
         an image and segmentation patch.
@@ -34,12 +35,12 @@ class ImageTransforms:
             intensity distribution. Default is True.
         """
         # Instance attributes
-        self.transforms = list()
-        if use_geometric:
-            self.transforms.extend([RandomFlip3D(), RandomRotation3D()])
-
-        if use_intensity:
-            self.transforms.extend([RandomNoise3D(), RandomContrast3D()])
+        self.transforms = [
+            RandomFlip3D(),
+            RandomRotation3D(),
+            RandomNoise3D(),
+            RandomContrast3D()
+        ]
 
     def __call__(self, patches):
         """
@@ -49,8 +50,8 @@ class ImageTransforms:
         Parameters
         ----------
         patches : numpy.ndarray
-            Image with the shape (2, H, W, D), where "patches[0, ...]" is from
-            the input image and "patches[1, ...]" is from the segmentation.
+            Image with the shape (2, H, W, D), where the first channel is the
+            input image and second is the segmentation.
         """
         for transform in self.transforms:
             transform(patches)
@@ -131,10 +132,10 @@ class RandomRotation3D:
             Rotated 3D image and segmentation patch.
         """
         for axes in self.axes:
-            if random.random() > 0.5:
+            if random.random() < 0.5:
                 angle = random.uniform(*self.angles)
                 patches[0, ...] = rotate3d(patches[0, ...], angle, axes)
-                patches[1, ...] = rotate3d(patches[1, ...], angle, axes)
+                patches[1, ...] = rotate3d(patches[1, ...], angle, axes, True)
         return patches
 
 
@@ -185,7 +186,7 @@ class RandomScale3D:
 
         # Rescale images
         patches[0, ...] = zoom(patches[0, ...], zoom_factors, order=3)
-        patches[1, ...] = zoom(patches[1, ...], zoom_factors, order=3)
+        patches[1, ...] = zoom(patches[1, ...], zoom_factors, order=0)
         return patches
 
 
@@ -230,7 +231,7 @@ class RandomNoise3D:
     Adds random Gaussian noise to a 3D image.
     """
 
-    def __init__(self, max_std=0.05):
+    def __init__(self, max_std=0.5):
         """
         Initializes a RandomNoise3D transformer.
 
@@ -238,7 +239,7 @@ class RandomNoise3D:
         ----------
         max_std : float, optional
             Maximum standard deviation of the Gaussian noise distribution.
-            Default is 0.05.
+            Default is 0.16.
         """
         self.max_std = max_std
 
@@ -257,13 +258,13 @@ class RandomNoise3D:
             Noisy 3D image.
         """
         std = self.max_std * random.random()
-        noise = np.random.normal(0, std, img_patch.shape)
-        img_patch = img_patch + noise
+        noise = np.random.uniform(0, std, img_patch.shape)
+        img_patch += noise
         return img_patch
 
 
 # --- Helpers ---
-def rotate3d(img_patch, angle, axes):
+def rotate3d(img_patch, angle, axes, is_segmentation=False):
     """
     Rotates a 3D image patch around the specified axes by a given angle.
 
@@ -276,18 +277,21 @@ def rotate3d(img_patch, angle, axes):
         specified axes.
     axes : Tuple[int]
         Tuple representing the two axes of rotation.
+    is_segmentation : bool, optional
+        Indication of whether the image is a segmentation. Default is False.
 
     Returns
     -------
     img_patch : numpy.ndarray
         Rotated 3D image patch.
     """
+    order = 0 if is_segmentation else 3
     img_patch = rotate(
         img_patch,
         angle,
         axes=axes,
         mode="grid-mirror",
         reshape=False,
-        order=0,
+        order=order,
     )
     return img_patch
