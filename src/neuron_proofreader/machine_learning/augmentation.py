@@ -19,15 +19,27 @@ class ImageTransforms:
     Class that applies a sequence of transforms to a 3D image and
     segmentation patch.
     """
-    def __init__(self):
+    def __init__(self, use_geometric=True, use_intensity=True):
         """
         Initializes an ImageTransforms instance that applies augmentation to
         an image and segmentation patch.
+
+        Parameters
+        ----------
+        use_geometric : bool, optional
+            Indication of whether to use geometric transforms. Default is
+            True.
+        use_intensity : bool, optional
+            Indication of whether to use transforms that alter the image
+            intensity distribution. Default is True.
         """
         # Instance attributes
-        self.transforms = [
-            RandomFlip3D(), RandomRotation3D(), # RandomNoise3D(), RandomContrast()
-        ]
+        self.transforms = list()
+        if use_geometric:
+            self.transforms.extend([RandomFlip3D(), RandomRotation3D()])
+
+        if use_intensity:
+            self.transforms.extend([RandomNoise3D(), RandomContrast3D()])
 
     def __call__(self, patches):
         """
