@@ -195,7 +195,7 @@ class MergeSiteDataset(Dataset):
             New dataset instance containing only the specified subset.
         """
         new_dataset = cls.__new__(cls)
-        new_dataset.__dict__ = self.__dict__
+        new_dataset.__dict__ = copy.deepcopy(self.__dict__)
         new_dataset.remove_nonindexed_fragments(idxs)
         return new_dataset
 
