@@ -25,7 +25,7 @@ class CNN3D(nn.Module):
         self,
         patch_shape,
         output_dim=1,
-        dropout=0,
+        dropout=0.1,
         n_conv_layers=5,
         n_feat_channels=16,
         use_double_conv=True
@@ -40,7 +40,8 @@ class CNN3D(nn.Module):
         output_dim : int, optional
             Dimension of output. Default is 1.
         dropout : float, optional
-            Fraction of values to randomly drop during training. Default is 0.
+            Fraction of values to randomly drop during training. Default is
+            0.1.
         n_conv_layers : int, optional
             Number of convolutional layers. Default is 5.
         use_double_conv : bool, optional

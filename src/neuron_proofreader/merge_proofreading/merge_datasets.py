@@ -13,6 +13,7 @@ from concurrent.futures import as_completed, ThreadPoolExecutor
 from scipy.spatial import KDTree
 from torch.utils.data import Dataset, DataLoader
 
+import copy
 import networkx as nx
 import numpy as np
 import pandas as pd
@@ -160,6 +161,7 @@ class MergeSiteDataset(Dataset):
         node_spacing = 2 * self.node_spacing
         self.gt_graphs[brain_id] = SkeletonGraph(node_spacing=node_spacing)
         self.gt_graphs[brain_id].load(swc_pointer)
+        self.gt_graphs[brain_id].set_kdtree()
 
     def load_image(self, brain_id, img_path):
         """
@@ -193,7 +195,7 @@ class MergeSiteDataset(Dataset):
             New dataset instance containing only the specified subset.
         """
         new_dataset = cls.__new__(cls)
-        new_dataset.__dict__ = self.__dict__
+        new_dataset.__dict__ = copy.deepcopy(self.__dict__)
         new_dataset.remove_nonindexed_fragments(idxs)
         return new_dataset
 
@@ -224,10 +226,6 @@ class MergeSiteDataset(Dataset):
             self.graphs[brain_id].relabel_nodes()
 
         # Update merge sites df
-        print("229 - len(self.merge_sites_df):", len(self.merge_sites_df))
-        print("230 - idxs:", idxs)
-        print("max(idxs):", np.max(idxs))
-        print("min(idxs):", np.idxs)
         self.merge_sites_df = self.merge_sites_df.iloc[idxs]
         self.merge_sites_df = self.merge_sites_df.reset_index(drop=True)
 
@@ -254,12 +252,10 @@ class MergeSiteDataset(Dataset):
             1 if the example is positive and 0 otherwise.
         """
         # Get example
-        brain_id, node, label = self.get_site(idx)
-        graph = self.graphs[brain_id]
-        voxel = img_util.to_voxels(graph.node_xyz[node], self.anisotropy)
+        brain_id, subgraph, label = self.get_site(idx)
+        voxel = img_util.to_voxels(subgraph.node_xyz[0], self.anisotropy)
 
         # Extract subgraph and image patches centered at site
-        subgraph = graph.get_rooted_subgraph(node, self.subgraph_radius)
         img_patch = self.get_img_patch(brain_id, voxel)
         segment_mask = self.get_segment_mask(subgraph)
 
@@ -271,9 +267,37 @@ class MergeSiteDataset(Dataset):
             patches = np.stack([img_patch, segment_mask], axis=0)
         return patches, subgraph, label
 
-    def get_indexed_site(self, sites_df, idx):
+    def get_indexed_negative_site(self, idx):
         """
-        Gets the example corresponding to the given index.
+        Gets the negative example corresponding to the given index.
+
+        Parameters
+        ----------
+        idx : int
+            Index of the site in "sites_df".
+
+        Returns
+        -------
+        brain_id : str
+            Unique identifier for the whole-brain dataset containing the site.
+        node : int
+            Node ID of the site.
+        """
+        # Get site info
+        idx = abs(idx)
+        brain_id = self.merge_sites_df["brain_id"].iloc[idx]
+        xyz = self.merge_sites_df["xyz"].iloc[idx]
+        node = self.gt_graphs[brain_id].find_closest_node(xyz)
+
+        # Extract rooted subgraph
+        subgraph = self.gt_graphs[brain_id].get_rooted_subgraph(
+            node, self.subgraph_radius
+        )
+        return brain_id, subgraph
+
+    def get_indexed_positive_site(self, idx):
+        """
+        Gets the positive example corresponding to the given index.
 
         Parameters
         ----------
@@ -291,12 +315,16 @@ class MergeSiteDataset(Dataset):
         if idx > 0 and not self.has_fragment(idx):
             return self.get_random_negative_site()
 
-        # Extract site info
-        idx = abs(idx)
-        brain_id = sites_df["brain_id"].iloc[idx]
-        xyz = sites_df["xyz"].iloc[idx]
+        # Get site info
+        brain_id = self.merge_sites_df["brain_id"].iloc[idx]
+        xyz = self.merge_sites_df["xyz"].iloc[idx]
         node = self.graphs[brain_id].find_closest_node(xyz)
-        return brain_id, node
+
+        # Extract rooted subgraph
+        subgraph = self.graphs[brain_id].get_rooted_subgraph(
+            node, self.subgraph_radius
+        )
+        return brain_id, subgraph
 
     def get_random_negative_site(self):
         """
@@ -327,7 +355,7 @@ class MergeSiteDataset(Dataset):
                     if self.check_nearby_branching(brain_id, node):
                         continue
                 else:
-                    outcome = 0.1
+                    outcome = 0
                     continue
 
             # Check if node is close to merge site
@@ -335,7 +363,12 @@ class MergeSiteDataset(Dataset):
             d, _ = self.merge_site_kdtrees[brain_id].query(xyz)
             if d > 50:
                 break
-        return brain_id, node
+
+        # Extract rooted subgraph
+        subgraph = self.graphs[brain_id].get_rooted_subgraph(
+            node, self.subgraph_radius
+        )
+        return brain_id, subgraph
 
     def get_img_patch(self, brain_id, center):
         """
@@ -445,10 +478,9 @@ class MergeSiteDataset(Dataset):
             Fragment graph to be clipped.
         """
         assert brain_id in self.gt_graphs, "Must load GT before fragments!"
-        kdtree = KDTree(self.gt_graphs[brain_id].node_xyz)
         for i, xyz in enumerate(graph.node_xyz):
             if i in graph:
-                d, _ = kdtree.query(xyz)
+                d, _ = self.gt_graphs[brain_id].kdtree.query(xyz)
                 if d > 128:
                     graph.remove_node(i)
         graph.relabel_nodes()
@@ -507,10 +539,10 @@ class MergeSiteTrainDataset(MergeSiteDataset):
         # Create sub-dataset
         subset_dataset = base_dataset.subset(self.__class__, idxs)
         self.__dict__.update(subset_dataset.__dict__)
-        self.remove_nonindexed_fragments(idxs)
 
         # Instance attributes
-        self.transform = ImageTransforms()
+        self.transform_positive = ImageTransforms()
+        self.transform_negative = ImageTransforms(use_geometric=False)
 
     # --- Getters ---
     def __getitem__(self, idx):
@@ -537,7 +569,9 @@ class MergeSiteTrainDataset(MergeSiteDataset):
 
         # Apply image augmentation (if applicable)
         if label > 0:
-            self.transform(patches)
+            self.transform_positive(patches)
+        else:
+            self.transform_negative(patches)
         return patches, subgraph, label
 
     def get_site(self, idx):
@@ -554,18 +588,20 @@ class MergeSiteTrainDataset(MergeSiteDataset):
         -------
         brain_id : str
             Unique identifier of the brain containing the site.
-        graph : SkeletonGraph
-            Graph containing the site.
         node : int
             Node ID of the site.
         label : int
             1 if the example is positive and 0 otherwise.
         """
         if idx > 0:
-            brain_id, node = self.get_indexed_site(self.merge_sites_df, idx)
+            brain_id, subgraph = self.get_indexed_positive_site(idx)
         else:
-            brain_id, node = self.get_random_negative_site()
-        return brain_id, node, int(idx > 0)
+            if np.random.random() < 0.3:
+                idx = np.random.randint(0, len(self.merge_sites_df))
+                brain_id, subgraph = self.get_indexed_negative_site(idx)
+            else:
+                brain_id, subgraph = self.get_random_negative_site()
+        return brain_id, subgraph, int(idx > 0)
 
 
 class MergeSiteValDataset(MergeSiteDataset):
@@ -587,10 +623,9 @@ class MergeSiteValDataset(MergeSiteDataset):
         # Create sub-dataset
         subset_dataset = base_dataset.subset(self.__class__, idxs)
         self.__dict__.update(subset_dataset.__dict__)
-        self.remove_nonindexed_fragments(idxs)
 
         # Instance attributes
-        self.nonmerge_sites = self.generate_negative_examples()
+        self.negative_examples = self.generate_negative_examples()
 
     def generate_negative_examples(self):
         """
@@ -599,16 +634,27 @@ class MergeSiteValDataset(MergeSiteDataset):
 
         Returns
         -------
-        nonmerge_sites : pandas.DataFrame
+        negative_examples : pandas.DataFrame
             Dataframe containing non-merge sites that are specified by a brain
             and node ID.
         """
-        nonmerge_sites = list()
+        negative_examples = list()
         for i in range(len(self.merge_sites_df)):
-            brain_id, node = self.get_random_negative_site()
-            xyz = self.graphs[brain_id].node_xyz[node]
-            nonmerge_sites.append({"brain_id": brain_id, "xyz": xyz})
-        return pd.DataFrame(nonmerge_sites)
+            # Get example
+            if np.random.random() < 0.3:
+                brain_id, subgraph = self.get_indexed_negative_site(i)
+            else:
+                brain_id, subgraph = self.get_random_negative_site()
+
+            # Store info
+            negative_examples.append(
+                {
+                    "brain_id": brain_id,
+                    "subgraph": subgraph,
+                    "xyz": subgraph.node_xyz[0]
+                }
+            )
+        return negative_examples
 
     # --- Getters ---
     def get_site(self, idx):
@@ -625,17 +671,19 @@ class MergeSiteValDataset(MergeSiteDataset):
         -------
         brain_id : str
             Unique identifier of the brain containing the site.
-        graph : SkeletonGraph
-            Graph containing the site.
         node : int
             Node ID of the site.
         label : int
             1 if the example is positive and 0 otherwise.
         """
-        sites_df = self.merge_sites_df if idx > 0 else self.nonmerge_sites
-        brain_id, node = self.get_indexed_site(sites_df, idx)
+        if idx > 0:
+            brain_id, subgraph = self.get_indexed_positive_site(idx)
+        else:
+            brain_id = self.negative_examples[abs(idx)]["brain_id"]
+            subgraph = self.negative_examples[abs(idx)]["subgraph"]
+
         label = 1 if idx > 0 else 0
-        return brain_id, node, label
+        return brain_id, subgraph, label
 
 
 # --- DataLoaders ---

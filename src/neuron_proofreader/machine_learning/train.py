@@ -190,8 +190,8 @@ class Trainer:
             True if the current F1 score is the best so far.
         """
         loss, y, hat_y = list(), list(), list()
+        self.model.eval()
         with torch.no_grad():
-            self.model.eval()
             for x_i, y_i in val_dataloader:
                 # Run model
                 hat_y_i, loss_i = self.forward_pass(x_i, y_i)
@@ -226,8 +226,8 @@ class Trainer:
             Computed loss value.
         """
         with torch.autocast(device_type="cuda", dtype=torch.float16):
-            x = x.to(self.device, non_blocking=True)
-            y = y.to(self.device, non_blocking=True)
+            x = x.to(self.device)
+            y = y.to(self.device)
             hat_y = self.model(x)
             loss = self.criterion(hat_y, y)
             return hat_y, loss
