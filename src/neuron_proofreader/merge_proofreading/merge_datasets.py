@@ -541,8 +541,7 @@ class MergeSiteTrainDataset(MergeSiteDataset):
         self.__dict__.update(subset_dataset.__dict__)
 
         # Instance attributes
-        self.transform_positive = ImageTransforms()
-        self.transform_negative = ImageTransforms(use_geometric=False)
+        self.transform = ImageTransforms()
 
     # --- Getters ---
     def __getitem__(self, idx):
@@ -564,14 +563,8 @@ class MergeSiteTrainDataset(MergeSiteDataset):
         label : int
             1 if the example is positive and 0 otherwise.
         """
-        # Call parent routine
         patches, subgraph, label = super().__getitem__(idx)
-
-        # Apply image augmentation (if applicable)
-        if label > 0:
-            self.transform_positive(patches)
-        else:
-            self.transform_negative(patches)
+        self.transform(patches)
         return patches, subgraph, label
 
     def get_site(self, idx):
