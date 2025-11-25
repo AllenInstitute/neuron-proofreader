@@ -593,7 +593,7 @@ class MergeSiteTrainDataset(MergeSiteDataset):
         if idx > 0:
             return self.get_indexed_positive_site(idx)
         elif np.random.random() < 0.3:
-            return self.get_indexed_negative_site(idx)
+            return self.get_indexed_negative_site(abs(idx))
         else:
             return self.get_random_negative_site()
 
@@ -669,7 +669,7 @@ class MergeSiteValDataset(MergeSiteDataset):
         if idx > 0:
             return self.get_indexed_positive_site(idx)
         else:
-            return self.get_indexed_negative_site(idx)
+            return self.get_indexed_negative_site(abs(idx))
 
     def get_indexed_negative_site(self, idx):
         """
@@ -689,8 +689,9 @@ class MergeSiteValDataset(MergeSiteDataset):
         label : int
             Label of example.
         """
-        brain_id = self.negative_examples[abs(idx)]["brain_id"]
-        subgraph = self.negative_examples[abs(idx)]["subgraph"]
+        self.negative_examples[idx]
+        brain_id = self.negative_examples[idx]["brain_id"]
+        subgraph = self.negative_examples[idx]["subgraph"]
         return brain_id, subgraph, 0
 
 
@@ -729,7 +730,7 @@ class MergeSiteDataLoader(DataLoader):
             Generates batch of examples used during training and validation.
         """
         # Set indices
-        idxs = np.arange(-len(self.dataset), len(self.dataset))
+        idxs = np.arange(-len(self.dataset) + 1, len(self.dataset))
         random.shuffle(idxs)
 
         # Iterate over indices
