@@ -16,7 +16,6 @@ from torch.utils.data import Dataset, DataLoader
 import copy
 import networkx as nx
 import numpy as np
-import pandas as pd
 import random
 
 from neuron_proofreader.machine_learning.augmentation import ImageTransforms
@@ -195,7 +194,7 @@ class MergeSiteDataset(Dataset):
             New dataset instance containing only the specified subset.
         """
         new_dataset = cls.__new__(cls)
-        new_dataset.__dict__ = self.__dict__
+        new_dataset.__dict__ = copy.deepcopy(self.__dict__)
         new_dataset.remove_nonindexed_fragments(idxs)
         return new_dataset
 
@@ -226,10 +225,6 @@ class MergeSiteDataset(Dataset):
             self.graphs[brain_id].relabel_nodes()
 
         # Update merge sites df
-        print("229 - len(self.merge_sites_df):", len(self.merge_sites_df))
-        print("230 - idxs:", idxs)
-        print("max(idxs):", np.max(idxs))
-        print("min(idxs):", np.idxs)
         self.merge_sites_df = self.merge_sites_df.iloc[idxs]
         self.merge_sites_df = self.merge_sites_df.reset_index(drop=True)
 
@@ -286,18 +281,19 @@ class MergeSiteDataset(Dataset):
             Unique identifier for the whole-brain dataset containing the site.
         node : int
             Node ID of the site.
+        label : int
+            Label of example.
         """
         # Get site info
-        idx = abs(idx)
-        brain_id = self.merge_sites_df["brain_id"].iloc[idx]
-        xyz = self.merge_sites_df["xyz"].iloc[idx]
+        brain_id = self.merge_sites_df["brain_id"].iloc[abs(idx)]
+        xyz = self.merge_sites_df["xyz"].iloc[abs(idx)]
         node = self.gt_graphs[brain_id].find_closest_node(xyz)
 
         # Extract rooted subgraph
         subgraph = self.gt_graphs[brain_id].get_rooted_subgraph(
             node, self.subgraph_radius
         )
-        return brain_id, subgraph
+        return brain_id, subgraph, 0
 
     def get_indexed_positive_site(self, idx):
         """
@@ -314,6 +310,8 @@ class MergeSiteDataset(Dataset):
             Unique identifier for the whole-brain dataset containing the site.
         node : int
             Node ID of the site.
+        label : int
+            Label of example.
         """
         # Check if site has a fragment
         if idx > 0 and not self.has_fragment(idx):
@@ -328,7 +326,7 @@ class MergeSiteDataset(Dataset):
         subgraph = self.graphs[brain_id].get_rooted_subgraph(
             node, self.subgraph_radius
         )
-        return brain_id, subgraph
+        return brain_id, subgraph, 1
 
     def get_random_negative_site(self):
         """
@@ -340,6 +338,8 @@ class MergeSiteDataset(Dataset):
             Unique identifier of the whole-brain dataset containing the site.
         node : int
             Node ID of the site.
+        label : int
+            Label of example.
         """
         # Sample graph
         brain_id = util.sample_once(list(self.graphs.keys()))
@@ -372,7 +372,7 @@ class MergeSiteDataset(Dataset):
         subgraph = self.graphs[brain_id].get_rooted_subgraph(
             node, self.subgraph_radius
         )
-        return brain_id, subgraph
+        return brain_id, subgraph, 0
 
     def get_img_patch(self, brain_id, center):
         """
@@ -545,8 +545,7 @@ class MergeSiteTrainDataset(MergeSiteDataset):
         self.__dict__.update(subset_dataset.__dict__)
 
         # Instance attributes
-        self.transform_positive = ImageTransforms()
-        self.transform_negative = ImageTransforms(use_geometric=False)
+        self.transform = ImageTransforms()
 
     # --- Getters ---
     def __getitem__(self, idx):
@@ -592,14 +591,11 @@ class MergeSiteTrainDataset(MergeSiteDataset):
             1 if the example is positive and 0 otherwise.
         """
         if idx > 0:
-            brain_id, subgraph = self.get_indexed_positive_site(idx)
+            return self.get_indexed_positive_site(idx)
+        elif np.random.random() < 0.3:
+            return self.get_indexed_negative_site(idx)
         else:
-            if np.random.random() < 0.3:
-                idx = np.random.randint(0, len(self.merge_sites_df))
-                brain_id, subgraph = self.get_indexed_negative_site(idx)
-            else:
-                brain_id, subgraph = self.get_random_negative_site()
-        return brain_id, subgraph, int(idx > 0)
+            return self.get_random_negative_site()
 
 
 class MergeSiteValDataset(MergeSiteDataset):
@@ -632,7 +628,7 @@ class MergeSiteValDataset(MergeSiteDataset):
 
         Returns
         -------
-        negative_examples : pandas.DataFrame
+        negative_examples : List[dict]
             Dataframe containing non-merge sites that are specified by a brain
             and node ID.
         """
@@ -640,17 +636,13 @@ class MergeSiteValDataset(MergeSiteDataset):
         for i in range(len(self.merge_sites_df)):
             # Get example
             if np.random.random() < 0.3:
-                brain_id, subgraph = self.get_indexed_negative_site(i)
+                brain_id, subgraph, _ = super().get_indexed_negative_site(i)
             else:
-                brain_id, subgraph = self.get_random_negative_site()
+                brain_id, subgraph, _ = self.get_random_negative_site()
 
             # Store info
             negative_examples.append(
-                {
-                    "brain_id": brain_id,
-                    "subgraph": subgraph,
-                    "xyz": subgraph.node_xyz[0]
-                }
+                {"brain_id": brain_id, "subgraph": subgraph}
             )
         return negative_examples
 
@@ -675,13 +667,31 @@ class MergeSiteValDataset(MergeSiteDataset):
             1 if the example is positive and 0 otherwise.
         """
         if idx > 0:
-            brain_id, subgraph = self.get_indexed_positive_site(idx)
+            return self.get_indexed_positive_site(idx)
         else:
-            brain_id = self.negative_examples[abs(idx)]["brain_id"]
-            subgraph = self.negative_examples[abs(idx)]["subgraph"]
+            return self.get_indexed_negative_site(idx)
 
-        label = 1 if idx > 0 else 0
-        return brain_id, subgraph, label
+    def get_indexed_negative_site(self, idx):
+        """
+        Gets the negative example corresponding to the given index.
+
+        Parameters
+        ----------
+        idx : int
+            Index of the site in "sites_df".
+
+        Returns
+        -------
+        brain_id : str
+            Unique identifier for the whole-brain dataset containing the site.
+        node : int
+            Node ID of the site.
+        label : int
+            Label of example.
+        """
+        brain_id = self.negative_examples[abs(idx)]["brain_id"]
+        subgraph = self.negative_examples[abs(idx)]["subgraph"]
+        return brain_id, subgraph, 0
 
 
 # --- DataLoaders ---
@@ -719,13 +729,13 @@ class MergeSiteDataLoader(DataLoader):
             Generates batch of examples used during training and validation.
         """
         # Set indices
-        idxs = np.arange(-len(self.dataset) // 2, len(self.dataset) // 2)
+        idxs = np.arange(-len(self.dataset), len(self.dataset))
         random.shuffle(idxs)
 
         # Iterate over indices
         for start in range(0, len(idxs), self.batch_size):
             batch_idxs = idxs[start: start + self.batch_size]
-            yield self._load_batch(batch_idxs)
+            yield self._load_multimodal_batch(batch_idxs)
 
     def _load_batch(self, batch_idxs):
         """
