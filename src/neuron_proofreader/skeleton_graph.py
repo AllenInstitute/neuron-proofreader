@@ -447,7 +447,7 @@ class SkeletonGraph(nx.Graph):
         Set[str]
             Set of all unique SWC IDs of nodes in the graph.
         """
-        return np.unique(list(self.component_id_to_swc_id.values()))
+        return set(self.component_id_to_swc_id.values())
 
     # --- Writer ---
     def to_zipped_swcs(self, zip_path, preserve_radius=False):

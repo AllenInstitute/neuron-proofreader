@@ -231,7 +231,7 @@ class RandomNoise3D:
     Adds random Gaussian noise to a 3D image.
     """
 
-    def __init__(self, max_std=0.3):
+    def __init__(self, max_std=0.2):
         """
         Initializes a RandomNoise3D transformer.
 
@@ -258,9 +258,9 @@ class RandomNoise3D:
             Noisy 3D image.
         """
         std = self.max_std * random.random()
-        noise = np.random.uniform(0, std, img_patch.shape)
+        noise = np.random.uniform(-std, std, img_patch.shape)
         img_patch += noise
-        return img_patch
+        return np.clip(img_patch, 0, 1)
 
 
 # --- Helpers ---

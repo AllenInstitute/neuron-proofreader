@@ -66,6 +66,7 @@ class MergeSiteDataset(Dataset):
     patch_shape : Tuple[int], optional
         Shape of the 3D image patches to extract.
     """
+    random_negative_example_prob = 0.8
 
     def __init__(
         self,
@@ -285,8 +286,8 @@ class MergeSiteDataset(Dataset):
             Label of example.
         """
         # Get site info
-        brain_id = self.merge_sites_df["brain_id"].iloc[abs(idx)]
-        xyz = self.merge_sites_df["xyz"].iloc[abs(idx)]
+        brain_id = self.merge_sites_df["brain_id"].iloc[idx]
+        xyz = self.merge_sites_df["xyz"].iloc[idx]
         node = self.gt_graphs[brain_id].find_closest_node(xyz)
 
         # Extract rooted subgraph
@@ -314,7 +315,7 @@ class MergeSiteDataset(Dataset):
             Label of example.
         """
         # Check if site has a fragment
-        if idx > 0 and not self.has_fragment(idx):
+        if not self.has_fragment(idx):
             return self.get_random_negative_site()
 
         # Get site info
@@ -348,31 +349,45 @@ class MergeSiteDataset(Dataset):
         outcome = random.random()
         while True:
             # Sample node
-            if outcome <= 0.3:
+            if outcome < 0.3:
                 node = util.sample_once(self.graphs[brain_id].nodes)
-            elif outcome > 0.3 and outcome < 0.4:
+            elif outcome < 0.4:
                 node = util.sample_once(self.graphs[brain_id].get_leafs())
+            elif outcome < 0.8:
+                branching_nodes = self.gt_graphs[brain_id].get_branchings()
+                node = util.sample_once(branching_nodes)
+                if self.check_nearby_branching(brain_id, node, use_gt=True):
+                    continue
+                else:
+                    subgraph = self.gt_graphs[brain_id].get_rooted_subgraph(
+                        node, self.subgraph_radius
+                    )
+                    return brain_id, subgraph, 0
             else:
                 branching_nodes = self.graphs[brain_id].get_branchings()
                 if len(branching_nodes) > 0:
                     node = util.sample_once(branching_nodes)
-                    if self.check_nearby_branching(brain_id, node):
-                        continue
                 else:
                     outcome = 0
+                    continue
+
+            # Extract rooted subgraph
+            subgraph = self.graphs[brain_id].get_rooted_subgraph(
+                node, self.subgraph_radius
+            )
+
+            # Check branching
+            if self.graphs[brain_id].degree(node) == 3:
+                is_high_degree = self.graphs[brain_id].degree(node) > 3
+                is_too_branchy = self.check_nearby_branching(brain_id, node)
+                if is_too_branchy or is_high_degree:
                     continue
 
             # Check if node is close to merge site
             xyz = self.graphs[brain_id].node_xyz[node]
             d, _ = self.merge_site_kdtrees[brain_id].query(xyz)
             if d > 50:
-                break
-
-        # Extract rooted subgraph
-        subgraph = self.graphs[brain_id].get_rooted_subgraph(
-            node, self.subgraph_radius
-        )
-        return brain_id, subgraph, 0
+                return brain_id, subgraph, 0
 
     def get_img_patch(self, brain_id, center):
         """
@@ -434,7 +449,7 @@ class MergeSiteDataset(Dataset):
         """
         return len(self.merge_sites_df)
 
-    def check_nearby_branching(self, brain_id, root, max_depth=20):
+    def check_nearby_branching(self, brain_id, root, max_depth=70, use_gt=False):
         """
         Checks if there is a branching node within a specified depth from the
         given node.
@@ -447,23 +462,27 @@ class MergeSiteDataset(Dataset):
             Node ID.
         max_depth : float, optional
             Maximum depth (in microns) of search. Default is 20μm.
+        use_gt : bool
+            Indication of whether to check groundtruth graph. Default is
+            False.
 
         Returns
         -------
         bool
             Indication of whether there is a nearby branching node.
         """
+        graph = self.gt_graphs[brain_id] if use_gt else self.graphs[brain_id]
         queue = [(root, 0)]
         visited = set([root])
         while queue:
             # Visit node
             i, d_i = queue.pop()
-            if self.graphs[brain_id].degree[i] > 2 and d_i > 0:
+            if graph.degree[i] > 2 and d_i > 0:
                 return True
 
             # Update queue
-            for j in self.graphs[brain_id].neighbors(i):
-                d_j = d_i + self.graphs[brain_id].dist(i, j)
+            for j in graph.neighbors(i):
+                d_j = d_i + graph.dist(i, j)
                 if j not in visited and d_j < max_depth:
                     queue.append((j, d_j))
                     visited.add(j)
@@ -592,10 +611,10 @@ class MergeSiteTrainDataset(MergeSiteDataset):
         """
         if idx > 0:
             return self.get_indexed_positive_site(idx)
-        elif np.random.random() < 0.3:
-            return self.get_indexed_negative_site(abs(idx))
-        else:
+        elif np.random.random() < self.random_negative_example_prob:
             return self.get_random_negative_site()
+        else:
+            return self.get_indexed_negative_site(abs(idx))            
 
 
 class MergeSiteValDataset(MergeSiteDataset):
@@ -633,12 +652,12 @@ class MergeSiteValDataset(MergeSiteDataset):
             and node ID.
         """
         negative_examples = list()
-        for i in range(len(self.merge_sites_df)):
+        for i in range(len(self)):
             # Get example
-            if np.random.random() < 0.3:
-                brain_id, subgraph, _ = super().get_indexed_negative_site(i)
-            else:
+            if np.random.random() < self.random_negative_example_prob:
                 brain_id, subgraph, _ = self.get_random_negative_site()
+            else:
+                brain_id, subgraph, _ = super().get_indexed_negative_site(i)
 
             # Store info
             negative_examples.append(
@@ -689,7 +708,6 @@ class MergeSiteValDataset(MergeSiteDataset):
         label : int
             Label of example.
         """
-        self.negative_examples[idx]
         brain_id = self.negative_examples[idx]["brain_id"]
         subgraph = self.negative_examples[idx]["subgraph"]
         return brain_id, subgraph, 0
