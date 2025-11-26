@@ -1,3 +1,14 @@
+"""
+Created on Thu Nov 20 5:00:00 2025
+
+@author: Anna Grim
+@email: anna.grim@alleninstitute.org
+
+Code for point cloud models that perform machine learning tasks within
+NeuronProofreader pipelines.
+
+"""
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -56,6 +67,7 @@ class DGCNN(nn.Module):
 
     @staticmethod
     def knn(x, k):
+        # Compute pairwise distance
         inner = -2 * torch.matmul(x, x.transpose(2, 1))
         xx = torch.sum(x**2, dim=2, keepdim=True)
         pairwise_distance = -xx - inner - xx.transpose(2, 1)
@@ -74,19 +86,6 @@ class DGCNN(nn.Module):
         return x[batch_indices, idx, :]
 
     def forward(self, x):
-        """
-        Passes the given input through this neural network.
-
-        Parameters
-        ----------
-        x : torch.Tensor
-            Input vector of features.
-
-        Returns
-        -------
-        x : torch.Tensor
-            Output of the neural network.
-        """
         x1 = F.relu(self.conv1(self.get_graph_feature(x, self.k)))
         x1 = x1.max(dim=-1)[0]
 
@@ -103,11 +102,9 @@ class DGCNN(nn.Module):
 
 class VisionDGCNN(nn.Module):
 
-    def __init__(self, patch_shape, output_dim=256):
-        # Call parent class
+    def __init__(self, patch_shape, output_dim=128):
         super().__init__()
 
-        # Model architecture
         self.dgcnn = DGCNN(output_dim=output_dim)
         self.vision_model = CNN3D(
             patch_shape,
@@ -140,7 +137,7 @@ class VisionDGCNN(nn.Module):
 
 
 # --- Point Cloud Generation ---
-def subgraph_to_point_cloud(graph, n_points=3600):
+def subgraph_to_point_cloud(graph, n_points=3200):
     point_cloud = list()
     for n1, n2 in graph.edges:
         # Use average radius

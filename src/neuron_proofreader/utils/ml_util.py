@@ -108,6 +108,8 @@ class TensorDict(dict):
                 return v
             elif isinstance(v, dict):
                 return {kk: move(vv) for kk, vv in v.items()}
+            elif isinstance(v, tuple):
+                return tuple([move(vv) for vv in v])
             else:
                 return v
         return TensorDict({k: move(v) for k, v in self.items()})

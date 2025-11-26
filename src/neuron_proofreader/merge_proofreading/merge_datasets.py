@@ -17,9 +17,13 @@ import copy
 import networkx as nx
 import numpy as np
 import random
+import torch
 
 from neuron_proofreader.machine_learning.augmentation import ImageTransforms
-from neuron_proofreader.machine_learning.point_clouds import (
+from neuron_proofreader.machine_learning.graph_models import (
+    subgraph_to_data,
+)
+from neuron_proofreader.machine_learning.point_cloud_models import (
     subgraph_to_point_cloud,
 )
 from neuron_proofreader.merge_proofreading.merge_dataloading import (
@@ -736,9 +740,9 @@ class MergeSiteDataLoader(DataLoader):
         # Iterate over indices
         for start in range(0, len(idxs), self.batch_size):
             batch_idxs = idxs[start: start + self.batch_size]
-            yield self._load_multimodal_batch(batch_idxs)
+            yield self._load_image_graph_batch(batch_idxs)
 
-    def _load_batch(self, batch_idxs):
+    def _load_image_batch(self, batch_idxs):
         """
         Loads a batch of samples from the dataset using multithreading.
 
@@ -767,7 +771,7 @@ class MergeSiteDataLoader(DataLoader):
                 patches[i], _, labels[i] = thread.result()
         return ml_util.to_tensor(patches), ml_util.to_tensor(labels)
 
-    def _load_multimodal_batch(self, batch_idxs):
+    def _load_image_pc_batch(self, batch_idxs):
         """
         Loads a batch of samples from the dataset using multithreading.
 
@@ -803,5 +807,50 @@ class MergeSiteDataLoader(DataLoader):
                 "img": ml_util.to_tensor(patches),
                 "point_cloud": ml_util.to_tensor(point_clouds),
             }
+        )
+        return batch, ml_util.to_tensor(labels)
+
+    def _load_image_graph_batch(self, batch_idxs):
+        """
+        Loads a batch of samples from the dataset using multithreading.
+
+        Parameters
+        ----------
+        batch_idxs : List[int]
+            Indices of the dataset items to include in the batch.
+
+        Returns
+        -------
+        batch : Dict[str, torch.Tensor]
+            Dictionary that maps modality names to batch features.
+        labels : torch.Tensor
+            Labels corresponding to each patch.
+        """
+        with ThreadPoolExecutor() as executor:
+            # Assign threads
+            threads = list()
+            for idx in batch_idxs:
+                threads.append(executor.submit(self.dataset.__getitem__, idx))
+
+            # Store results
+            labels = np.zeros((self.batch_size, 1))
+            patches = np.zeros((self.batch_size,) + self.patches_shape)
+            h, x, edges = list(), list(), list()
+            for i, thread in enumerate(as_completed(threads)):
+                patches[i], subgraph, labels[i] = thread.result()
+                h_i, x_i, edges_i = subgraph_to_data(subgraph)
+                edges_i += len(h)
+                h.append(h_i)
+                x.append(x_i)
+                edges.append(edges_i)
+
+        # Combine subgraph batches
+        h = torch.cat(h, dim=0)
+        x = torch.cat(x, dim=0)
+        edges = torch.cat(edges, dim=1)
+
+        # Set batch dictionary
+        batch = ml_util.TensorDict(
+            {"img": ml_util.to_tensor(patches), "graph": (h, x, edges)}
         )
         return batch, ml_util.to_tensor(labels)
