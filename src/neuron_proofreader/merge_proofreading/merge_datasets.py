@@ -432,7 +432,7 @@ class MergeSiteDataset(Dataset):
         int
             Number of positive examples of merge sites.
         """
-        return len(self.merge_sites_df)
+        return len(self.merge_sites_df) // 4
 
     def check_nearby_branching(self, brain_id, root, max_depth=20):
         """
@@ -592,7 +592,7 @@ class MergeSiteTrainDataset(MergeSiteDataset):
         """
         if idx > 0:
             return self.get_indexed_positive_site(idx)
-        elif np.random.random() < 0.3:
+        elif np.random.random() < 0.2:
             return self.get_indexed_negative_site(abs(idx))
         else:
             return self.get_random_negative_site()
@@ -635,7 +635,7 @@ class MergeSiteValDataset(MergeSiteDataset):
         negative_examples = list()
         for i in range(len(self.merge_sites_df)):
             # Get example
-            if np.random.random() < 0.3:
+            if np.random.random() < 0.2:
                 brain_id, subgraph, _ = super().get_indexed_negative_site(i)
             else:
                 brain_id, subgraph, _ = self.get_random_negative_site()
