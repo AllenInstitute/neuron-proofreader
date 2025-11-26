@@ -485,7 +485,7 @@ class MergeSiteDataset(Dataset):
         for i, xyz in enumerate(graph.node_xyz):
             if i in graph:
                 d, _ = self.gt_graphs[brain_id].kdtree.query(xyz)
-                if d > 128:
+                if d > 100:
                     graph.remove_node(i)
         graph.relabel_nodes()
 
@@ -678,7 +678,7 @@ class MergeSiteValDataset(MergeSiteDataset):
         Parameters
         ----------
         idx : int
-            Index of the site in "sites_df".
+            Index of example.
 
         Returns
         -------
@@ -736,7 +736,7 @@ class MergeSiteDataLoader(DataLoader):
         # Iterate over indices
         for start in range(0, len(idxs), self.batch_size):
             batch_idxs = idxs[start: start + self.batch_size]
-            yield self._load_multimodal_batch(batch_idxs)
+            yield self._load_batch(batch_idxs)
 
     def _load_batch(self, batch_idxs):
         """
