@@ -231,7 +231,7 @@ class RandomNoise3D:
     Adds random Gaussian noise to a 3D image.
     """
 
-    def __init__(self, max_std=0.5):
+    def __init__(self, max_std=0.3):
         """
         Initializes a RandomNoise3D transformer.
 
