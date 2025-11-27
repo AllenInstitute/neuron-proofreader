@@ -276,6 +276,22 @@ class MergeSiteDataset(Dataset):
             patches = np.stack([img_patch, segment_mask], axis=0)
         return patches, subgraph, label
 
+    def sample_brain_id(self):
+        """
+        Samples a brain ID.
+
+        Returns
+        -------
+        brain_id : str
+            Unique identifier of a whole-brain dataset.
+        """
+        while True:
+            brain_id = util.sample_once(list(self.graphs.keys()))
+            if len(self.graphs[brain_id].nodes) > 0:
+                return brain_id
+            else:
+                print(f"brain_id={brain_id} has no nodes")
+
     def get_indexed_negative_site(self, idx):
         """
         Gets the negative example corresponding to the given index.
@@ -352,7 +368,7 @@ class MergeSiteDataset(Dataset):
             Label of example.
         """
         # Sample graph
-        brain_id = util.sample_once(list(self.graphs.keys()))
+        brain_id = self.sample_brain_id()
 
         # Sample node on graph
         outcome = random.random()
