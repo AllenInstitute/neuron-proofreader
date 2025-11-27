@@ -220,7 +220,6 @@ class MergeSiteDataset(Dataset):
             if dist < 20 and node in self.graphs[brain_id]:
                 nodes = self.graphs[brain_id].get_connected_nodes(node)
                 self.graphs[brain_id].remove_nodes(nodes, False)
-        self.remove_empty_graphs()
 
         # Relabel nodes
         for brain_id in self.graphs:
@@ -229,14 +228,6 @@ class MergeSiteDataset(Dataset):
         # Update merge sites df
         self.merge_sites_df = self.merge_sites_df.iloc[idxs]
         self.merge_sites_df = self.merge_sites_df.reset_index(drop=True)
-
-    def remove_empty_graphs(self):
-        """
-        Removes graphs without any nodes.
-        """
-        for brain_id in list(self.graphs.keys()):
-            if len(self.graphs[brain_id]) == 0:
-                del self.graphs[brain_id]
 
     # --- Getters ---
     def __getitem__(self, idx):
@@ -275,6 +266,22 @@ class MergeSiteDataset(Dataset):
             img_patch = img_util.pad_to_shape(img_patch, self.patch_shape)
             patches = np.stack([img_patch, segment_mask], axis=0)
         return patches, subgraph, label
+
+    def sample_brain_id(self):
+        """
+        Samples a brain ID.
+
+        Returns
+        -------
+        brain_id : str
+            Unique identifier of a whole-brain dataset.
+        """
+        while True:
+            brain_id = util.sample_once(list(self.graphs.keys()))
+            if len(self.graphs[brain_id].nodes) > 0:
+                return brain_id
+            else:
+                print(f"brain_id={brain_id} has no nodes")
 
     def get_indexed_negative_site(self, idx):
         """
@@ -352,7 +359,7 @@ class MergeSiteDataset(Dataset):
             Label of example.
         """
         # Sample graph
-        brain_id = util.sample_once(list(self.graphs.keys()))
+        brain_id = self.sample_brain_id()
 
         # Sample node on graph
         outcome = random.random()
