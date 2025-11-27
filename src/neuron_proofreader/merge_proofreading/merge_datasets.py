@@ -220,6 +220,7 @@ class MergeSiteDataset(Dataset):
             if dist < 20 and node in self.graphs[brain_id]:
                 nodes = self.graphs[brain_id].get_connected_nodes(node)
                 self.graphs[brain_id].remove_nodes(nodes, False)
+        self.remove_empty_graphs()
 
         # Relabel nodes
         for brain_id in self.graphs:
@@ -228,6 +229,14 @@ class MergeSiteDataset(Dataset):
         # Update merge sites df
         self.merge_sites_df = self.merge_sites_df.iloc[idxs]
         self.merge_sites_df = self.merge_sites_df.reset_index(drop=True)
+
+    def remove_empty_graphs(self):
+        """
+        Removes graphs without any nodes.
+        """
+        for brain_id in list(self.graphs.keys()):
+            if len(self.graphs[brain_id]) == 0:
+                del self.graphs[brain_id]
 
     # --- Getters ---
     def __getitem__(self, idx):
@@ -754,7 +763,7 @@ class MergeSiteDataLoader(DataLoader):
         # Iterate over indices
         for start in range(0, len(idxs), self.batch_size):
             batch_idxs = idxs[start: start + self.batch_size]
-            yield self._load_batch(batch_idxs)
+            yield self._load_multimodal_batch(batch_idxs)
 
     def _load_batch(self, batch_idxs):
         """
