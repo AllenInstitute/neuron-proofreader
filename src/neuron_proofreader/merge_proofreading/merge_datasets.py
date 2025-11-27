@@ -19,7 +19,7 @@ import numpy as np
 import random
 
 from neuron_proofreader.machine_learning.augmentation import ImageTransforms
-from neuron_proofreader.machine_learning.point_clouds import (
+from neuron_proofreader.machine_learning.point_cloud_models import (
     subgraph_to_point_cloud,
 )
 from neuron_proofreader.merge_proofreading.merge_dataloading import (
@@ -810,10 +810,10 @@ class MergeSiteDataLoader(DataLoader):
             # Store results
             labels = np.zeros((self.batch_size, 1))
             patches = np.zeros((self.batch_size,) + self.patches_shape)
-            point_clouds = np.zeros((self.batch_size, 3, 3600))
+            point_clouds = np.zeros((self.batch_size, 3600, 3))
             for i, thread in enumerate(as_completed(threads)):
                 patches[i], subgraph, labels[i] = thread.result()
-                point_clouds[i] = subgraph_to_point_cloud(subgraph)
+                point_clouds[i] = subgraph_to_point_cloud(subgraph).T
 
         # Set batch dictionary
         batch = ml_util.TensorDict(
