@@ -19,7 +19,7 @@ import numpy as np
 import random
 
 from neuron_proofreader.machine_learning.augmentation import ImageTransforms
-from neuron_proofreader.machine_learning.point_clouds import (
+from neuron_proofreader.machine_learning.point_cloud_models import (
     subgraph_to_point_cloud,
 )
 from neuron_proofreader.merge_proofreading.merge_dataloading import (
@@ -232,6 +232,7 @@ class MergeSiteDataset(Dataset):
             if dist < 20 and node in self.graphs[brain_id]:
                 nodes = self.graphs[brain_id].get_connected_nodes(node)
                 self.graphs[brain_id].remove_nodes(nodes, False)
+        self.remove_empty_graphs()
 
         # Relabel nodes
         for brain_id in self.graphs:
@@ -240,6 +241,14 @@ class MergeSiteDataset(Dataset):
         # Update merge sites df
         self.merge_sites_df = self.merge_sites_df.iloc[idxs]
         self.merge_sites_df = self.merge_sites_df.reset_index(drop=True)
+
+    def remove_empty_graphs(self):
+        """
+        Removes graphs without any nodes.
+        """
+        for brain_id in list(self.graphs.keys()):
+            if len(self.graphs[brain_id]) == 0:
+                del self.graphs[brain_id]
 
     # --- Getters ---
     def __getitem__(self, idx):
@@ -835,7 +844,7 @@ class MergeSiteDataLoader(DataLoader):
             point_clouds = np.zeros((len(batch_idxs), 3, 3600))
             for i, thread in enumerate(as_completed(threads)):
                 patches[i], subgraph, labels[i] = thread.result()
-                point_clouds[i] = subgraph_to_point_cloud(subgraph)
+                point_clouds[i] = subgraph_to_point_cloud(subgraph).T
 
         # Set batch dictionary
         batch = ml_util.TensorDict(
