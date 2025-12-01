@@ -568,10 +568,13 @@ class MergeSiteDataset(Dataset):
             True if the fragment exists in the graph for the corresponding
             brain, False otherwise.
         """
-        brain_id = self.merge_sites_df["brain_id"].iloc[idx]
-        segment_id = self.merge_sites_df["segment_id"].iloc[idx]
-        swc_id = f"{segment_id}.0"
-        return swc_id in self.graphs[brain_id].get_swc_ids()
+        if brain_id in self.graphs:
+            brain_id = self.merge_sites_df["brain_id"].iloc[idx]
+            segment_id = self.merge_sites_df["segment_id"].iloc[idx]
+            swc_id = f"{segment_id}.0"
+            return swc_id in self.graphs[brain_id].get_swc_ids()
+        else:
+            return False
 
 
 class MergeSiteTrainDataset(MergeSiteDataset):
@@ -751,7 +754,9 @@ class MergeSiteDataLoader(DataLoader):
     from the cloud to form batches.
     """
 
-    def __init__(self, dataset, batch_size=32, sampler=None):
+    def __init__(
+        self, dataset, batch_size=32, is_multimodal=False, sampler=None
+    ):
         """
         Instantiates a MergeSiteDataLoader object.
 
@@ -761,11 +766,15 @@ class MergeSiteDataLoader(DataLoader):
             Dataset to be iterated over to train or validate.
         batch_size : int, optional
             Number of examples in each batch. Default is 32.
+        is_multimodal : bool, optional
+            Indication of whether the loaded data is multimodal. Default is
+            False.
         """
         # Call parent class
         super().__init__(dataset, batch_size=batch_size, sampler=sampler)
 
         # Instance attributes
+        self.is_multimodal = is_multimodal
         self.patches_shape = (2,) + self.dataset.patch_shape
 
     # --- Core Routines ---
@@ -780,12 +789,15 @@ class MergeSiteDataLoader(DataLoader):
         """
         # Set indices
         idxs = np.arange(-len(self.dataset) + 1, len(self.dataset))
-        #random.shuffle(idxs)
+        random.shuffle(idxs)
 
         # Iterate over indices
         for start in range(0, len(idxs), self.batch_size):
             end = min(start + self.batch_size, len(idxs))
-            yield self._load_multimodal_batch(idxs[start: end])
+            if self.is_multimodal:
+                yield self._load_multimodal_batch(idxs[start: end])
+            else:
+                yield self._load_batch(idxs[start: end])
 
     def _load_batch(self, batch_idxs):
         """
