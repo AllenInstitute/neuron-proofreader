@@ -65,6 +65,7 @@ class Trainer:
         device="cuda",
         lr=1e-3,
         max_epochs=200,
+        save_mistakes=False
     ):
         """
         Instantiates a Trainer object.
@@ -83,6 +84,8 @@ class Trainer:
             Learning rate. Default is 1e-3.
         max_epochs : int, optional
             Maximum number of training epochs. Default is 200.
+        save_mistakes : bool, optional
+            Indication of whether to save MIPs of mistakes. Default is False.
         """
         # Initializations
         exp_name = "session-" + datetime.today().strftime("%Y%m%d_%H%M")
@@ -145,7 +148,7 @@ class Trainer:
 
         Returns
         -------
-        stats : dict
+        stats : Dict[str, float]
             Dictionary of aggregated training metrics.
         """
         self.model.train()
@@ -164,6 +167,8 @@ class Trainer:
             y.extend(ml_util.to_cpu(y_i, True).flatten().tolist())
             hat_y.extend(ml_util.to_cpu(hat_y_i, True).flatten().tolist())
             loss.append(float(ml_util.to_cpu(loss_i)))
+
+        print(f"% Train Positive: {np.sum(y)} / {len(y)} = {np.sum(y) / len(y)}")
 
         # Write stats to tensorboard
         stats = self.compute_stats(y, hat_y)
@@ -184,7 +189,7 @@ class Trainer:
 
         Returns
         -------
-        stats : dict
+        stats : Dict[str, float]
             Dictionary of aggregated validation metrics.
         is_best : bool
             True if the current F1 score is the best so far.
@@ -200,6 +205,8 @@ class Trainer:
                 y.extend(ml_util.to_cpu(y_i, True).flatten().tolist())
                 hat_y.extend(ml_util.to_cpu(hat_y_i, True).flatten().tolist())
                 loss.append(float(ml_util.to_cpu(loss_i)))
+
+        print(f"% Val Positive: {np.sum(y)} / {len(y)} = {np.sum(y) / len(y)}")
 
         # Write stats to tensorboard
         stats = self.compute_stats(y, hat_y)
@@ -274,7 +281,7 @@ class Trainer:
 
         Parameters
         ----------
-        stats : dict
+        stats : Dict[str, float]
             Dictionary of metric names to values.
         is_train : bool, optional
             Indication of whether stats were computed during training.
@@ -343,7 +350,7 @@ class Trainer:
 
         Parameters
         ----------
-        stats : dict
+        stats : Dict[str, float]
             Dictionary of metric names to lists of values.
         epoch : int
             Current training epoch.
