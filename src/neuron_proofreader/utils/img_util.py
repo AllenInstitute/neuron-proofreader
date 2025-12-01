@@ -234,6 +234,56 @@ def make_segmentation_colormap(mask, seed=42):
     return ListedColormap(colors)
 
 
+def plot_image_and_segmentation_mips(img, segmentation, output_path=None):
+    """
+    Plots a 6x3 grid with image MIPs on the top and segmentation MIPs on the
+    bottom.
+
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Input 3D image to generate MIPs from.
+    segmentation : numpy.ndarray
+        Segmentation to generate MIPs from.
+    output_path : None or str, optional
+        Path to save MIPs as a PNG if provided. Default is None.
+    """
+    # Initializations
+    vmax = np.percentile(img, 99.9)
+    axes_names = ["XY", "XZ", "YZ"]
+    cmap = make_segmentation_colormap(segmentation)
+
+    fig, axs = plt.subplots(2, 3)
+    plt.subplots_adjust(wspace=0.05, hspace=0.05)
+
+    # Image MIPs
+    for i in range(3):
+        mip = np.max(img, axis=i)
+        ax = axs[0, i]
+        ax.imshow(mip, vmax=vmax, aspect='equal')
+        ax.set_title(axes_names[i], fontsize=16)
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+    # Segmentation MIPs
+    for i in range(3):
+        mip = np.max(segmentation, axis=i)
+        ax = axs[1, i]
+        ax.imshow(mip, cmap=cmap, interpolation="none", aspect='equal')
+        ax.set_title(axes_names[i], fontsize=16)
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+    plt.tight_layout()
+
+    # Save figure if path provided
+    if output_path:
+        plt.savefig(output_path, dpi=200)
+
+    plt.show()
+    plt.close(fig)
+
+
 def plot_mips(img, vmax=None):
     """
     Plots the Maximum Intensity Projections (MIPs) of a 3D image along the XY,
@@ -267,7 +317,7 @@ def plot_segmentation_mips(segmentation):
     Parameters
     ----------
     segmentation : numpy.ndarray
-        Segmentation to be visualized.
+        Segmentation to generate MIPs from.
     """
     # Initialize plot
     fig, axs = plt.subplots(1, 3, figsize=(10, 4))

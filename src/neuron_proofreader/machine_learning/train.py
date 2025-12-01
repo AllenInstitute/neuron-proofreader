@@ -23,7 +23,7 @@ import torch.distributed as dist
 import torch.nn as nn
 import torch.optim as optim
 
-from neuron_proofreader.utils import ml_util, util
+from neuron_proofreader.utils import img_util, ml_util, util
 
 
 class Trainer:
@@ -50,6 +50,8 @@ class Trainer:
         Name of model used for logging and checkpointing.
     optimizer : torch.optim.AdamW
         Optimizer that is used during training.
+    save_mistake_mips : bool, optional
+        Indication of whether to save MIPs of mistakes.
     scheduler : torch.optim.lr_scheduler.CosineAnnealingLR
         Scheduler used to the adjust learning rate.
     writer : torch.utils.tensorboard.SummaryWriter
@@ -65,7 +67,7 @@ class Trainer:
         device="cuda",
         lr=1e-3,
         max_epochs=200,
-        save_mistakes=False
+        save_mistake_mips=False
     ):
         """
         Instantiates a Trainer object.
@@ -84,10 +86,10 @@ class Trainer:
             Learning rate. Default is 1e-3.
         max_epochs : int, optional
             Maximum number of training epochs. Default is 200.
-        save_mistakes : bool, optional
+        save_mistake_mips : bool, optional
             Indication of whether to save MIPs of mistakes. Default is False.
         """
-        # Initializations
+        # Set experiment name
         exp_name = "session-" + datetime.today().strftime("%Y%m%d_%H%M")
         log_dir = os.path.join(output_dir, exp_name)
         util.mkdir(log_dir)
@@ -98,7 +100,9 @@ class Trainer:
         self.device = device
         self.log_dir = log_dir
         self.max_epochs = max_epochs
+        self.mistakes_dir = os.path.join(log_dir, "mistakes")
         self.model_name = model_name
+        self.save_mistake_mips = save_mistake_mips
 
         self.criterion = nn.BCEWithLogitsLoss()
         self.model = model.to(device)
@@ -192,21 +196,26 @@ class Trainer:
         is_best : bool
             True if the current F1 score is the best so far.
         """
-        loss, y, hat_y = list(), list(), list()
+        loss_list, y_list, hat_y_list = list(), list(), list()
         self.model.eval()
         with torch.no_grad():
-            for x_i, y_i in val_dataloader:
+            for x, y in val_dataloader:
                 # Run model
-                hat_y_i, loss_i = self.forward_pass(x_i, y_i)
+                hat_y, loss = self.forward_pass(x, y)
 
-                # Store results
-                y.extend(ml_util.to_cpu(y_i, True).flatten().tolist())
-                hat_y.extend(ml_util.to_cpu(hat_y_i, True).flatten().tolist())
-                loss.append(float(ml_util.to_cpu(loss_i)))
+                # Move to CPU
+                y = ml_util.to_cpu(y, True).flatten().tolist()
+                hat_y = ml_util.to_cpu(hat_y, True).flatten().tolist()
+
+                # Store predictions
+                y_list.extend(y)
+                hat_y_list.extend(hat_y)
+                loss_list.append(float(ml_util.to_cpu(loss)))
+                self._save_mistake_mips(x, y, hat_y)
 
         # Write stats to tensorboard
-        stats = self.compute_stats(y, hat_y)
-        stats["loss"] = np.mean(loss)
+        stats = self.compute_stats(y_list, hat_y_list)
+        stats["loss"] = np.mean(loss_list)
         self.update_tensorboard(stats, epoch, "val_")
         return stats
 
@@ -325,6 +334,34 @@ class Trainer:
         self.model.load_state_dict(
             torch.load(model_path, map_location=self.device)
         )
+
+    def _save_mistake_mips(self, x, y, hat_y):
+        if self.save_mistake_mips:
+            # Initializations
+            cnt = 0
+            util.mkdir(self.mistakes_dir, True)
+            if isinstance(x, dict):
+                x = ml_util.to_cpu(x["img"], True)
+            else:
+                x = ml_util.to_cpu(x, True)
+
+            # Save MIPs
+            for i, (y_i, hat_y_i) in enumerate(zip(y, hat_y)):
+                # Check for mistake
+                if y_i == 1 and hat_y_i < 0:
+                    name = "false_negative"
+                elif y_i == 0 and hat_y_i > 0:
+                    name = "false_positive"
+                else:
+                    name = None
+
+                # Save MIP
+                if name:
+                    cnt += 1
+                    output_path = os.path.join(self.mistakes_dir, f"{name}{cnt}.png")
+                    img_util.plot_image_and_segmentation_mips(
+                        x[i, 0, ...], x[i, 1, ...], output_path
+                    )
 
     def save_model(self, epoch):
         """
@@ -482,7 +519,7 @@ class DistributedTrainer(Trainer):
             # Report results
             if rank == 0:
                 new_best = self.check_model_performance(val_stats, epoch)
-                print(f"\nEpoch {epoch}: " + ("New Best!" if new_best else " "))
+                print(f"\nEpoch {epoch}: ", "New Best!" if new_best else "")
                 self.report_stats(train_stats, is_train=True)
                 self.report_stats(val_stats, is_train=False)
 
