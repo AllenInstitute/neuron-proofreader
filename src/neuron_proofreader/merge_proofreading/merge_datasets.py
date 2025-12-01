@@ -780,7 +780,7 @@ class MergeSiteDataLoader(DataLoader):
         """
         # Set indices
         idxs = np.arange(-len(self.dataset) + 1, len(self.dataset))
-        #random.shuffle(idxs)
+        random.shuffle(idxs)
 
         # Iterate over indices
         for start in range(0, len(idxs), self.batch_size):
