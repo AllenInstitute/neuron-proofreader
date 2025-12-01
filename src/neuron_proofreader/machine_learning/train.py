@@ -168,8 +168,6 @@ class Trainer:
             hat_y.extend(ml_util.to_cpu(hat_y_i, True).flatten().tolist())
             loss.append(float(ml_util.to_cpu(loss_i)))
 
-        print(f"% Train Positive: {np.sum(y)} / {len(y)} = {np.sum(y) / len(y)}")
-
         # Write stats to tensorboard
         stats = self.compute_stats(y, hat_y)
         stats["loss"] = np.mean(loss)
@@ -205,8 +203,6 @@ class Trainer:
                 y.extend(ml_util.to_cpu(y_i, True).flatten().tolist())
                 hat_y.extend(ml_util.to_cpu(hat_y_i, True).flatten().tolist())
                 loss.append(float(ml_util.to_cpu(loss_i)))
-
-        print(f"% Val Positive: {np.sum(y)} / {len(y)} = {np.sum(y) / len(y)}")
 
         # Write stats to tensorboard
         stats = self.compute_stats(y, hat_y)
