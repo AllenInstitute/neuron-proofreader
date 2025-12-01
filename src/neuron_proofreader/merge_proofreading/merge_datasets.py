@@ -66,7 +66,7 @@ class MergeSiteDataset(Dataset):
     patch_shape : Tuple[int], optional
         Shape of the 3D image patches to extract.
     """
-    random_negative_example_prob = 0.8
+    random_negative_example_prob = 0.5
 
     def __init__(
         self,
@@ -197,7 +197,19 @@ class MergeSiteDataset(Dataset):
         new_dataset = cls.__new__(cls)
         new_dataset.__dict__ = copy.deepcopy(self.__dict__)
         new_dataset.remove_nonindexed_fragments(idxs)
+        new_dataset.remove_missing_fragments()
         return new_dataset
+
+    def remove_missing_fragments(self):
+        """
+        Removes examples with missing fragment.
+        """
+        idxs = list()
+        for idx in range(len(self)):
+            if self.has_fragment(idx):
+                idxs.append(idx)
+        self.merge_sites_df = self.merge_sites_df.iloc[idxs]
+        self.merge_sites_df = self.merge_sites_df.reset_index(drop=True)
 
     def remove_nonindexed_fragments(self, idxs):
         """
@@ -280,8 +292,6 @@ class MergeSiteDataset(Dataset):
             brain_id = util.sample_once(list(self.graphs.keys()))
             if len(self.graphs[brain_id].nodes) > 0:
                 return brain_id
-            else:
-                print(f"brain_id={brain_id} has no nodes")
 
     def get_indexed_negative_site(self, idx):
         """
@@ -330,10 +340,6 @@ class MergeSiteDataset(Dataset):
         label : int
             Label of example.
         """
-        # Check if site has a fragment
-        if not self.has_fragment(idx):
-            return self.get_random_negative_site()
-
         # Get site info
         brain_id = self.merge_sites_df["brain_id"].iloc[idx]
         xyz = self.merge_sites_df["xyz"].iloc[idx]
@@ -630,7 +636,7 @@ class MergeSiteTrainDataset(MergeSiteDataset):
         elif np.random.random() < self.random_negative_example_prob:
             return self.get_random_negative_site()
         else:
-            return self.get_indexed_negative_site(abs(idx))            
+            return self.get_indexed_negative_site(abs(idx))
 
 
 class MergeSiteValDataset(MergeSiteDataset):
@@ -765,12 +771,12 @@ class MergeSiteDataLoader(DataLoader):
         """
         # Set indices
         idxs = np.arange(-len(self.dataset) + 1, len(self.dataset))
-        random.shuffle(idxs)
+        #random.shuffle(idxs)
 
         # Iterate over indices
         for start in range(0, len(idxs), self.batch_size):
-            batch_idxs = idxs[start: start + self.batch_size]
-            yield self._load_multimodal_batch(batch_idxs)
+            end = min(start + self.batch_size, len(idxs))
+            yield self._load_multimodal_batch(idxs[start: end])
 
     def _load_batch(self, batch_idxs):
         """
@@ -795,8 +801,8 @@ class MergeSiteDataLoader(DataLoader):
                 threads.append(executor.submit(self.dataset.__getitem__, idx))
 
             # Store results
-            patches = np.zeros((self.batch_size,) + self.patches_shape)
-            labels = np.zeros((self.batch_size, 1))
+            patches = np.zeros((len(batch_idxs),) + self.patches_shape)
+            labels = np.zeros((len(batch_idxs), 1))
             for i, thread in enumerate(as_completed(threads)):
                 patches[i], _, labels[i] = thread.result()
         return ml_util.to_tensor(patches), ml_util.to_tensor(labels)
@@ -824,9 +830,9 @@ class MergeSiteDataLoader(DataLoader):
                 threads.append(executor.submit(self.dataset.__getitem__, idx))
 
             # Store results
-            labels = np.zeros((self.batch_size, 1))
-            patches = np.zeros((self.batch_size,) + self.patches_shape)
-            point_clouds = np.zeros((self.batch_size, 3, 3600))
+            patches = np.zeros((len(batch_idxs),) + self.patches_shape)
+            labels = np.zeros((len(batch_idxs), 1))
+            point_clouds = np.zeros((len(batch_idxs), 3, 3600))
             for i, thread in enumerate(as_completed(threads)):
                 patches[i], subgraph, labels[i] = thread.result()
                 point_clouds[i] = subgraph_to_point_cloud(subgraph)
