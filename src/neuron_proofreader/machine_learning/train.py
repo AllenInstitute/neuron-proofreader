@@ -196,6 +196,7 @@ class Trainer:
         is_best : bool
             True if the current F1 score is the best so far.
         """
+        util.mkdir(self.mistakes_dir, True)
         loss_list, y_list, hat_y_list = list(), list(), list()
         self.model.eval()
         with torch.no_grad():
@@ -338,8 +339,6 @@ class Trainer:
     def _save_mistake_mips(self, x, y, hat_y):
         if self.save_mistake_mips:
             # Initializations
-            cnt = 0
-            util.mkdir(self.mistakes_dir, True)
             if isinstance(x, dict):
                 x = ml_util.to_cpu(x["img"], True)
             else:
@@ -357,7 +356,7 @@ class Trainer:
 
                 # Save MIP
                 if name:
-                    cnt += 1
+                    cnt = len(util.listdir(self.mistakes_dir, ".png")) + 1
                     output_path = os.path.join(self.mistakes_dir, f"{name}{cnt}.png")
                     img_util.plot_image_and_segmentation_mips(
                         x[i, 0, ...], x[i, 1, ...], output_path
