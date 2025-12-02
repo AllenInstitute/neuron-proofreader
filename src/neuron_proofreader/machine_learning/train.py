@@ -12,6 +12,7 @@ proofreading classification tasks.
 from datetime import datetime
 from sklearn.metrics import precision_score, recall_score, accuracy_score
 from torch.nn.parallel import DistributedDataParallel
+from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data.distributed import DistributedSampler
@@ -164,6 +165,10 @@ class Trainer:
 
             # Backward pass
             self.scaler.scale(loss_i).backward()
+
+            # Step optimizer
+            self.scaler.unscale_(self.optimizer)
+            clip_grad_norm_(self.model.parameters(), max_norm=5.0)
             self.scaler.step(self.optimizer)
             self.scaler.update()
 
