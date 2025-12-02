@@ -568,10 +568,13 @@ class MergeSiteDataset(Dataset):
             True if the fragment exists in the graph for the corresponding
             brain, False otherwise.
         """
+        # Get example info
+        brain_id = self.merge_sites_df["brain_id"].iloc[idx]
+        segment_id = self.merge_sites_df["segment_id"].iloc[idx]
+        swc_id = f"{segment_id}.0"
+
+        # Check for fragment
         if brain_id in self.graphs:
-            brain_id = self.merge_sites_df["brain_id"].iloc[idx]
-            segment_id = self.merge_sites_df["segment_id"].iloc[idx]
-            swc_id = f"{segment_id}.0"
             return swc_id in self.graphs[brain_id].get_swc_ids()
         else:
             return False
