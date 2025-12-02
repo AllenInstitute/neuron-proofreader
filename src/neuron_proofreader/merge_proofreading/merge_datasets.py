@@ -568,7 +568,7 @@ class MergeSiteDataset(Dataset):
             True if the fragment exists in the graph for the corresponding
             brain, False otherwise.
         """
-        # Get idx info
+        # Get example info
         brain_id = self.merge_sites_df["brain_id"].iloc[idx]
         segment_id = self.merge_sites_df["segment_id"].iloc[idx]
         swc_id = f"{segment_id}.0"
@@ -856,7 +856,7 @@ class MergeSiteDataLoader(DataLoader):
             # Store results
             patches = np.zeros((len(batch_idxs),) + self.patches_shape)
             labels = np.zeros((len(batch_idxs), 1))
-            point_clouds = np.zeros((len(batch_idxs), 3, 3600))
+            point_clouds = np.zeros((len(batch_idxs), 3600, 3))
             for i, thread in enumerate(as_completed(threads)):
                 patches[i], subgraph, labels[i] = thread.result()
                 point_clouds[i] = subgraph_to_point_cloud(subgraph).T
