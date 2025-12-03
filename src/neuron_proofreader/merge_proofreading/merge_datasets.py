@@ -140,13 +140,13 @@ class MergeSiteDataset(Dataset):
                 graph.remove_nodes(nodes, relabel_nodes=False)
         graph.relabel_nodes()
 
-        # Post process fragments
-        self.clip_fragments_to_groundtruth(brain_id, graph)
-        self.graphs[brain_id] = graph
-
         # Build merge site kdtrees
         pts = get_brain_merge_sites(self.merge_sites_df, brain_id)
         self.merge_site_kdtrees[brain_id] = KDTree(pts)
+
+        # Post process fragments
+        self.clip_fragments_to_groundtruth(brain_id, graph)
+        self.graphs[brain_id] = graph
 
     def load_gt_graphs(self, brain_id, swc_pointer):
         """
@@ -533,12 +533,14 @@ class MergeSiteDataset(Dataset):
         graph : SkeletonGraph
             Fragment graph to be clipped.
         """
+        # Compute projection distances
         assert brain_id in self.gt_graphs, "Must load GT before fragments!"
-        for i, xyz in enumerate(graph.node_xyz):
-            if i in graph:
-                d, _ = self.gt_graphs[brain_id].kdtree.query(xyz)
-                if d > 100:
-                    graph.remove_node(i)
+        d_gt, _ = self.gt_graphs[brain_id].kdtree.query(graph.node_xyz)
+        d_merge, _ = self.merge_site_kdtrees[brain_id].query(graph.node_xyz)
+
+        # Remove nodes too far from groundtruth
+        nodes = np.where(d_gt > 100)[0]
+        graph.remove_nodes_from(nodes)
         graph.relabel_nodes()
 
     def count_fragments(self):
@@ -802,6 +804,9 @@ class MergeSiteValDataset(MergeSiteDataset):
         return brain_id, subgraph, 0
 
     # --- Helpers ---
+    def __len__(self):
+        return len(self.examples)
+
     def get_idxs(self):
         """
         Gets example indices to iterate over.
@@ -811,7 +816,7 @@ class MergeSiteValDataset(MergeSiteDataset):
         numpy.ndarray
             Example indices to iterate over.
         """
-        return np.arange(len(self.examples))
+        return np.arange(len(self))
 
     def save_summary(self, output_dir):
         """
