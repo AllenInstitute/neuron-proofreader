@@ -446,10 +446,10 @@ class MergeSiteDataset(Dataset):
         -------
         img_patch : numpy.ndarray
             Extracted image patch, which has been normalized and clipped to a
-            maximum value of 300.
+            maximum value of 400.
         """
         img_patch = self.img_readers[brain_id].read(center, self.patch_shape)
-        img_patch = img_util.normalize(np.minimum(img_patch, 300))
+        img_patch = img_util.normalize(np.minimum(img_patch, 400))
         return img_patch
 
     def get_segment_mask(self, subgraph):
