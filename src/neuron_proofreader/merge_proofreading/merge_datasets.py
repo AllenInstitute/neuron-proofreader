@@ -16,6 +16,8 @@ from torch.utils.data import Dataset, DataLoader
 import copy
 import networkx as nx
 import numpy as np
+import os
+import pandas as pd
 import random
 
 from neuron_proofreader.machine_learning.augmentation import ImageTransforms
@@ -653,6 +655,18 @@ class MergeSiteTrainDataset(MergeSiteDataset):
         else:
             return self.get_indexed_negative_site(abs(idx))
 
+    # --- Helpers ---
+    def get_idxs(self):
+        """
+        Gets example indices to iterate over.
+
+        Returns
+        -------
+        numpy.ndarray
+            Example indices to iterate over.
+        """
+        return np.arange(-len(self) + 1, len(self))
+
 
 class MergeSiteValDataset(MergeSiteDataset):
     """
@@ -675,7 +689,26 @@ class MergeSiteValDataset(MergeSiteDataset):
         self.__dict__.update(subset_dataset.__dict__)
 
         # Instance attributes
-        self.negative_examples = self.generate_negative_examples()
+        self.examples = self.generate_examples()
+        self.examples_summary = self.set_examples_summary()
+
+    def generate_examples(self):
+        # Generate negative examples
+        examples = self.generate_negative_examples()
+
+        # Generate positive examples
+        for i in range(len(self.merge_sites_df)):
+            brain_id, subgraph, _ = self.get_indexed_positive_site(i)
+            examples.append(
+                {
+                    "brain_id": brain_id,
+                    "subgraph": subgraph,
+                    "xyz": subgraph.node_xyz[0],
+                    "label": 1,
+                }
+            )
+        print("# examples:", len(examples))
+        return examples
 
     def generate_negative_examples(self):
         """
@@ -698,9 +731,28 @@ class MergeSiteValDataset(MergeSiteDataset):
 
             # Store info
             negative_examples.append(
-                {"brain_id": brain_id, "subgraph": subgraph}
+                {
+                    "brain_id": brain_id,
+                    "subgraph": subgraph,
+                    "xyz": subgraph.node_xyz[0],
+                    "label": 0,
+                }
             )
+        print("# negative examples:", len(negative_examples))
         return negative_examples
+
+    def set_examples_summary(self):
+        # Add negative examples
+        summary = list()
+        for example in self.examples:
+            summary.append(
+                {
+                    "brain_id": example["brain_id"],
+                    "xyz": example["xyz"],
+                    "label": example["label"],
+                }
+            )
+        return summary
 
     # --- Getters ---
     def get_site(self, idx):
@@ -722,10 +774,10 @@ class MergeSiteValDataset(MergeSiteDataset):
         label : int
             1 if the example is positive and 0 otherwise.
         """
-        if idx > 0:
-            return self.get_indexed_positive_site(idx)
-        else:
-            return self.get_indexed_negative_site(abs(idx))
+        brain_id = self.examples[idx]["brain_id"]
+        subgraph = self.examples[idx]["subgraph"]
+        label = self.examples[idx]["label"]
+        return brain_id, subgraph, label
 
     def get_indexed_negative_site(self, idx):
         """
@@ -749,6 +801,30 @@ class MergeSiteValDataset(MergeSiteDataset):
         subgraph = self.negative_examples[idx]["subgraph"]
         return brain_id, subgraph, 0
 
+    # --- Helpers ---
+    def get_idxs(self):
+        """
+        Gets example indices to iterate over.
+
+        Returns
+        -------
+        numpy.ndarray
+            Example indices to iterate over.
+        """
+        return np.arange(len(self.examples))
+
+    def save_summary(self, output_dir):
+        """
+        Saves the example summary as a CSV file.
+
+        Parameters
+        ----------
+        output_dir : str
+            Path to directory that summary file is saved to.
+        """
+        df = pd.DataFrame(self.examples_summary)
+        df.to_csv(os.path.join(output_dir, "val_summary.csv"))
+
 
 # --- DataLoaders ---
 class MergeSiteDataLoader(DataLoader):
@@ -758,7 +834,12 @@ class MergeSiteDataLoader(DataLoader):
     """
 
     def __init__(
-        self, dataset, batch_size=32, is_multimodal=False, sampler=None
+        self,
+        dataset,
+        batch_size=32,
+        is_multimodal=False,
+        sampler=None,
+        use_shuffle=True
     ):
         """
         Instantiates a MergeSiteDataLoader object.
@@ -772,6 +853,8 @@ class MergeSiteDataLoader(DataLoader):
         is_multimodal : bool, optional
             Indication of whether the loaded data is multimodal. Default is
             False.
+        use_shuffle : bool, optional
+            Indication of whether to shuffle examples. Default is True.
         """
         # Call parent class
         super().__init__(dataset, batch_size=batch_size, sampler=sampler)
@@ -779,6 +862,7 @@ class MergeSiteDataLoader(DataLoader):
         # Instance attributes
         self.is_multimodal = is_multimodal
         self.patches_shape = (2,) + self.dataset.patch_shape
+        self.use_shuffle = use_shuffle
 
     # --- Core Routines ---
     def __iter__(self):
@@ -791,8 +875,9 @@ class MergeSiteDataLoader(DataLoader):
             Generates batch of examples used during training and validation.
         """
         # Set indices
-        idxs = np.arange(-len(self.dataset) + 1, len(self.dataset))
-        random.shuffle(idxs)
+        idxs = self.dataset.get_idxs()
+        if self.use_shuffle:
+            random.shuffle(idxs)
 
         # Iterate over indices
         for start in range(0, len(idxs), self.batch_size):
@@ -820,14 +905,16 @@ class MergeSiteDataLoader(DataLoader):
         """
         with ThreadPoolExecutor() as executor:
             # Assign threads
-            threads = list()
-            for idx in batch_idxs:
-                threads.append(executor.submit(self.dataset.__getitem__, idx))
+            pending = dict()
+            for i, idx in enumerate(batch_idxs):
+                thread = executor.submit(self.dataset.__getitem__, idx)
+                pending[thread] = i
 
             # Store results
             patches = np.zeros((len(batch_idxs),) + self.patches_shape)
             labels = np.zeros((len(batch_idxs), 1))
-            for i, thread in enumerate(as_completed(threads)):
+            for thread in as_completed(pending.keys()):
+                i = pending.pop(thread)
                 patches[i], _, labels[i] = thread.result()
         return ml_util.to_tensor(patches), ml_util.to_tensor(labels)
 

@@ -201,8 +201,14 @@ class Trainer:
         is_best : bool
             True if the current F1 score is the best so far.
         """
+        # Initializations
+        idx_offset = 0
+        loss_accum = 0
+        y_accum = list()
+        hat_y_accum = list()
         util.mkdir(self.mistakes_dir, True)
-        loss_list, y_list, hat_y_list = list(), list(), list()
+
+        # Iterate over dataset
         self.model.eval()
         with torch.no_grad():
             for x, y in val_dataloader:
@@ -210,18 +216,19 @@ class Trainer:
                 hat_y, loss = self.forward_pass(x, y)
 
                 # Move to CPU
-                y = ml_util.to_cpu(y, True).flatten().tolist()
-                hat_y = ml_util.to_cpu(hat_y, True).flatten().tolist()
+                y = ml_util.tensor_to_list(y)
+                hat_y = ml_util.tensor_to_list(hat_y)
 
                 # Store predictions
-                y_list.extend(y)
-                hat_y_list.extend(hat_y)
-                loss_list.append(float(ml_util.to_cpu(loss)))
-                self._save_mistake_mips(x, y, hat_y)
+                y_accum.extend(y)
+                hat_y_accum.extend(hat_y)
+                loss_accum += float(ml_util.to_cpu(loss))
+                self._save_mistake_mips(x, y, hat_y, idx_offset)
+                idx_offset += len(y)
 
         # Write stats to tensorboard
-        stats = self.compute_stats(y_list, hat_y_list)
-        stats["loss"] = np.mean(loss_list)
+        stats = self.compute_stats(y_accum, hat_y_accum)
+        stats["loss"] = loss_accum / len(y_accum)
         self.update_tensorboard(stats, epoch, "val_")
         return stats
 
@@ -341,7 +348,18 @@ class Trainer:
             torch.load(model_path, map_location=self.device)
         )
 
-    def _save_mistake_mips(self, x, y, hat_y):
+    def _save_mistake_mips(self, x, y, hat_y, idx_offset):
+        """
+        Saves MIPs of each false negative and false positive.
+
+        Parameters
+        ----------
+        x : numpy.ndarray
+            Input tensor with shape (B, 2, D, H, W).
+        y : numpy.ndarray
+            Ground truth labels with shape (B, 1).
+        hat_y : numpy.ndarray
+        """
         if self.save_mistake_mips:
             # Initializations
             if isinstance(x, dict):
@@ -351,20 +369,12 @@ class Trainer:
 
             # Save MIPs
             for i, (y_i, hat_y_i) in enumerate(zip(y, hat_y)):
-                # Check for mistake
-                if y_i == 1 and hat_y_i < 0:
-                    name = "false_negative"
-                elif y_i == 0 and hat_y_i > 0:
-                    name = "false_positive"
-                else:
-                    name = None
-
-                # Save MIP
-                if name:
-                    cnt = len(util.listdir(self.mistakes_dir, ".png")) + 1
-                    output_path = os.path.join(self.mistakes_dir, f"{name}{cnt}.png")
+                mistake_type = classify_mistake(y_i, hat_y_i)
+                if mistake_type:
+                    filename = f"{mistake_type}{i + idx_offset}.png"
+                    output_path = os.path.join(self.mistakes_dir, filename)
                     img_util.plot_image_and_segmentation_mips(
-                        x[i, 0, ...], x[i, 1, ...], output_path
+                        x[i, 0], x[i, 1], output_path
                     )
 
     def save_model(self, epoch):
@@ -412,6 +422,7 @@ class DistributedTrainer(Trainer):
         device="cuda",
         lr=1e-3,
         max_epochs=200,
+        save_mistake_mips=False
     ):
         """
         Instantiates a DistributedTrainer object.
@@ -440,6 +451,7 @@ class DistributedTrainer(Trainer):
             device=device,
             lr=lr,
             max_epochs=max_epochs,
+            save_mistake_mips=save_mistake_mips
         )
 
         # Check that multiple GPUs are available
@@ -529,3 +541,12 @@ class DistributedTrainer(Trainer):
 
             # Step scheduler
             self.scheduler.step()
+
+
+# --- Helpers ---
+def classify_mistake(y_i, hat_y_i):
+    if y_i == 1 and hat_y_i < 0:
+        return "false_negative"
+    if y_i == 0 and hat_y_i > 0:
+        return "false_positive"
+    return None
