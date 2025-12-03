@@ -953,11 +953,11 @@ class MergeSiteDataLoader(DataLoader):
             # Store results
             patches = np.zeros((len(batch_idxs),) + self.patches_shape)
             labels = np.zeros((len(batch_idxs), 1))
-            point_clouds = np.zeros((len(batch_idxs), 3, 3600))
+            point_clouds = np.zeros((len(batch_idxs), 3600, 3))
             for thread in as_completed(pending.keys()):
                 i = pending.pop(thread)
                 patches[i], subgraph, labels[i] = thread.result()
-                point_clouds[i] = subgraph_to_point_cloud(subgraph) #.T
+                point_clouds[i] = subgraph_to_point_cloud(subgraph).T
 
         # Set batch dictionary
         batch = ml_util.TensorDict(
