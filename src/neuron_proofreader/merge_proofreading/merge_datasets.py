@@ -212,9 +212,10 @@ class MergeSiteDataset(Dataset):
         for i in range(len(self.merge_sites_df)):
             brain_id = self.merge_sites_df["brain_id"][i]
             xyz = self.merge_sites_df["xyz"][i]
-            d, _ = self.graphs[brain_id].kdtree.query(xyz)
-            if d < 10:
-                idxs.append(i)
+            if brain_id in self.graphs:
+                d, _ = self.graphs[brain_id].kdtree.query(xyz)
+                if d < 10:
+                    idxs.append(i)
 
         # Drop isolated sites
         self.merge_sites_df = self.merge_sites_df.iloc[idxs]
