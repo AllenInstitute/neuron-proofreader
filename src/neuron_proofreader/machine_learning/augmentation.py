@@ -84,17 +84,11 @@ class RandomFlip3D:
         patches : numpy.ndarray
             Image with the shape (2, H, W, D), where "patches[0, ...]" is from
             the input image and "patches[1, ...]" is from the segmentation.
-
-        Returns
-        -------
-        patches : numpy.ndarray
-            Flipped 3D image and segmentation patch.
         """
         for axis in self.axes:
             if random.random() > 0.5:
                 patches[0, ...] = np.flip(patches[0, ...], axis=axis)
                 patches[1, ...] = np.flip(patches[1, ...], axis=axis)
-        return patches
 
 
 class RandomRotation3D:
@@ -125,18 +119,12 @@ class RandomRotation3D:
         patches : numpy.ndarray
             Image with the shape (2, H, W, D), where "patches[0, ...]" is from
             the input image and "patches[1, ...]" is from the segmentation.
-
-        Returns
-        -------
-        patches : numpy.ndarray
-            Rotated 3D image and segmentation patch.
         """
         for axes in self.axes:
             if random.random() < 0.5:
                 angle = random.uniform(*self.angles)
                 patches[0, ...] = rotate3d(patches[0, ...], angle, axes)
                 patches[1, ...] = rotate3d(patches[1, ...], angle, axes, True)
-        return patches
 
 
 class RandomScale3D:
@@ -216,14 +204,9 @@ class RandomContrast3D:
         ----------
         img_patch : numpy.ndarray
             Image to which contrast will be added.
-
-        Returns
-        -------
-        numpy.ndarray
-            Contrasted 3D image.
         """
         factor = random.uniform(*self.factor_range)
-        return np.clip(img_patch * factor, 0, 1)
+        img_patch = np.clip(img_patch * factor, 0, 1)
 
 
 class RandomNoise3D:
@@ -231,7 +214,7 @@ class RandomNoise3D:
     Adds random Gaussian noise to a 3D image.
     """
 
-    def __init__(self, max_std=0.2):
+    def __init__(self, max_std=0.3):
         """
         Initializes a RandomNoise3D transformer.
 
@@ -239,7 +222,7 @@ class RandomNoise3D:
         ----------
         max_std : float, optional
             Maximum standard deviation of the Gaussian noise distribution.
-            Default is 0.16.
+            Default is 0.3.
         """
         self.max_std = max_std
 
@@ -251,16 +234,10 @@ class RandomNoise3D:
         ----------
         img_patch : np.ndarray
             Image to which noise will be added.
-
-        Returns
-        -------
-        img_patch : numpy.ndarray
-            Noisy 3D image.
         """
         std = self.max_std * random.random()
-        noise = np.random.uniform(-std, std, img_patch.shape)
-        img_patch += noise
-        return np.clip(img_patch, 0, 1)
+        img_patch += np.random.uniform(-std, std, img_patch.shape)
+        img_patch = np.clip(img_patch, 0, 1)
 
 
 # --- Helpers ---
