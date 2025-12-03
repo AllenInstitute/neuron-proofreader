@@ -223,6 +223,8 @@ class Trainer:
                 y_accum.extend(y)
                 hat_y_accum.extend(hat_y)
                 loss_accum += float(ml_util.to_cpu(loss))
+
+                # Save MIPs of mistakes
                 self._save_mistake_mips(x, y, hat_y, idx_offset)
                 idx_offset += len(y)
 
