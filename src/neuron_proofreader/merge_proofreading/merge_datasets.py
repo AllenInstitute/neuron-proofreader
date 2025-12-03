@@ -804,9 +804,6 @@ class MergeSiteValDataset(MergeSiteDataset):
         return brain_id, subgraph, 0
 
     # --- Helpers ---
-    def __len__(self):
-        return len(self.examples)
-
     def get_idxs(self):
         """
         Gets example indices to iterate over.
@@ -816,7 +813,7 @@ class MergeSiteValDataset(MergeSiteDataset):
         numpy.ndarray
             Example indices to iterate over.
         """
-        return np.arange(len(self))
+        return np.arange(len(self.examples))
 
     def save_summary(self, output_dir):
         """
