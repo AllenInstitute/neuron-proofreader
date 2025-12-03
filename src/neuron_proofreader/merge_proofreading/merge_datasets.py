@@ -199,17 +199,24 @@ class MergeSiteDataset(Dataset):
         new_dataset = cls.__new__(cls)
         new_dataset.__dict__ = copy.deepcopy(self.__dict__)
         new_dataset.remove_nonindexed_fragments(idxs)
-        new_dataset.remove_missing_fragments()
+        new_dataset.remove_isolated_sites()
         return new_dataset
 
-    def remove_missing_fragments(self):
+    def remove_isolated_sites(self):
         """
-        Removes examples with missing fragment.
+        Removes merge sites whose closest fragment is greater than a specified
+        distance.
         """
+        # Find non-isolated sites
         idxs = list()
-        for idx in range(len(self)):
-            if self.has_fragment(idx):
-                idxs.append(idx)
+        for i in range(len(self.merge_sites_df)):
+            brain_id = self.merge_sites_df["brain_id"][i]
+            xyz = self.merge_sites_df["xyz"][i]
+            d, _ = self.graphs[brain_id].kdtree.query(xyz)
+            if d < 10:
+                idxs.append(i)
+
+        # Drop isolated sites
         self.merge_sites_df = self.merge_sites_df.iloc[idxs]
         self.merge_sites_df = self.merge_sites_df.reset_index(drop=True)
 
@@ -539,7 +546,7 @@ class MergeSiteDataset(Dataset):
         d_merge, _ = self.merge_site_kdtrees[brain_id].query(graph.node_xyz)
 
         # Remove nodes too far from groundtruth
-        nodes = np.where(d_gt > 100)[0]
+        nodes = np.where((d_gt > 100) & (d_merge > 100))[0]
         graph.remove_nodes_from(nodes)
         graph.relabel_nodes()
 
@@ -744,7 +751,6 @@ class MergeSiteValDataset(MergeSiteDataset):
         return negative_examples
 
     def set_examples_summary(self):
-        # Add negative examples
         summary = list()
         for example in self.examples:
             summary.append(
@@ -938,17 +944,19 @@ class MergeSiteDataLoader(DataLoader):
         """
         with ThreadPoolExecutor() as executor:
             # Assign threads
-            threads = list()
-            for idx in batch_idxs:
-                threads.append(executor.submit(self.dataset.__getitem__, idx))
+            pending = dict()
+            for i, idx in enumerate(batch_idxs):
+                thread = executor.submit(self.dataset.__getitem__, idx)
+                pending[thread] = i
 
             # Store results
             patches = np.zeros((len(batch_idxs),) + self.patches_shape)
             labels = np.zeros((len(batch_idxs), 1))
-            point_clouds = np.zeros((len(batch_idxs), 3600, 3))
-            for i, thread in enumerate(as_completed(threads)):
+            point_clouds = np.zeros((len(batch_idxs), 3, 3600))
+            for thread in as_completed(pending.keys()):
+                i = pending.pop(thread)
                 patches[i], subgraph, labels[i] = thread.result()
-                point_clouds[i] = subgraph_to_point_cloud(subgraph).T
+                point_clouds[i] = subgraph_to_point_cloud(subgraph) #.T
 
         # Set batch dictionary
         batch = ml_util.TensorDict(
