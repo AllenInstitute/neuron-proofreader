@@ -314,6 +314,7 @@ class FeatureGenerator:
     def annotate_edge(self, patch, center, shape, i):
         edge_xyz = np.vstack(self.graph.edge_attr(i, "xyz"))
         voxels = self.get_local_coordinates(center, shape, edge_xyz)
+        voxels = geometry_util.make_voxels_connected(voxels)
         img_util.annotate_voxels(patch, voxels, kernel_size=5, val=2)
 
     # --- Helpers ---
