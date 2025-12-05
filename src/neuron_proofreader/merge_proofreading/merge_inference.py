@@ -19,7 +19,9 @@ import networkx as nx
 import numpy as np
 import torch
 
-from neuron_proofreader import exp
+from neuron_proofreader.machine_learning.point_cloud_models import (
+    subgraph_to_point_cloud,
+)
 from neuron_proofreader.utils import img_util, ml_util, util
 
 
@@ -35,6 +37,7 @@ class MergeDetector:
         anisotropy=(1.0, 1.0, 1.0),
         batch_size=32,
         device="cuda",
+        is_multimodal=False,
         min_size=0,
         prefetch=128,
         remove_detected_sites=False,
@@ -62,6 +65,7 @@ class MergeDetector:
             patch_shape,
             anisotropy=anisotropy,
             batch_size=batch_size,
+            is_multimodal=is_multimodal,
             min_size=min_size,
             prefetch=prefetch,
             step_size=step_size,
@@ -173,6 +177,7 @@ class IterableGraphDataset(IterableDataset):
         patch_shape,
         anisotropy=(1.0, 1.0, 1.0),
         batch_size=16,
+        is_multimodal=False,
         min_size=0,
         prefetch=128,
         step_size=10,
@@ -186,6 +191,7 @@ class IterableGraphDataset(IterableDataset):
         self.batch_size = batch_size
         self.distance_traversed = 0
         self.graph = graph
+        self.is_multimodal = is_multimodal
         self.min_size = min_size
         self.patch_shape = patch_shape
         self.prefetch = prefetch
@@ -193,7 +199,7 @@ class IterableGraphDataset(IterableDataset):
         self.subgraph_radius = subgraph_radius
 
         # Image reader
-        self.img_reader = img_util.init_reader(img_path)
+        self.img_reader = img_util.TensorStoreReader(img_path)
 
     # --- Core routines ---
     def __iter__(self):
@@ -222,7 +228,14 @@ class IterableGraphDataset(IterableDataset):
                         # Process completed thread
                         nodes, patch_centers = pending.pop(thread)
                         img, offset = thread.result()
-                        yield self.get_multimodal_batch(img, offset, patch_centers, nodes)
+                        if self.is_multimodal:
+                            yield self.get_multimodal_batch(
+                                img, offset, patch_centers, nodes
+                            )
+                        else:
+                            yield self.get_batch(
+                                img, offset, patch_centers, nodes
+                            )
 
                         # Continue submitting threads
                         submit_thread()
@@ -338,10 +351,10 @@ class IterableGraphDataset(IterableDataset):
             patches[i, 1, ...] = label_mask[s]
 
             subgraph = self.graph.get_rooted_subgraph(node, self.subgraph_radius)
-            point_clouds[i] = exp.subgraph_to_point_cloud(subgraph)
+            point_clouds[i] = subgraph_to_point_cloud(subgraph)
 
         # Compile batch dictionary
-        batch = exp.TensorDict({
+        batch = ml_util.TensorDict({
             "img": ml_util.to_tensor(patches),
             "point_cloud": ml_util.to_tensor(point_clouds)
         })
