@@ -313,7 +313,6 @@ class GraphDataset:
         gt_pointer,
         pred_pointer,
         img_path,
-        segmentation_path=None
     ):
         # Add graph
         self.graphs[key] = self.load_graph(pred_pointer)
@@ -327,9 +326,7 @@ class GraphDataset:
         self.keys.add(key)
 
         # Generate features
-        self.features[key] = self.generate_features(
-            key, img_path, segmentation_path
-        )
+        self.features[key] = self.generate_features(key, img_path)
 
     def load_graph(self, swc_pointer):
         """
