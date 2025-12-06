@@ -206,7 +206,8 @@ class Trainer:
         loss_accum = 0
         y_accum = list()
         hat_y_accum = list()
-        util.mkdir(self.mistakes_dir, True)
+        if self.save_mistake_mips:
+            util.mkdir(self.mistakes_dir, True)
 
         # Iterate over dataset
         self.model.eval()

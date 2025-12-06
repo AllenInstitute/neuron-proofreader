@@ -213,8 +213,6 @@ class MergeSiteDataset(Dataset):
                 d, _ = self.graphs[brain_id].kdtree.query(xyz)
                 if d < 20:
                     idxs.append(i)
-                #else:
-                #    print("isolated dist", d)
 
         # Drop isolated sites
         self.merge_sites_df = self.merge_sites_df.iloc[idxs]
@@ -445,10 +443,10 @@ class MergeSiteDataset(Dataset):
         -------
         img_patch : numpy.ndarray
             Extracted image patch, which has been normalized and clipped to a
-            maximum value of 300.
+            maximum value of 400.
         """
         img_patch = self.img_readers[brain_id].read(center, self.patch_shape)
-        img_patch = img_util.normalize(np.minimum(img_patch, 300))
+        img_patch = img_util.normalize(np.minimum(img_patch, 400))
         return img_patch
 
     def get_segment_mask(self, subgraph):
@@ -926,11 +924,11 @@ class MergeSiteDataLoader(DataLoader):
             # Store results
             patches = np.zeros((len(batch_idxs),) + self.patches_shape)
             labels = np.zeros((len(batch_idxs), 1))
-            point_clouds = np.zeros((len(batch_idxs), 3, 3600))
+            point_clouds = np.zeros((len(batch_idxs), 3600, 3))
             for thread in as_completed(pending.keys()):
                 i = pending.pop(thread)
                 patches[i], subgraph, labels[i] = thread.result()
-                point_clouds[i] = subgraph_to_point_cloud(subgraph) #.T
+                point_clouds[i] = subgraph_to_point_cloud(subgraph).T
 
         # Set batch dictionary
         batch = ml_util.TensorDict(
