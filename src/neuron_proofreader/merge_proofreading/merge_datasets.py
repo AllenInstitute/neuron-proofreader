@@ -127,12 +127,9 @@ class MergeSiteDataset(Dataset):
         graph = SkeletonGraph(node_spacing=self.node_spacing)
         graph.load(swc_pointer)
 
-        # Filter non-merge components
-        idxs = self.merge_sites_df["brain_id"] == brain_id
-        merged_segment_ids = self.merge_sites_df["segment_id"][idxs].values
+        # Remove groundtruth skeletons
         for swc_id in graph.get_swc_ids():
-            segment_id = swc_util.get_segment_id(swc_id)
-            if str(segment_id) not in merged_segment_ids:
+            if swc_id.lower().startswith("n"):
                 component_id = util.find_key(
                     graph.component_id_to_swc_id, swc_id
                 )
@@ -214,8 +211,10 @@ class MergeSiteDataset(Dataset):
             xyz = self.merge_sites_df["xyz"][i]
             if brain_id in self.graphs:
                 d, _ = self.graphs[brain_id].kdtree.query(xyz)
-                if d < 10:
+                if d < 20:
                     idxs.append(i)
+                #else:
+                #    print("isolated dist", d)
 
         # Drop isolated sites
         self.merge_sites_df = self.merge_sites_df.iloc[idxs]
@@ -394,7 +393,7 @@ class MergeSiteDataset(Dataset):
                 node = util.sample_once(self.graphs[brain_id].nodes)
             elif outcome < 0.4:
                 node = util.sample_once(self.graphs[brain_id].get_leafs())
-            elif outcome < 0.8:
+            elif outcome < 0.6:
                 branching_nodes = self.gt_graphs[brain_id].get_branchings()
                 node = util.sample_once(branching_nodes)
                 if self.check_nearby_branching(brain_id, node, use_gt=True):
@@ -427,7 +426,7 @@ class MergeSiteDataset(Dataset):
             # Check if node is close to merge site
             xyz = self.graphs[brain_id].node_xyz[node]
             d, _ = self.merge_site_kdtrees[brain_id].query(xyz)
-            if d > 50:
+            if d > 100:
                 return brain_id, subgraph, 0
 
     def get_img_patch(self, brain_id, center):
@@ -548,8 +547,7 @@ class MergeSiteDataset(Dataset):
 
         # Remove nodes too far from groundtruth
         nodes = np.where((d_gt > 100) & (d_merge > 100))[0]
-        graph.remove_nodes_from(nodes)
-        graph.relabel_nodes()
+        graph.remove_nodes(nodes)
 
     def count_fragments(self):
         """
@@ -564,32 +562,6 @@ class MergeSiteDataset(Dataset):
         for graph in self.graphs.values():
             cnt += nx.number_connected_components(graph)
         return cnt
-
-    def has_fragment(self, idx):
-        """
-        Checks whether a neuron fragment exists in the corresponding graph.
-
-        Parameters
-        ----------
-        idx : int
-            Index of the merge site in "self.merge_sites_df" to check.
-
-        Returns
-        -------
-        bool
-            True if the fragment exists in the graph for the corresponding
-            brain, False otherwise.
-        """
-        # Get example info
-        brain_id = self.merge_sites_df["brain_id"].iloc[idx]
-        segment_id = self.merge_sites_df["segment_id"].iloc[idx]
-        swc_id = f"{segment_id}.0"
-
-        # Check for fragment
-        if brain_id in self.graphs:
-            return swc_id in self.graphs[brain_id].get_swc_ids()
-        else:
-            return False
 
 
 class MergeSiteTrainDataset(MergeSiteDataset):
@@ -731,6 +703,7 @@ class MergeSiteValDataset(MergeSiteDataset):
             Dataframe containing non-merge sites that are specified by a brain
             and node ID.
         """
+        # Sample non-branching points
         negative_examples = list()
         for i in range(len(self)):
             # Get example
