@@ -32,7 +32,6 @@ from neuron_proofreader.utils import (
     geometry_util,
     img_util,
     ml_util,
-    swc_util,
     util,
 )
 
@@ -229,16 +228,19 @@ class MergeSiteDataset(Dataset):
             other sites are removed.
         """
         # Remove other fragments
-        for idx in [i for i in self.merge_sites_df.index if i not in idxs]:
+        visited = set()
+        for i in [i for i in self.merge_sites_df.index if i not in idxs]:
             # Extract site info
-            brain_id = self.merge_sites_df["brain_id"][idx]
-            xyz = self.merge_sites_df["xyz"][idx]
+            brain_id = self.merge_sites_df["brain_id"][i]
+            segment_id = self.merge_sites_df["segment_id"][i]
+            pair = (brain_id, segment_id)
 
             # Find fragment containing site
-            dist, node = self.graphs[brain_id].kdtree.query(xyz)
-            if dist < 20 and node in self.graphs[brain_id]:
-                nodes = self.graphs[brain_id].get_connected_nodes(node)
+            if pair not in visited:
+                nodes = self.graphs[brain_id].get_nodes_with_segment_id(segment_id)
                 self.graphs[brain_id].remove_nodes(nodes, False)
+                visited.add(pair)
+
         self.remove_empty_graphs()
 
         # Relabel nodes
@@ -254,7 +256,7 @@ class MergeSiteDataset(Dataset):
         Removes graphs without any nodes.
         """
         for brain_id in list(self.graphs.keys()):
-            if len(self.graphs[brain_id]) == 0:
+            if len(self.graphs[brain_id].nodes) == 0:
                 del self.graphs[brain_id]
 
     # --- Getters ---
