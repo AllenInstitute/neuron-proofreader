@@ -14,7 +14,7 @@ import ast
 import numpy as np
 import pandas as pd
 
-TEST_BRAIN = "685221"
+TEST_BRAIN = "653159"
 
 
 # --- Load Skeletons ---

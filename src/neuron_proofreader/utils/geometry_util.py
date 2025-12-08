@@ -9,7 +9,7 @@ Code for processing geometric data.
 """
 
 from collections import defaultdict
-from scipy.interpolate import splprep, splev, UnivariateSpline
+from scipy.interpolate import UnivariateSpline
 from scipy.linalg import svd
 from scipy.spatial import distance
 from tqdm import tqdm
