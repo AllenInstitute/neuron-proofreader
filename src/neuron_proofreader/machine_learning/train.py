@@ -548,6 +548,23 @@ class DistributedTrainer(Trainer):
 
 # --- Helpers ---
 def classify_mistake(y_i, hat_y_i):
+    """
+    Classify a prediction mistake for a single example.
+
+    Parameters
+    ----------
+    y_i : int
+        Ground truth label.
+    hat_y_i : float
+        Predicted label.
+
+    Returns
+    -------
+    str or None
+        - "false_negative" if the ground truth is 1 but the prediction is negative.
+        - "false_positive" if the ground truth is 0 but the prediction is positive.
+        - None if the prediction matches the ground truth.
+    """
     if y_i == 1 and hat_y_i < 0:
         return "false_negative"
     if y_i == 0 and hat_y_i > 0:

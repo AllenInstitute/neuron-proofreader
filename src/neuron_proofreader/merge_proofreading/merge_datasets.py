@@ -389,9 +389,9 @@ class MergeSiteDataset(Dataset):
         outcome = random.random()
         while True:
             # Sample node
-            if outcome < 0.3:
+            if outcome < 0.4:
                 node = util.sample_once(self.graphs[brain_id].nodes)
-            elif outcome < 0.4:
+            elif outcome < 0.5:
                 node = util.sample_once(self.graphs[brain_id].get_leafs())
             elif outcome < 0.6:
                 branching_nodes = self.gt_graphs[brain_id].get_branchings()
@@ -543,10 +543,7 @@ class MergeSiteDataset(Dataset):
         # Compute projection distances
         assert brain_id in self.gt_graphs, "Must load GT before fragments!"
         d_gt, _ = self.gt_graphs[brain_id].kdtree.query(graph.node_xyz)
-        d_merge, _ = self.merge_site_kdtrees[brain_id].query(graph.node_xyz)
-
-        # Remove nodes too far from groundtruth
-        nodes = np.where((d_gt > 100) & (d_merge > 100))[0]
+        nodes = np.where(d_gt > 100)[0]
         graph.remove_nodes(nodes)
 
     def count_fragments(self):
@@ -675,13 +672,22 @@ class MergeSiteValDataset(MergeSiteDataset):
         self.examples_summary = self.set_examples_summary()
 
     def generate_examples(self):
+        """
+        Generates positive and negative examples for valiadation.
+
+        Returns
+        -------
+        List[dict]
+            
+        """
         # Generate negative examples
-        examples = self.generate_negative_examples()
+        negative_examples = self.generate_negative_examples()
 
         # Generate positive examples
+        positive_examples = list()
         for i in range(len(self.merge_sites_df)):
             brain_id, subgraph, _ = self.get_indexed_positive_site(i)
-            examples.append(
+            positive_examples.append(
                 {
                     "brain_id": brain_id,
                     "subgraph": subgraph,
@@ -689,8 +695,7 @@ class MergeSiteValDataset(MergeSiteDataset):
                     "label": 1,
                 }
             )
-        print("# examples:", len(examples))
-        return examples
+        return positive_examples + negative_examples
 
     def generate_negative_examples(self):
         """
@@ -700,31 +705,49 @@ class MergeSiteValDataset(MergeSiteDataset):
         Returns
         -------
         negative_examples : List[dict]
-            Dataframe containing non-merge sites that are specified by a brain
-            and node ID.
+            List of negative examples collected across all graphs.
         """
-        # Sample non-branching points
-        negative_examples = list()
-        for i in range(len(self)):
-            # Get example
-            if np.random.random() < self.random_negative_example_prob:
-                brain_id, subgraph, _ = self.get_random_negative_site()
-            else:
-                brain_id, subgraph, _ = super().get_indexed_negative_site(i)
+        # Subroutines
+        def add_examples():
+            """
+            Adds the given example to the set of validation examples.
+            """
+            for node in random.sample(nodes, n_examples):
+                subgraph = graph.get_rooted_subgraph(
+                    node, self.subgraph_radius
+                )
+                negative_examples.append(
+                    {
+                        "brain_id": brain_id,
+                        "subgraph": subgraph,
+                        "xyz": subgraph.node_xyz[0],
+                        "label": 0,
+                    }
+                )
 
-            # Store info
-            negative_examples.append(
-                {
-                    "brain_id": brain_id,
-                    "subgraph": subgraph,
-                    "xyz": subgraph.node_xyz[0],
-                    "label": 0,
-                }
-            )
-        print("# negative examples:", len(negative_examples))
+        # Add branching nodes
+        negative_examples = list()
+        for brain_id, graph in self.graphs.items():
+            nodes = graph.get_branchings()
+            n_examples = min(len(nodes), 80)
+            add_examples()
+
+        # Add non-branching points
+        for brain_id, graph in self.graphs.items():
+            nodes = [i for i in graph.nodes if graph.degree[i] < 3]
+            n_examples = min(len(nodes), 40)
+            add_examples()
         return negative_examples
 
     def set_examples_summary(self):
+        """
+        Sets a summary of examples in the validation dataset.
+
+        Returns
+        -------
+        List[dict]
+            List containing example metadata stored in a dictionary.
+        """
         summary = list()
         for example in self.examples:
             summary.append(
@@ -784,6 +807,12 @@ class MergeSiteValDataset(MergeSiteDataset):
         return brain_id, subgraph, 0
 
     # --- Helpers ---
+    def __len__(self):
+        """
+        Gets the number of examples in the dataset.
+        """
+        return len(self.examples)
+
     def get_idxs(self):
         """
         Gets example indices to iterate over.
