@@ -728,13 +728,19 @@ class MergeSiteValDataset(MergeSiteDataset):
         # Add branching nodes
         negative_examples = list()
         for brain_id, graph in self.graphs.items():
-            nodes = graph.get_branchings()
+            # Filter branching nodes near other branching nodes
+            nodes = list()
+            for u in graph.get_branchings():
+                if not self.check_nearby_branching(brain, u):
+                    nodes.append(u)
+
+            # Add nodes to examples
             n_examples = min(len(nodes), 80)
             add_examples()
 
         # Add non-branching points
         for brain_id, graph in self.graphs.items():
-            nodes = [i for i in graph.nodes if graph.degree[i] < 3]
+            nodes = [u for u in graph.nodes if graph.degree[u] < 3]
             n_examples = min(len(nodes), 40)
             add_examples()
         return negative_examples
@@ -955,11 +961,11 @@ class MergeSiteDataLoader(DataLoader):
             # Store results
             patches = np.zeros((len(batch_idxs),) + self.patches_shape)
             labels = np.zeros((len(batch_idxs), 1))
-            point_clouds = np.zeros((len(batch_idxs), 3600, 3))
+            point_clouds = np.zeros((len(batch_idxs), 3, 3600))
             for thread in as_completed(pending.keys()):
                 i = pending.pop(thread)
                 patches[i], subgraph, labels[i] = thread.result()
-                point_clouds[i] = subgraph_to_point_cloud(subgraph).T
+                point_clouds[i] = subgraph_to_point_cloud(subgraph) #.T
 
         # Set batch dictionary
         batch = ml_util.TensorDict(
