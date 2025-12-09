@@ -376,6 +376,24 @@ class SkeletonGraph(nx.Graph):
         """
         return set(np.where(self.node_component_id == component_id)[0])
 
+    def get_nodes_with_segment_id(self, segment_id):
+        nodes = set()
+        query_id = f"{segment_id}."
+        for swc_id in self.get_swc_ids():
+            segment_id = int(swc_id.replace(".0", ""))
+            if segment_id == query_id:
+                component_id = self.get_component_id_from_swc_id(swc_id)
+                nodes = nodes.union(
+                    self.get_nodes_with_component_id(component_id)
+                )
+        return nodes
+
+    def get_component_id_from_swc_id(self, query_swc_id):
+        for component_id, swc_id in self.component_id_to_swc_id.items():
+            if query_swc_id == swc_id:
+                return component_id
+        raise ValueError(f"SWC ID={query_swc_id} not found")
+
     def get_rooted_subgraph(self, root, radius):
         """
         Gets a rooted subgraph with the given radius (in microns).
