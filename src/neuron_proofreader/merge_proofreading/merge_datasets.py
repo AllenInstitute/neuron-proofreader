@@ -731,7 +731,7 @@ class MergeSiteValDataset(MergeSiteDataset):
             # Filter branching nodes near other branching nodes
             nodes = list()
             for u in graph.get_branchings():
-                if not self.check_nearby_branching(brain, u):
+                if not self.check_nearby_branching(brain_id, u):
                     nodes.append(u)
 
             # Add nodes to examples
