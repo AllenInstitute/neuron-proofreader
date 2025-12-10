@@ -35,7 +35,6 @@ class MergeDetector:
         model,
         model_path,
         device="cuda",
-        min_size=0,
         remove_detected_sites=False,
         threshold=0.4,
     ):
@@ -146,7 +145,7 @@ class MergeDetector:
     def remove_merge_sites(self, detected_merge_sites):
         pass
 
-    def save_results(self, output_dir):
+    def save_results(self, output_dir, upload_to_s3=False):
         # Get predicted merge sites
         nodes = np.where(self.node_preds >= self.threshold)[0]
         detected_sites = [self.dataset.graph.node_xyz[i] for i in nodes]
@@ -294,6 +293,7 @@ class DenseGraphDataset(GraphDataset):
         patch_shape,
         batch_size=16,
         is_multimodal=False,
+        min_size=0,
         prefetch=128,
         step_size=10,
         subgraph_radius=100
@@ -305,6 +305,7 @@ class DenseGraphDataset(GraphDataset):
             patch_shape,
             batch_size=batch_size,
             is_multimodal=is_multimodal,
+            min_size=min_size,
             prefetch=prefetch,
             subgraph_radius=subgraph_radius
         )
@@ -418,7 +419,7 @@ class DenseGraphDataset(GraphDataset):
             subgraph = self.graph.get_rooted_subgraph(node, self.subgraph_radius)
             point_clouds[i] = subgraph_to_point_cloud(subgraph)
 
-        # Compile batch dictionary
+        # Build batch dictionary
         batch = ml_util.TensorDict({
             "img": ml_util.to_tensor(patches),
             "point_cloud": ml_util.to_tensor(point_clouds)
@@ -435,15 +436,43 @@ class DenseGraphDataset(GraphDataset):
         int
             Estimated number of iterations required to search graph.
         """
-        return int(self.graph.path_length() / self.step_size)
+        length = 0
+        for nodes in nx.connected_components(self.graph):
+            node = util.sample_once(nodes)
+            length_component = self.graph.path_length(root=node)
+            if length_component > self.min_size:
+                length += length_component
+        return int(length / self.step_size)
 
 
 class SparseGraphDataset(GraphDataset):
 
-    def __init__(self):
+    def __init__(
+        self,
+        graph,
+        img_path,
+        patch_shape,
+        batch_size=16,
+        is_multimodal=False,
+        min_size=0,
+        prefetch=128,
+        subgraph_radius=100
+    ):
+        # Call parent class
+        super().__init__(
+            graph,
+            img_path,
+            patch_shape,
+            batch_size=batch_size,
+            is_multimodal=is_multimodal,
+            prefetch=prefetch,
+            subgraph_radius=subgraph_radius
+        )
+
+    def _generate_batches_from_component(self):
         pass
 
-    def _generate_batch_nodes_for_component_branchings(self, root):
+    def _generate_batch_nodes(self, root):
         nodes = list()
         patch_centers = list()
         for i, j in nx.dfs_edges(self.graph, source=root):
@@ -476,4 +505,12 @@ class SparseGraphDataset(GraphDataset):
 
     # --- Helpers ---
     def estimate_iterations(self):
+        """
+        Estimates the number of iterations required to search graph.
+
+        Returns
+        -------
+        int
+            Estimated number of iterations required to search graph.
+        """
         return len(self.dataset.graph.get_branchings())
