@@ -35,7 +35,6 @@ class MergeDetector:
         model,
         model_path,
         device="cuda",
-        min_size=0,
         remove_detected_sites=False,
         threshold=0.4,
     ):
@@ -146,7 +145,7 @@ class MergeDetector:
     def remove_merge_sites(self, detected_merge_sites):
         pass
 
-    def save_results(self, output_dir):
+    def save_results(self, output_dir, upload_to_s3=False):
         # Get predicted merge sites
         nodes = np.where(self.node_preds >= self.threshold)[0]
         detected_sites = [self.dataset.graph.node_xyz[i] for i in nodes]
@@ -294,6 +293,7 @@ class DenseGraphDataset(GraphDataset):
         patch_shape,
         batch_size=16,
         is_multimodal=False,
+        min_size=0,
         prefetch=128,
         step_size=10,
         subgraph_radius=100
@@ -305,6 +305,7 @@ class DenseGraphDataset(GraphDataset):
             patch_shape,
             batch_size=batch_size,
             is_multimodal=is_multimodal,
+            min_size=min_size,
             prefetch=prefetch,
             subgraph_radius=subgraph_radius
         )
@@ -437,7 +438,7 @@ class DenseGraphDataset(GraphDataset):
         """
         length = 0
         for nodes in nx.connected_components(self.graph):
-            node in util.sample_once(nodes)
+            node = util.sample_once(nodes)
             length_component = self.graph.path_length(root=node)
             if length_component > self.min_size:
                 length += length_component
@@ -453,6 +454,7 @@ class SparseGraphDataset(GraphDataset):
         patch_shape,
         batch_size=16,
         is_multimodal=False,
+        min_size=0,
         prefetch=128,
         subgraph_radius=100
     ):
@@ -467,7 +469,10 @@ class SparseGraphDataset(GraphDataset):
             subgraph_radius=subgraph_radius
         )
 
-    def _generate_batch_nodes_for_component_branchings(self, root):
+    def _generate_batches_from_component(self):
+        pass
+
+    def _generate_batch_nodes(self, root):
         nodes = list()
         patch_centers = list()
         for i, j in nx.dfs_edges(self.graph, source=root):
