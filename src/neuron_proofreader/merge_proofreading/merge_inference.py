@@ -145,7 +145,7 @@ class MergeDetector:
     def remove_merge_sites(self, detected_merge_sites):
         pass
 
-    def save_results(self, output_dir, upload_to_s3=False):
+    def save_results(self, output_dir, output_prefix_s3=None):
         # Get predicted merge sites
         nodes = np.where(self.node_preds >= self.threshold)[0]
         detected_sites = [self.dataset.graph.node_xyz[i] for i in nodes]
@@ -159,6 +159,15 @@ class MergeDetector:
             prefix="merge-site",
             radius=10,
         )
+
+        # Save fragments
+        fragments_path = os.path.join(output_dir, "fragments.zip")
+        self.dataset.graph.to_zipped_swcs(fragments_path)
+
+        # Upload results to S3 (if applicable)
+        if output_prefix_s3:
+            bucket_name, prefix = util.parse_cloud_path(output_prefix_s3)
+            util.upload_dir_to_s3(self.output_dir, bucket_name, prefix)
 
 
 # --- Data Handling ---
@@ -437,11 +446,14 @@ class DenseGraphDataset(GraphDataset):
             Estimated number of iterations required to search graph.
         """
         length = 0
+        n_components_to_search = 0
         for nodes in nx.connected_components(self.graph):
             node = util.sample_once(nodes)
             length_component = self.graph.path_length(root=node)
             if length_component > self.min_size:
                 length += length_component
+                n_components_to_search += 1
+        print("# Connected Components to Search:", n_components_to_search)
         return int(length / self.step_size)
 
 
