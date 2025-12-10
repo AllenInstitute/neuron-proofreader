@@ -424,9 +424,7 @@ class MergeSiteDataset(Dataset):
                     continue
 
             # Check if node is close to merge site
-            xyz = self.graphs[brain_id].node_xyz[node]
-            d, _ = self.merge_site_kdtrees[brain_id].query(xyz)
-            if d > 100:
+            if not self.is_nearby_merge_site(brain_id, node):
                 return brain_id, subgraph, 0
 
     def get_img_patch(self, brain_id, center):
@@ -559,6 +557,21 @@ class MergeSiteDataset(Dataset):
         for graph in self.graphs.values():
             cnt += nx.number_connected_components(graph)
         return cnt
+
+    def is_nearby_merge_site(self, brain_id, node):
+        """
+        Checks whether to the given node is close to a merge site.
+
+        Parameters
+        ----------
+        brain_id : str
+            Unique identifier for graph to be searched.
+        node : int
+            Node ID to check if it's close to a merge site.
+        """
+        xyz = self.graphs[brain_id].node_xyz[node]
+        dist, _ = self.merge_site_kdtrees[brain_id].query(xyz)
+        return dist < 100
 
 
 class MergeSiteTrainDataset(MergeSiteDataset):
@@ -713,28 +726,36 @@ class MergeSiteValDataset(MergeSiteDataset):
             Adds the given example to the set of validation examples.
             """
             for node in random.sample(nodes, n_examples):
-                subgraph = graph.get_rooted_subgraph(
-                    node, self.subgraph_radius
-                )
-                negative_examples.append(
-                    {
-                        "brain_id": brain_id,
-                        "subgraph": subgraph,
-                        "xyz": subgraph.node_xyz[0],
-                        "label": 0,
-                    }
-                )
+                # Check if close to merge site
+                if not self.is_nearby_merge_site(brain_id, node):
+                    subgraph = graph.get_rooted_subgraph(
+                        node, self.subgraph_radius
+                    )
+                    negative_examples.append(
+                        {
+                            "brain_id": brain_id,
+                            "subgraph": subgraph,
+                            "xyz": subgraph.node_xyz[0],
+                            "label": 0,
+                        }
+                    )
 
         # Add branching nodes
         negative_examples = list()
         for brain_id, graph in self.graphs.items():
-            nodes = graph.get_branchings()
+            # Filter branching nodes near other branching nodes
+            nodes = list()
+            for u in graph.get_branchings():
+                if not self.check_nearby_branching(brain_id, u):
+                    nodes.append(u)
+
+            # Add nodes to examples
             n_examples = min(len(nodes), 80)
             add_examples()
 
         # Add non-branching points
         for brain_id, graph in self.graphs.items():
-            nodes = [i for i in graph.nodes if graph.degree[i] < 3]
+            nodes = [u for u in graph.nodes if graph.degree[u] < 3]
             n_examples = min(len(nodes), 40)
             add_examples()
         return negative_examples
@@ -955,11 +976,11 @@ class MergeSiteDataLoader(DataLoader):
             # Store results
             patches = np.zeros((len(batch_idxs),) + self.patches_shape)
             labels = np.zeros((len(batch_idxs), 1))
-            point_clouds = np.zeros((len(batch_idxs), 3600, 3))
+            point_clouds = np.zeros((len(batch_idxs), 3, 3600))
             for thread in as_completed(pending.keys()):
                 i = pending.pop(thread)
                 patches[i], subgraph, labels[i] = thread.result()
-                point_clouds[i] = subgraph_to_point_cloud(subgraph).T
+                point_clouds[i] = subgraph_to_point_cloud(subgraph) #.T
 
         # Set batch dictionary
         batch = ml_util.TensorDict(
