@@ -685,14 +685,6 @@ class MergeSiteValDataset(MergeSiteDataset):
         self.examples_summary = self.set_examples_summary()
 
     def generate_examples(self):
-        """
-        Generates positive and negative examples for valiadation.
-
-        Returns
-        -------
-        List[dict]
-            
-        """
         # Generate negative examples
         negative_examples = self.generate_negative_examples()
 
