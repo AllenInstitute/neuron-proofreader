@@ -146,6 +146,7 @@ class MergeDetector:
     def remove_merge_sites(self, detected_merge_sites):
         pass
 
+    # --- Helpers ---
     def save_results(self, output_dir, output_prefix_s3=None):
         # Get predicted merge sites
         nodes = np.where(self.node_preds >= self.threshold)[0]
@@ -170,6 +171,19 @@ class MergeDetector:
             bucket_name, prefix = util.parse_cloud_path(output_prefix_s3)
             util.upload_dir_to_s3(self.output_dir, bucket_name, prefix)
 
+    def save_parameters(self, output_dir):
+        json_path = os.path.join(output_dir, "detection_parameters.json")
+        parameters = {
+            "accept_threshold": self.threshold,
+            "is_multimodal": self.dataset.is_multimodal,
+            "min_search_size": self.dataset.min_size,
+            "patch_shape": self.patch_shape,
+            "remove_detected_sites": self.remove_detected_sites,
+            "search_mode": self.dataset.search_mode,
+            "subgraph_radius": self.dataset.subgraph_radius,
+        }
+        util.write_json(json_path, parameters)
+
 
 # --- Data Handling ---
 class GraphDataset(IterableDataset, ABC):
@@ -181,7 +195,7 @@ class GraphDataset(IterableDataset, ABC):
         patch_shape,
         batch_size=16,
         is_multimodal=False,
-        min_size=0,
+        min_search_size=0,
         prefetch=128,
         subgraph_radius=100
     ):
@@ -193,7 +207,7 @@ class GraphDataset(IterableDataset, ABC):
         self.distance_traversed = 0
         self.graph = graph
         self.is_multimodal = is_multimodal
-        self.min_size = min_size
+        self.min_size = min_search_size
         self.patch_shape = patch_shape
         self.prefetch = prefetch
         self.subgraph_radius = subgraph_radius
@@ -303,7 +317,7 @@ class DenseGraphDataset(GraphDataset):
         patch_shape,
         batch_size=16,
         is_multimodal=False,
-        min_size=0,
+        min_search_size=0,
         prefetch=128,
         step_size=10,
         subgraph_radius=100
@@ -315,12 +329,13 @@ class DenseGraphDataset(GraphDataset):
             patch_shape,
             batch_size=batch_size,
             is_multimodal=is_multimodal,
-            min_size=min_size,
+            min_search_size=min_search_size,
             prefetch=prefetch,
             subgraph_radius=subgraph_radius
         )
 
         # Instance attributes
+        self.search_mode = "dense"
         self.step_size = step_size
 
     def _generate_batches_from_component(self, root):
@@ -447,14 +462,14 @@ class DenseGraphDataset(GraphDataset):
             Estimated number of iterations required to search graph.
         """
         length = 0
-        n_components_to_search = 0
+        n_componenets = 0
         for nodes in nx.connected_components(self.graph):
             node = util.sample_once(nodes)
             length_component = self.graph.path_length(root=node)
             if length_component > self.min_size:
                 length += length_component
-                n_components_to_search += 1
-        print("# Connected Components to Search:", n_components_to_search)
+                n_componenets += 1
+        print("# Fragments to Search:", n_componenets)
         return int(length / self.step_size)
 
 
@@ -467,7 +482,7 @@ class SparseGraphDataset(GraphDataset):
         patch_shape,
         batch_size=16,
         is_multimodal=False,
-        min_size=0,
+        min_search_size=0,
         prefetch=128,
         subgraph_radius=100
     ):
@@ -478,9 +493,13 @@ class SparseGraphDataset(GraphDataset):
             patch_shape,
             batch_size=batch_size,
             is_multimodal=is_multimodal,
+            min_search_size=min_search_size,
             prefetch=prefetch,
             subgraph_radius=subgraph_radius
         )
+
+        # Instance attributes
+        self.search_mode = "branching_points"
 
     def _generate_batches_from_component(self):
         pass
@@ -526,4 +545,4 @@ class SparseGraphDataset(GraphDataset):
         int
             Estimated number of iterations required to search graph.
         """
-        return len(self.dataset.graph.get_branchings())
+        return len(self.graph.get_branchings())
