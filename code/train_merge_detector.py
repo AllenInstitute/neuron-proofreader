@@ -153,11 +153,11 @@ if __name__ == "__main__":
     use_distributed = False
 
     # Model
-    model_name = "MergeDetectorCNN3D-20"
+    model_name = "MergeDetectorCNN3D-24"
     model = CNN3D(
         patch_shape,
         n_conv_layers=6,
-        n_feat_channels=20,
+        n_feat_channels=24,
         use_double_conv=True
     )
 
