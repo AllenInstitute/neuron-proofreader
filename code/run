@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+
+set -e
+
+setup_google_creds() {
+    # Create a temporary file
+    TEMP_CRED_FILE=$(mktemp --suffix=".json")
+    
+    # Ensure temporary file is removed on script exit or interrupt
+    trap "rm -f $TEMP_CRED_FILE" EXIT
+    
+    # Write the environment variable content to the temporary file
+    echo "${CUSTOM_KEY}" > "$TEMP_CRED_FILE"
+
+    export GOOGLE_APPLICATION_CREDENTIALS=$TEMP_CRED_FILE
+
+}
+
+setup_google_creds
+
+export AWS_REGION=us-west-2
+
+# This is the master script for the capsule. When you click "Reproducible Run", the code in this file will execute.
+python -u train_merge_detector.py "$@"
