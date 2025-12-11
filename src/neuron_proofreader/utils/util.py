@@ -303,7 +303,7 @@ def write_json(path, contents):
     path : str
         Path that txt file is written to.
     contents : dict
-        Contents to be written to JSON file.
+        Contents to be written to a JSON file.
     """
     with open(path, "w") as f:
         json.dump(contents, f)
