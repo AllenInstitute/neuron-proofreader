@@ -233,7 +233,7 @@ class GraphLoader:
             leafs = set(get_leafs(graph))
             while leafs:
                 # Extract for connected component
-                leaf = util.sample_once(leafs)
+                leaf = util.sample_once(list(leafs))
                 irreducibles, visited = self.get_irreducibles(graph, leaf)
                 leafs -= visited
 
