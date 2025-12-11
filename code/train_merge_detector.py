@@ -146,7 +146,7 @@ if __name__ == "__main__":
     device = "cuda"
     batch_size = 20
     is_multimodal = False
-    is_test = False
+    is_test = True
     lr = 1e-4
     patch_shape = (128, 128, 128)
     save_mistake_mips = True
