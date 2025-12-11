@@ -42,6 +42,7 @@ class MergeDetector:
         self.dataset = dataset
         self.device = device
         self.node_preds = np.ones((len(dataset.graph.node_xyz))) * 1e-2
+        self.patch_shape = dataset.patch_shape
         self.remove_detected_sites = remove_detected_sites
         self.threshold = threshold
 
@@ -112,7 +113,7 @@ class MergeDetector:
         while merge_sites:
             # Local max
             root = merge_sites.pop()
-            xyz_root = self.graph.node_xyz[root]
+            xyz_root = self.dataset.graph.node_xyz[root]
             if root in merge_sites_set:
                 filtered_merge_sites.add(root)
                 merge_sites_set.remove(root)
