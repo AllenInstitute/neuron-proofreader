@@ -147,7 +147,7 @@ class MergeDetector:
         pass
 
     # --- Helpers ---
-    def save_results(self, output_dir, upload_to_s3=False):
+    def save_results(self, output_dir, output_prefix_s3=None):
         # Get predicted merge sites
         nodes = np.where(self.node_preds >= self.threshold)[0]
         detected_sites = [self.dataset.graph.node_xyz[i] for i in nodes]
@@ -161,6 +161,15 @@ class MergeDetector:
             prefix="merge-site",
             radius=10,
         )
+
+        # Save fragments
+        fragments_path = os.path.join(output_dir, "fragments.zip")
+        self.dataset.graph.to_zipped_swcs(fragments_path)
+
+        # Upload results to S3 (if applicable)
+        if output_prefix_s3:
+            bucket_name, prefix = util.parse_cloud_path(output_prefix_s3)
+            util.upload_dir_to_s3(self.output_dir, bucket_name, prefix)
 
     def save_parameters(self, output_dir):
         json_path = os.path.join(output_dir, "detection_parameters.json")
