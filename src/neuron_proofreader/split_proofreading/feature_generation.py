@@ -65,10 +65,6 @@ class FeatureGenerator:
             Path to the segmentation assumed to be stored on a GCS bucket.
             Default is None.
         """
-        # Sanity check
-        if is_multimodal and not segmentation_path:
-            print("Segmentation path not provided for inference!")
-
         # Instance attributes
         self.anisotropy = anisotropy
         self.context = context
