@@ -233,6 +233,8 @@ class GraphDataset(IterableDataset, ABC):
             if component_id not in visited_ids and component_id in valid_ids:
                 visited_ids.add(component_id)
                 yield from self._generate_batches_from_component(u)
+                
+                break
 
     @abstractmethod
     def _generate_batches_from_component(self, root):
@@ -461,6 +463,7 @@ class DenseGraphDataset(GraphDataset):
         int
             Estimated number of iterations required to search graph.
         """
+        # Set min size
         length = 0
         n_componenets = 0
         for nodes in map(list, nx.connected_components(self.graph)):

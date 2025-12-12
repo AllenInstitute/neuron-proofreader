@@ -20,7 +20,6 @@ constructs a custom graph object called a "FragmentsGraph".
 
 Note: We use the term "branch" to refer to a path in a graph from a branching
       node to a leaf.
-
 """
 
 from collections import defaultdict, deque
