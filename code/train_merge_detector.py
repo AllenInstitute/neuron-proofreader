@@ -147,17 +147,17 @@ if __name__ == "__main__":
     batch_size = 20
     is_multimodal = False
     is_test = False
-    lr = 1e-4
+    lr = 1e-3
     patch_shape = (128, 128, 128)
     save_mistake_mips = True
     use_distributed = False
 
     # Model
-    model_name = "MergeDetectorCNN3D-24"
+    model_name = "MergeDetectorCNN3D-20-1e3"
     model = CNN3D(
         patch_shape,
         n_conv_layers=6,
-        n_feat_channels=24,
+        n_feat_channels=20,
         use_double_conv=True
     )
 
