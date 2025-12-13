@@ -405,7 +405,7 @@ class MergeSiteDataset(Dataset):
         while True:
             # Sample node
             if outcome < 0.4:
-                node = util.sample_once(self.graphs[brain_id].nodes)
+                node = util.sample_once(list(self.graphs[brain_id].nodes))
             elif outcome < 0.5:
                 node = util.sample_once(self.graphs[brain_id].get_leafs())
             elif outcome < 0.6:

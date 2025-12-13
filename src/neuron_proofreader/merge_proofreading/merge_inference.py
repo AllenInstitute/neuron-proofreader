@@ -464,7 +464,7 @@ class DenseGraphDataset(GraphDataset):
         # Set min size
         length = 0
         n_componenets = 0
-        for nodes in nx.connected_components(self.graph):
+        for nodes in map(list, nx.connected_components(self.graph)):
             node = util.sample_once(nodes)
             length_component = self.graph.path_length(root=node)
             if length_component > self.min_size:
