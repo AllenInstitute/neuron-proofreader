@@ -73,6 +73,7 @@ class MergeSiteDataset(Dataset):
         self,
         merge_sites_df,
         anisotropy=(1.0, 1.0, 1.0),
+        brightness_clip=400,
         subgraph_radius=100,
         node_spacing=5,
         patch_shape=(128, 128, 128),
@@ -88,6 +89,8 @@ class MergeSiteDataset(Dataset):
         anisotropy : Tuple[float], optional
             Image to physical coordinates scaling factors to account for the
             anisotropy of the microscope. Default is (1.0, 1.0, 1.0).
+        brightness_clip : int, optional
+            ...
         subgraph_radius : int, optional
             Radius (in microns) around merge sites used to extract rooted
             subgraph. Default is 100μm.
@@ -98,6 +101,7 @@ class MergeSiteDataset(Dataset):
         """
         # Instance attributes
         self.anisotropy = anisotropy
+        self.brightness_clip = brightness_clip
         self.node_spacing = node_spacing
         self.merge_sites_df = merge_sites_df
         self.patch_shape = patch_shape
@@ -134,6 +138,17 @@ class MergeSiteDataset(Dataset):
                 )
                 nodes = graph.get_nodes_with_component_id(component_id)
                 graph.remove_nodes(nodes, relabel_nodes=False)
+
+        # Remove fragments excluded from merge sites
+        brain_idxs = self.merge_sites_df["brain_id"] == brain_id
+        merge_sites = self.merge_sites_df[brain_idxs]
+        segment_ids = set(merge_sites["segment_id"].unique())
+        for nodes in map(list, list(nx.connected_components(graph))):
+            node = util.sample_once(nodes)
+            segment_id = graph.get_node_segment_id(node)
+            if segment_id not in segment_ids:
+                graph.remove_nodes(nodes, relabel_nodes=False)
+            else:
         graph.relabel_nodes()
 
         # Build merge site kdtrees
@@ -446,8 +461,8 @@ class MergeSiteDataset(Dataset):
             maximum value of 400.
         """
         img_patch = self.img_readers[brain_id].read(center, self.patch_shape)
-        img_patch = img_util.normalize(np.minimum(img_patch, 400))
-        return img_patch
+        img_path = np.minimum(img_patch, self.brightness_clip)
+        return img_util.normalize(img_path)
 
     def get_segment_mask(self, subgraph):
         """
@@ -487,7 +502,9 @@ class MergeSiteDataset(Dataset):
         """
         return len(self.merge_sites_df)
 
-    def check_nearby_branching(self, brain_id, root, max_depth=70, use_gt=False):
+    def check_nearby_branching(
+        self, brain_id, root, max_depth=60, use_gt=False
+    ):
         """
         Checks if there is a branching node within a specified depth from the
         given node.
@@ -738,7 +755,8 @@ class MergeSiteValDataset(MergeSiteDataset):
             # Filter branching nodes near other branching nodes
             nodes = list()
             for u in graph.get_branchings():
-                if not self.check_nearby_branching(brain_id, u):
+                is_branchy = self.check_nearby_branching(brain_id, u)
+                if not is_branchy and graph.degree[u] == 3:
                     nodes.append(u)
 
             # Add nodes to examples

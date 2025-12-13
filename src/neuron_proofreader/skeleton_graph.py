@@ -360,6 +360,11 @@ class SkeletonGraph(nx.Graph):
         offset = [c - s // 2 for c, s in zip(center, patch_shape)]
         return tuple([v - o for v, o in zip(voxel, offset)])
 
+    def get_node_segment_id(self, node):
+        component_id = self.node_component_id[node]
+        swc_id = self.component_id_to_swc_id[component_id]
+        return swc_id.split(".")[0]
+
     def get_nodes_with_component_id(self, component_id):
         """
         Gets all nodes with the given componenet ID.
