@@ -145,7 +145,7 @@ if __name__ == "__main__":
     anisotropy = (0.748, 0.748, 1.0)
     device = "cuda"
     batch_size = 20
-    is_multimodal = True
+    is_multimodal = False
     is_test = False
     lr = 1e-4
     patch_shape = (128, 128, 128)
