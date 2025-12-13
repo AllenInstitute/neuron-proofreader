@@ -148,7 +148,6 @@ class MergeSiteDataset(Dataset):
             segment_id = graph.get_node_segment_id(node)
             if segment_id not in segment_ids:
                 graph.remove_nodes(nodes, relabel_nodes=False)
-            else:
         graph.relabel_nodes()
 
         # Build merge site kdtrees
