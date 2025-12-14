@@ -228,7 +228,7 @@ if __name__ == "__main__":
     prefix_lookup_path = "/root/capsule/data/exaspim_image_prefixes.json"
     merge_sites_path = "/root/capsule/data/merge_sites_df.csv"
     test_idxs_path = "/root/capsule/data/test_idxs.csv"
-    model_path = f"/root/capsule/data/{exp_name}/{model_name}.pth"
+    model_path = f"/root/capsule/data/models/{exp_name}/{model_name}.pth"
     output_dir = f"/root/capsule/results/{exp_name}-{model_name}"
     util.mkdir(output_dir)
 
