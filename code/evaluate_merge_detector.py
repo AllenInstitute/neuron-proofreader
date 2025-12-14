@@ -56,8 +56,6 @@ def evaluate(brain_id, fragments_graph, merge_sites_df):
         dataset,
         model,
         model_path,
-        patch_shape,
-        device=device,
         threshold=accept_threshold,
     )
 
