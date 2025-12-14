@@ -38,20 +38,23 @@ def evaluate(brain_id, fragments_graph, merge_sites_df):
     img_path = s3_util.get_img_prefix(brain_id, prefix_lookup_path)
     img_path = os.path.join(img_path, "0")
 
-    # Initialize merge detection object
-    merge_detector = MergeDetector(
+    # Dataset
+    dataset = DenseGraphDataset(
         fragments_graph,
         img_path,
+        patch_shape,
+        batch_size=batch_size,
+        is_multimodal=is_multimodal,
+        step_size=step_size,
+    )
+
+    # Initialize merge detection object
+    merge_detector = MergeDetector(
+        dataset,
         model,
         model_path,
         patch_shape,
-        anisotropy=anisotropy,
-        batch_size=batch_size,
         device=device,
-        is_multimodal=is_multimodal,
-        prefetch=128,
-        remove_detected_sites=False,
-        step_size=15,
         threshold=accept_threshold,
     )
 
@@ -207,6 +210,7 @@ if __name__ == "__main__":
     model_name = "MergeDetectorCNN3D-20-20251214-133-0.7817"
     exp_name = "CNN3D-V1"
 
+    accept_threshold = 0.4
     anisotropy = (0.748, 0.748, 1.0)
     batch_size = 32
     d_tp = 32
@@ -215,7 +219,6 @@ if __name__ == "__main__":
     is_test = True
     node_spacing = 5
     patch_shape = (128, 128, 128)
-    accept_threshold = 0.4
 
     # Paths
     bucket_name = "allen-nd-goog"
