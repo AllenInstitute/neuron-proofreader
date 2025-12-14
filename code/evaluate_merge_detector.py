@@ -30,9 +30,6 @@ def main():
     # Run evaluation for each brain
     print("\nModel Name:", model_name)
     for brain_id in data_util.get_brain_ids(merge_sites_df, is_test=is_test):
-        if brain_id == "685221":
-            continue
-
         evaluate(brain_id, dataset.graphs[brain_id], merge_sites_df)
 
 
@@ -207,14 +204,14 @@ def save_points(zip_path, pts, color, prefix):
 
 if __name__ == "__main__":
     # Parameters
-    model_name = "MergeDetectorVisionDGCNN-20251204-97-0.8854"
-    exp_name = "v6-vision-dgcnn"
+    model_name = "MergeDetectorCNN3D-20-20251214-133-0.7817"
+    exp_name = "CNN3D-V1"
 
     anisotropy = (0.748, 0.748, 1.0)
     batch_size = 32
     d_tp = 32
-    device = "cuda:0"
-    is_multimodal = True
+    device = "cuda"
+    is_multimodal = False
     is_test = True
     node_spacing = 5
     patch_shape = (128, 128, 128)
@@ -223,15 +220,20 @@ if __name__ == "__main__":
     # Paths
     bucket_name = "allen-nd-goog"
     fragments_prefix = "automated_proofreading_dataset/raw_merge_sites"
-    prefix_lookup_path = "/root/capsule/exaspim_image_prefixes.json"
-    merge_sites_path = "/root/capsule/merge_sites_df.csv"
-    test_idxs_path = "/root/capsule/merge_proofreading/test_idxs.csv"
-    model_path = f"/home/jupyter/training-sessions/merge_detection/{exp_name}/{model_name}.pth"
-    output_dir = f"/home/jupyter/results/merge_detection/{model_name}"
+    prefix_lookup_path = "/root/capsule/data/exaspim_image_prefixes.json"
+    merge_sites_path = "/root/capsule/data/merge_sites_df.csv"
+    test_idxs_path = "/root/capsule/data/test_idxs.csv"
+    model_path = f"/root/capsule/data/{exp_name}/{model_name}.pth"
+    output_dir = f"/root/capsule/results/{exp_name}-{model_name}"
     util.mkdir(output_dir)
 
     # Model
-    model = VisionDGCNN(patch_shape)
+    CNN3D(
+        patch_shape,
+        n_conv_layers=6,
+        n_feat_channels=20,
+        use_double_conv=True
+    )
 
     # Run evaluation
     main()
