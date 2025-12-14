@@ -228,7 +228,7 @@ if __name__ == "__main__":
     util.mkdir(output_dir)
 
     # Model
-    CNN3D(
+    model = CNN3D(
         patch_shape,
         n_conv_layers=6,
         n_feat_channels=20,
