@@ -217,7 +217,7 @@ if __name__ == "__main__":
     d_tp = 32
     device = "cuda"
     is_multimodal = False
-    is_test = True
+    is_test = False
     node_spacing = 5
     patch_shape = (128, 128, 128)
     step_size = 15
