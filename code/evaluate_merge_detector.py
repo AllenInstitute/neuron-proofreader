@@ -9,7 +9,10 @@ import pandas as pd
 from neuron_proofreader.machine_learning.point_cloud_models import VisionDGCNN
 from neuron_proofreader.machine_learning.vision_models import CNN3D, ViT3D
 from neuron_proofreader.merge_proofreading import merge_dataloading as data_util
-from neuron_proofreader.merge_proofreading.merge_inference import MergeDetector
+from neuron_proofreader.merge_proofreading.merge_inference import (
+    DenseGraphDataset,
+    MergeDetector,
+)
 from neuron_proofreader.merge_proofreading.merge_datasets import (
     MergeSiteDataset
 )
