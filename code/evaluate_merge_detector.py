@@ -222,6 +222,7 @@ if __name__ == "__main__":
     is_test = True
     node_spacing = 5
     patch_shape = (128, 128, 128)
+    step_size = 15
 
     # Paths
     bucket_name = "allen-nd-goog"
