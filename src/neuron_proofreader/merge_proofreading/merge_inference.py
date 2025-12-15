@@ -147,6 +147,10 @@ class MergeDetector:
         pass
 
     # --- Helpers ---
+    def get_detected_sites(self, threshold):
+        nodes = np.where(self.node_preds >= threshold)[0]
+        return [self.dataset.graph.node_xyz[i] for i in nodes]
+
     def save_results(self, output_dir, output_prefix_s3=None):
         # Get predicted merge sites
         nodes = np.where(self.node_preds >= self.threshold)[0]
