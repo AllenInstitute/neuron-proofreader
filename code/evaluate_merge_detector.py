@@ -177,18 +177,16 @@ def init_dataset(merge_sites_df):
     dataset = MergeSiteDataset(
         merge_sites_df,
         anisotropy=anisotropy,
-        node_spacing=5,
+        node_spacing=node_spacing,
         patch_shape=patch_shape,
     )
+    dataset.remove_isolated_sites()
 
     # Load data
-    data_util.load_groundtruth(dataset, merge_sites_df, is_test=is_test)
-    data_util.load_fragments(dataset, merge_sites_df, is_test=is_test)
+    data_util.load_groundtruth(dataset, is_test=is_test)
+    data_util.load_fragments(dataset, is_test=is_test)
     data_util.load_images(
-        dataset,
-        merge_sites_df,
-        is_test=is_test,
-        prefix_lookup_path=prefix_lookup_path
+        dataset, is_test=is_test, prefix_lookup_path=prefix_lookup_path
     )
     return dataset
 
