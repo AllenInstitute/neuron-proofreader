@@ -33,8 +33,6 @@ class Trainer:
 
     Attributes
     ----------
-    batch_size : int
-        Number of samples per batch during training.
     best_f1 : float
         Best F1 score achieved so far on valiation dataset.
     criterion : torch.nn.BCEWithLogitsLoss
@@ -64,7 +62,6 @@ class Trainer:
         model,
         model_name,
         output_dir,
-        batch_size=32,
         device="cuda",
         lr=1e-3,
         max_epochs=200,
@@ -81,8 +78,6 @@ class Trainer:
             Name of model used for logging and checkpointing.
         output_dir : str
             Directory that tensorboard and model checkpoints are written to.
-        batch_size : int, optional
-            Number of samples per batch during training. Default is 32.
         lr : float, optional
             Learning rate. Default is 1e-3.
         max_epochs : int, optional
@@ -96,7 +91,6 @@ class Trainer:
         util.mkdir(log_dir)
 
         # Instance attributes
-        self.batch_size = batch_size
         self.best_f1 = 0
         self.device = device
         self.log_dir = log_dir
@@ -421,7 +415,6 @@ class DistributedTrainer(Trainer):
         model,
         model_name,
         output_dir,
-        batch_size=32,
         device="cuda",
         lr=1e-3,
         max_epochs=200,
@@ -438,8 +431,6 @@ class DistributedTrainer(Trainer):
             Name of model used for logging and checkpointing.
         output_dir : str
             Directory that tensorboard and model checkpoints are written to.
-        batch_size : int, optional
-            Number of samples per batch during training. Default is 32.
         lr : float, optional
             Learning rate. Default is 1e-3.
         max_epochs : int, optional
@@ -450,7 +441,6 @@ class DistributedTrainer(Trainer):
             model,
             model_name,
             output_dir,
-            batch_size=batch_size,
             device=device,
             lr=lr,
             max_epochs=max_epochs,

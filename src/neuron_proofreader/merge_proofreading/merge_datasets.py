@@ -67,7 +67,7 @@ class MergeSiteDataset(Dataset):
     patch_shape : Tuple[int], optional
         Shape of the 3D image patches to extract.
     """
-    random_negative_example_prob = 0.5
+    random_negative_example_prob = 0.8
 
     def __init__(
         self,
