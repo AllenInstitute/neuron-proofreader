@@ -180,7 +180,6 @@ def init_dataset():
         node_spacing=node_spacing,
         patch_shape=patch_shape,
     )
-    dataset.remove_isolated_sites()
 
     # Load data
     data_util.load_groundtruth(dataset, is_test=is_test)
@@ -188,6 +187,7 @@ def init_dataset():
     data_util.load_images(
         dataset, is_test=is_test, prefix_lookup_path=prefix_lookup_path
     )
+    dataset.remove_isolated_sites()
     return dataset
 
 
