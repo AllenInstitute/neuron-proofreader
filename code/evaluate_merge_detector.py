@@ -33,7 +33,7 @@ def main():
     # Run evaluation for each brain
     print("\nModel Name:", model_name)
     for brain_id in data_util.get_brain_ids(merge_sites_df, is_test=is_test):
-        evaluate(brain_id, dataset.graphs[brain_id], merge_sites_df)
+        evaluate(brain_id, dataset.graphs[brain_id], dataset.merge_sites_df)
 
 
 def evaluate(brain_id, fragments_graph, merge_sites_df):
@@ -215,7 +215,7 @@ if __name__ == "__main__":
     d_tp = 32
     device = "cuda"
     is_multimodal = False
-    is_test = False
+    is_test = True
     node_spacing = 5
     patch_shape = (128, 128, 128)
     step_size = 20
