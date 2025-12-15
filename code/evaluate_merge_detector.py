@@ -69,20 +69,15 @@ def evaluate(brain_id, fragments_graph, merge_sites_df):
     print("-" * 100)
     print("Brain ID:", brain_id)
     gt_sites = data_util.get_brain_merge_sites(merge_sites_df, brain_id)
-    compute_performance_metrics(brain_id, fragments_graph, gt_sites)
+    detected_sites = merge_detector.get_detected_sites(accept_threshold)
+    compute_performance_metrics(brain_id, detected_sites, gt_sites)
     plot_precision_vs_recall(brain_id, fragments_graph, gt_sites)
     print("-" * 100)
 
 
-def get_detected_sites(fragments_graph, threshold):
-    nodes = np.where(fragments_graph.node_radius / 10 >= threshold)[0]
-    return [fragments_graph.node_xyz[i] for i in nodes]
-
-
 # --- Performance Metrics ---
-def compute_performance_metrics(brain_id, fragments_graph, gt_sites):
+def compute_performance_metrics(brain_id, detected_sites, gt_sites):
     # Compute metrics
-    detected_sites = get_detected_sites(fragments_graph, accept_threshold)
     precision, recall, f1 = compute_metrics(gt_sites, detected_sites)
     save_detections(brain_id, gt_sites, detected_sites)
 
@@ -223,7 +218,7 @@ if __name__ == "__main__":
     is_test = False
     node_spacing = 5
     patch_shape = (128, 128, 128)
-    step_size = 15
+    step_size = 20
 
     # Paths
     bucket_name = "allen-nd-goog"
