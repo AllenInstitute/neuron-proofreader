@@ -18,7 +18,7 @@ TEST_BRAIN = "653159"
 
 
 # --- Load Skeletons ---
-def load_fragments(dataset, merge_sites_df, is_test=False):
+def load_fragments(dataset, is_test=False):
     """
     Loads neuron fragments for a selected set of merge-site indices into
     dataset.
@@ -27,14 +27,12 @@ def load_fragments(dataset, merge_sites_df, is_test=False):
     ----------
     dataset : MergeSiteDataset
         Dataset that fragments are loaded into.
-    merge_sites_df : pandas.DataFrame
-        DataFrame containing merge sites, must contain the columns:
-        "brain_id", "segmentation_id", "segment_id", and "xyz".
     is_test : bool, optional
         Indication of whether this is a test run so only fragments from a
         single brain should be loaded. Default is False.
     """
     # Initializations
+    merge_sites_df = dataset.merge_sites_df
     target_pairs = get_brain_segmentation_pairs(merge_sites_df)
     root = "gs://allen-nd-goog/automated_proofreading_dataset/raw_merge_sites"
 
@@ -48,7 +46,7 @@ def load_fragments(dataset, merge_sites_df, is_test=False):
                 dataset.load_fragment_graphs(brain_id, swc_pointer)
 
 
-def load_groundtruth(dataset, merge_sites_df, is_test=False):
+def load_groundtruth(dataset, is_test=False):
     """
     Loads ground truth skeletons into dataset.
 
@@ -56,23 +54,18 @@ def load_groundtruth(dataset, merge_sites_df, is_test=False):
     ----------
     dataset : MergeSiteDataset
         Dataset that fragments are loaded into.
-    merge_sites_df : pandas.DataFrame
-        DataFrame containing merge sites, must contain the columns:
-        "brain_id", "segmentation_id", "segment_id", and "xyz".
     is_test : bool, optional
         Indication of whether this is a test run so only fragments from a
         single brain should be loaded. Default is False.
     """
     print("\nLoading Ground Truth")
     root = "gs://allen-nd-goog/ground_truth_tracings"
-    for brain_id in get_brain_ids(merge_sites_df, is_test):
+    for brain_id in get_brain_ids(dataset.merge_sites_df, is_test):
         swc_pointer = f"{root}/{brain_id}/world"
         dataset.load_gt_graphs(brain_id, swc_pointer)
 
 
-def load_images(
-    dataset, merge_sites_df, is_test=False, prefix_lookup_path=None
-):
+def load_images(dataset, is_test=False, prefix_lookup_path=None):
     """
     Loads images into dataset.
 
@@ -80,9 +73,6 @@ def load_images(
     ----------
     dataset : MergeSiteDataset
         Dataset that fragments are loaded into.
-    merge_sites_df : pandas.DataFrame
-        DataFrame containing merge sites, must contain the columns:
-        "brain_id", "segmentation_id", "segment_id", and "xyz".
     is_test : bool, optional
         Indication of whether this is a test run so only fragments from a
         single brain should be loaded. Default is False.
@@ -90,7 +80,7 @@ def load_images(
         Path to json that is a lookup table that maps brain IDs to S3 image
         paths. Default is None.
     """
-    for brain_id in get_brain_ids(merge_sites_df, is_test):
+    for brain_id in get_brain_ids(dataset.merge_sites_df, is_test):
         img_path = s3_util.get_img_prefix(brain_id, prefix_lookup_path) + "0"
         dataset.load_image(brain_id, img_path)
 
