@@ -211,7 +211,7 @@ def save_points(zip_path, pts, color, prefix):
 
 if __name__ == "__main__":
     # Parameters
-    model_name = "MergeDetectorCNN3D-24-20251214-125-0.7862"
+    model_name = "MergeDetectorCNN3D-24-20251214-122-0.7853"
     exp_name = "CNN3D-V1"
 
     accept_threshold = 0.4
