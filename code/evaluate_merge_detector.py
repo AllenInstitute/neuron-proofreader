@@ -211,7 +211,7 @@ def save_points(zip_path, pts, color, prefix):
 
 if __name__ == "__main__":
     # Parameters
-    model_name = "MergeDetectorCNN3D-20-20251214-133-0.7817"
+    model_name = "MergeDetectorCNN3D-24-20251214-125-0.7862"
     exp_name = "CNN3D-V1"
 
     accept_threshold = 0.4
@@ -239,7 +239,7 @@ if __name__ == "__main__":
     model = CNN3D(
         patch_shape,
         n_conv_layers=6,
-        n_feat_channels=20,
+        n_feat_channels=24,
         use_double_conv=True
     )
 
