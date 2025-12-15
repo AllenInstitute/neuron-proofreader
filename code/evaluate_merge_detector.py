@@ -115,8 +115,11 @@ def compute_metrics(gt_sites, detected_sites):
 
 def classify_detections(gt_sites, detected_sites):
     # Build KD-True of GT merge sites
-    kdtree = KDTree(gt_sites)
-    gt_hits = set()
+    if len(gt_sites) > 0:
+        kdtree = KDTree(gt_sites)
+        gt_hits = set()
+    else:
+        return list(), list()
 
     # Separate detected sites into true and false positives
     true_positives = set()
