@@ -487,7 +487,7 @@ class SkeletonGraph(nx.Graph):
             Default is False.
         """
         with zipfile.ZipFile(zip_path, "w") as zip_writer:
-            for nodes in nx.connected_components(self):
+            for nodes in map(list, nx.connected_components(self)):
                 root = util.sample_once(nodes)
                 self.component_to_zipped_swc(
                     zip_writer, root, preserve_radius=preserve_radius

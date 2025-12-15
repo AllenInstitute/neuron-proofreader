@@ -427,7 +427,7 @@ class DenseGraphDataset(GraphDataset):
         batch = np.empty((len(patch_centers), 2,) + self.patch_shape)
         for i, center in enumerate(patch_centers):
             s = img_util.get_slices(center, self.patch_shape)
-            batch[i, 0, ...] = img_util.normalize(np.minimum(img[s], 300))
+            batch[i, 0, ...] = img_util.normalize(np.minimum(img[s], 400))
             batch[i, 1, ...] = label_mask[s]
         return nodes, torch.tensor(batch, dtype=torch.float)
 
@@ -442,7 +442,7 @@ class DenseGraphDataset(GraphDataset):
         point_clouds = np.empty((batch_size, 3, 3600), dtype=np.float32)
         for i, (node, center) in enumerate(zip(nodes, patch_centers)):
             s = img_util.get_slices(center, self.patch_shape)
-            patches[i, 0, ...] = img_util.normalize(np.minimum(img[s], 300))
+            patches[i, 0, ...] = img_util.normalize(np.minimum(img[s], 400))
             patches[i, 1, ...] = label_mask[s]
 
             subgraph = self.graph.get_rooted_subgraph(node, self.subgraph_radius)
