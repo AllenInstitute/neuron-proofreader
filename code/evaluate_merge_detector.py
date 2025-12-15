@@ -71,7 +71,7 @@ def evaluate(brain_id, fragments_graph, merge_sites_df):
     gt_sites = data_util.get_brain_merge_sites(merge_sites_df, brain_id)
     detected_sites = merge_detector.get_detected_sites(accept_threshold)
     compute_performance_metrics(brain_id, detected_sites, gt_sites)
-    plot_precision_vs_recall(brain_id, fragments_graph, gt_sites)
+    plot_precision_vs_recall(brain_id, merge_detector, gt_sites)
     print("-" * 100)
 
 
@@ -141,12 +141,12 @@ def save_detections(brain_id, gt_sites, detected_sites):
     save_points(sites_path, fn_sites, "1.0 1.0 1.0", "false_negative")
 
 
-def plot_precision_vs_recall(brain_id, fragments_graph, gt_sites, dt=0.05):
+def plot_precision_vs_recall(brain_id, merge_detector, gt_sites, dt=0.05):
     # Compute error rates
     precision_list = list()
     recall_list = list()
     for t in np.arange(dt, 1, dt):
-        detected_sites = get_detected_sites(fragments_graph, t)
+        detected_sites = merge_detector.get_detected_sites(t)
         precision, recall, _ = compute_metrics(gt_sites, detected_sites)
         precision_list.append(precision)
         recall_list.append(recall)
