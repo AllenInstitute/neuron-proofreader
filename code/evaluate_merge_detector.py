@@ -61,7 +61,7 @@ def evaluate(brain_id, fragments_graph, merge_sites_df):
 
     # Run detection
     merge_detector.search_graph()
-    fragments_graph.node_radius = merge_detector.node_preds
+    fragments_graph.node_radius = 10 * merge_detector.node_preds
     detections_path = os.path.join(output_dir, f"detections-{brain_id}.zip")
     fragments_graph.to_zipped_swcs(detections_path, preserve_radius=True)
 
