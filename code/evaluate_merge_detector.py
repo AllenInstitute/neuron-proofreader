@@ -21,14 +21,7 @@ from neuron_proofreader.utils import swc_util, util
 
 def main():
     # Load data
-    test_idxs = data_util.read_idxs(test_idxs_path)
-    merge_sites_df = data_util.load_merge_sites_df(
-        merge_sites_path, is_test=is_test
-    )
-
-    # Build datast
-    #merge_sites_df = merge_sites_df.iloc[test_idxs].reset_index(drop=True)
-    dataset = init_dataset(merge_sites_df)
+    dataset = init_dataset()
 
     # Run evaluation for each brain
     print("\nModel Name:", model_name)
@@ -172,7 +165,14 @@ def plot_precision_vs_recall(brain_id, merge_detector, gt_sites, dt=0.05):
 
 
 # --- Data Loading ---
-def init_dataset(merge_sites_df):
+def init_dataset():
+    # Load merge sites
+    test_idxs = data_util.read_idxs(test_idxs_path)
+    merge_sites_df = data_util.load_merge_sites_df(
+        merge_sites_path, is_test=is_test
+        )
+    #merge_sites_df = merge_sites_df.iloc[test_idxs].reset_index(drop=True)
+
     # Initialize dataset
     dataset = MergeSiteDataset(
         merge_sites_df,
