@@ -95,13 +95,10 @@ def init_dataset(merge_sites_df):
     )
 
     # Load data
-    data_util.load_groundtruth(dataset, merge_sites_df, is_test=is_test)
-    data_util.load_fragments(dataset, merge_sites_df, is_test=is_test)
+    data_util.load_groundtruth(dataset, is_test=is_test)
+    data_util.load_fragments(dataset, is_test=is_test)
     data_util.load_images(
-        dataset,
-        merge_sites_df,
-        is_test=is_test,
-        prefix_lookup_path=prefix_lookup_path
+        dataset, is_test=is_test, prefix_lookup_path=prefix_lookup_path
     )
     return dataset
 
