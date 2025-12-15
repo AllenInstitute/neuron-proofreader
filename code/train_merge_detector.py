@@ -109,7 +109,6 @@ def init_trainer():
         model,
         model_name,
         output_dir,
-        batch_size=batch_size,
         device=device,
         lr=lr,
         save_mistake_mips=save_mistake_mips
