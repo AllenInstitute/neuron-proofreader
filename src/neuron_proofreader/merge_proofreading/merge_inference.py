@@ -133,7 +133,7 @@ class MergeDetector:
                     )
                     if iou > 0.35:
                         merge_sites_set.remove(i)
-                        self.node_preds[i] = 1
+                        self.node_preds[i] = 1e-2
 
                 # Populate queue
                 for j in self.dataset.graph.neighbors(i):
