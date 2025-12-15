@@ -25,7 +25,7 @@ def main():
 
     # Run evaluation for each brain
     print("\nModel Name:", model_name)
-    for brain_id in data_util.get_brain_ids(merge_sites_df, is_test=is_test):
+    for brain_id in data_util.get_brain_ids(dataset.merge_sites_df, is_test=is_test):
         evaluate(brain_id, dataset.graphs[brain_id], dataset.merge_sites_df)
 
 
