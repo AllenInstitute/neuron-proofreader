@@ -8,11 +8,12 @@ Code for loading merge site dataset.
 
 """
 
-from aind_exaspim_dataset_utils import s3_util
-
 import ast
 import numpy as np
+import os
 import pandas as pd
+
+from neuron_proofreader.utils import util
 
 TEST_BRAIN = "653159"
 
@@ -65,7 +66,9 @@ def load_groundtruth(dataset, is_test=False):
         dataset.load_gt_graphs(brain_id, swc_pointer)
 
 
-def load_images(dataset, is_test=False, prefix_lookup_path=None):
+def load_images(
+    dataset, img_prefixes_path, segmentation_prefixes_path, is_test=False
+):
     """
     Loads images into dataset.
 
@@ -73,16 +76,21 @@ def load_images(dataset, is_test=False, prefix_lookup_path=None):
     ----------
     dataset : MergeSiteDataset
         Dataset that fragments are loaded into.
+    img_prefixes_path : str, optional
+        Path to json that maps brain IDs to S3 image paths. Default is None.
+    segmentation_prefixes_path : str, optional
+        Path to json that maps brain IDs to segmentation paths. Default is
+        None.
     is_test : bool, optional
         Indication of whether this is a test run so only fragments from a
         single brain should be loaded. Default is False.
-    prefix_lookup_path : str, optional
-        Path to json that is a lookup table that maps brain IDs to S3 image
-        paths. Default is None.
     """
+    img_prefixes = util.read_json(img_prefixes_path)
+    segmentation_prefixes = util.read_json(segmentation_prefixes_path)
     for brain_id in get_brain_ids(dataset.merge_sites_df, is_test):
-        img_path = s3_util.get_img_prefix(brain_id, prefix_lookup_path) + "0"
-        dataset.load_image(brain_id, img_path)
+        img_path = os.path.join(img_prefixes[brain_id], "0")
+        segmentation_path = segmentation_prefixes[brain_id]
+        dataset.load_images(brain_id, img_path, segmentation_path)
 
 
 # --- Process Merge Site DataFrame ---

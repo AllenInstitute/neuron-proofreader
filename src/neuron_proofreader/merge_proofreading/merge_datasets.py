@@ -108,9 +108,10 @@ class MergeSiteDataset(Dataset):
         self.subgraph_radius = subgraph_radius
 
         # Data structures
-        self.img_readers = dict()
         self.graphs = dict()
         self.gt_graphs = dict()
+        self.img_readers = dict()
+        self.segmentation_readers = dict()
         self.merge_site_kdtrees = dict()
 
     # --- Load Data ---
@@ -175,7 +176,7 @@ class MergeSiteDataset(Dataset):
         self.gt_graphs[brain_id].load(swc_pointer)
         self.gt_graphs[brain_id].set_kdtree()
 
-    def load_image(self, brain_id, img_path):
+    def load_images(self, brain_id, img_path, segmentation_path):
         """
         Loads image reader for a whole-brain dataset, then stores it in the
         "img_readers" attribute.
@@ -184,10 +185,15 @@ class MergeSiteDataset(Dataset):
         ----------
         brain_id : str
             Unique identifier for a whole-brain dataset.
-        swc_pointer : str
-            Pointer to SWC files to be loaded into graph.
+        img_path : str
+            Path to whole-brain image.
+        segmentation_path : str
+            Path to segmentation of whole-brain image.
         """
         self.img_readers[brain_id] = img_util.TensorStoreReader(img_path)
+        self.segmentation_readers[brain_id] = img_util.TensorStoreReader(
+            segmentation_path
+        )
 
     # --- Create Subclass Dataset ---
     def subset(self, cls, idxs):
@@ -301,7 +307,7 @@ class MergeSiteDataset(Dataset):
 
         # Extract subgraph and image patches centered at site
         img_patch = self.get_img_patch(brain_id, voxel)
-        segment_mask = self.get_segment_mask(subgraph)
+        segment_mask = self.get_segment_mask(brain_id, voxel, subgraph)
 
         # Stack image channels
         try:
@@ -457,13 +463,13 @@ class MergeSiteDataset(Dataset):
         -------
         img_patch : numpy.ndarray
             Extracted image patch, which has been normalized and clipped to a
-            maximum value of 400.
+            maximum value of "self.brightness_clip".
         """
         img_patch = self.img_readers[brain_id].read(center, self.patch_shape)
         img_patch = np.minimum(img_patch, self.brightness_clip)
         return img_util.normalize(img_patch)
 
-    def get_segment_mask(self, subgraph):
+    def get_segment_mask(self, brain_id, center, subgraph):
         """
         Generates a binary mask for a given subgraph within a patch.
 
@@ -477,8 +483,14 @@ class MergeSiteDataset(Dataset):
         segment_mask : numpy.ndarray
             Binary mask for a given subgraph within a patch.
         """
+        # Read segmentation
+        segment_mask = self.segmentation_readers[brain_id].read(
+            center, self.patch_shape
+        )
+        segment_mask = (segment_mask > 0).astype(float)
+
+        # Annotate fragment
         center = subgraph.get_voxel(0)
-        segment_mask = np.zeros(self.patch_shape)
         for node1, node2 in subgraph.edges:
             # Get local voxel coordinates
             voxel1 = subgraph.get_local_voxel(node1, center, self.patch_shape)
@@ -486,7 +498,7 @@ class MergeSiteDataset(Dataset):
 
             # Populate mask
             voxels = geometry_util.make_digital_line(voxel1, voxel2)
-            img_util.annotate_voxels(segment_mask, voxels, kernel_size=3)
+            img_util.annotate_voxels(segment_mask, voxels, val=3)
         return segment_mask
 
     # --- Helpers ---
@@ -989,7 +1001,7 @@ class MergeSiteDataLoader(DataLoader):
             for thread in as_completed(pending.keys()):
                 i = pending.pop(thread)
                 patches[i], subgraph, labels[i] = thread.result()
-                point_clouds[i] = subgraph_to_point_cloud(subgraph) #.T
+                point_clouds[i] = subgraph_to_point_cloud(subgraph)
 
         # Set batch dictionary
         batch = ml_util.TensorDict(
