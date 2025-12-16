@@ -198,6 +198,7 @@ class GraphDataset(IterableDataset, ABC):
         img_path,
         patch_shape,
         batch_size=16,
+        brightness_clip=300,
         is_multimodal=False,
         min_search_size=0,
         prefetch=128,
@@ -208,6 +209,7 @@ class GraphDataset(IterableDataset, ABC):
 
         # Instance attributes
         self.batch_size = batch_size
+        self.brightness_clip = brightness_clip
         self.distance_traversed = 0
         self.graph = graph
         self.is_multimodal = is_multimodal
@@ -320,6 +322,7 @@ class DenseGraphDataset(GraphDataset):
         img_path,
         patch_shape,
         batch_size=16,
+        brightness_clip=300,
         is_multimodal=False,
         min_search_size=0,
         prefetch=128,
@@ -332,6 +335,7 @@ class DenseGraphDataset(GraphDataset):
             img_path,
             patch_shape,
             batch_size=batch_size,
+            brightness_clip=brightness_clip,
             is_multimodal=is_multimodal,
             min_search_size=min_search_size,
             prefetch=prefetch,
@@ -427,7 +431,15 @@ class DenseGraphDataset(GraphDataset):
         batch = np.empty((len(patch_centers), 2,) + self.patch_shape)
         for i, center in enumerate(patch_centers):
             s = img_util.get_slices(center, self.patch_shape)
-            batch[i, 0, ...] = img_util.normalize(np.minimum(img[s], 400))
+            try:
+                patch = img[s]
+            except:
+                print("center:", center)
+                print("img.shape:", img.shape)
+                print("\noffset:", offset)
+                print("patch_centers:", patch_centers)
+                stop
+            batch[i, 0, ...] = img_util.normalize(np.minimum(patch, self.brightness_clip))
             batch[i, 1, ...] = label_mask[s]
         return nodes, torch.tensor(batch, dtype=torch.float)
 
@@ -442,7 +454,7 @@ class DenseGraphDataset(GraphDataset):
         point_clouds = np.empty((batch_size, 3, 3600), dtype=np.float32)
         for i, (node, center) in enumerate(zip(nodes, patch_centers)):
             s = img_util.get_slices(center, self.patch_shape)
-            patches[i, 0, ...] = img_util.normalize(np.minimum(img[s], 400))
+            patches[i, 0, ...] = img_util.normalize(np.minimum(img[s], self.brightness_clip))
             patches[i, 1, ...] = label_mask[s]
 
             subgraph = self.graph.get_rooted_subgraph(node, self.subgraph_radius)
