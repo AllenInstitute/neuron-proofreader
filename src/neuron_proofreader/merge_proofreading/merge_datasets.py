@@ -461,7 +461,7 @@ class MergeSiteDataset(Dataset):
         """
         img_patch = self.img_readers[brain_id].read(center, self.patch_shape)
         img_patch = np.minimum(img_patch, self.brightness_clip)
-        return img_util.normalize(img_path)
+        return img_util.normalize(img_patch)
 
     def get_segment_mask(self, subgraph):
         """
