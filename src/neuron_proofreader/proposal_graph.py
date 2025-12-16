@@ -104,9 +104,9 @@ class ProposalGraph(SkeletonGraph):
         # Instance attributes - Proposals
         self.merged_ids = set()
         self.min_size_with_proposals = min_size_with_proposals
-        self.proposals = set()
         self.n_merges_blocked = 0
         self.n_proposals_blocked = 0
+        self.proposals = set()
 
         # Graph Loader
         anisotropy = anisotropy if use_anisotropy else (1.0, 1.0, 1.0)
@@ -213,7 +213,7 @@ class ProposalGraph(SkeletonGraph):
         self.remove_nodes_from([i, j])
 
     # -- KDTree --
-    def init_kdtree(self, node_type=None):
+    def set_kdtree(self, node_type=None):
         """
         Builds a KD-Tree from the xyz coordinates of the subset of nodes
         indicated by "node_type".

@@ -55,6 +55,7 @@ class ImageTransforms:
         """
         for transform in self.transforms:
             transform(patches)
+        return patches
 
 
 # --- Geometric Transforms ---

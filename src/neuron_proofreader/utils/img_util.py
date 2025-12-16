@@ -504,6 +504,10 @@ def get_neighbors(voxel, shape):
     return neighbors
 
 
+def get_offset(center, shape):
+    return [c - s // 2 for c, s in zip(center, shape)]
+
+
 def get_slices(center, shape):
     """
     Gets the start and end indices of the chunk to be read.

@@ -9,12 +9,14 @@ Routines for training machine learning models that classify proposals.
 
 To do: explain how the train pipeline is organized. how is the data organized?
 
+
+REMINDER: YOU NEED TO ADD PROPOSAL EDGES TO COMPUTATION GRAPH
 """
 
 from collections import defaultdict
 from concurrent.futures import as_completed, ProcessPoolExecutor
 from copy import deepcopy
-from torch.utils.data import DataLoader, IterableDataset
+from torch.utils.data import IterableDataset
 
 import numpy as np
 import os
@@ -167,14 +169,14 @@ class GraphDataset(IterableDataset):
             with ProcessPoolExecutor() as executor:
                 # Assign processes
                 pending = dict()
-                for proposal, patches in features["patches"].items():
+                for proposal, patches in features.proposal_patches.items():
                     process = executor.submit(self.transform, patches)
                     pending[process] = proposal
 
                 # Store results
                 for process in as_completed(pending.keys()):
                     proposal = pending.pop(process)
-                    features["patches"][proposal] = process.result()
+                    features.proposal_patches = process.result()
         return self.graphs[key], features
 
 

@@ -216,7 +216,7 @@ def path_length(path):
     float
         Path length of "path".
     """
-    return np.sum([dist(a, b) for i in zip(path[:-1], path[1:])])
+    return np.sum([dist(a, b) for a, b in zip(path[:-1], path[1:])])
 
 
 def resample_path(pts, n_pts):
