@@ -311,6 +311,8 @@ class GraphDataset(IterableDataset, ABC):
         shape = (end - start).astype(int)
         center = (start + shape // 2).astype(int)
         superchunk = self.img_reader.read(center, shape)
+        superchunk = np.minimum(superchunk, self.brightness_clip)
+        superchunk = img_util.normalize(superchunk)
         return superchunk, start.astype(int)
 
 
@@ -432,15 +434,14 @@ class DenseGraphDataset(GraphDataset):
         for i, center in enumerate(patch_centers):
             s = img_util.get_slices(center, self.patch_shape)
             try:
-                patch = img[s]
+                batch[i, 0, ...] = img[s]
+                batch[i, 1, ...] = label_mask[s]
             except:
                 print("center:", center)
                 print("img.shape:", img.shape)
                 print("\noffset:", offset)
                 print("patch_centers:", patch_centers)
                 stop
-            batch[i, 0, ...] = img_util.normalize(np.minimum(patch, self.brightness_clip))
-            batch[i, 1, ...] = label_mask[s]
         return nodes, torch.tensor(batch, dtype=torch.float)
 
     def _get_multimodal_batch(self, nodes, img, offset):
@@ -454,7 +455,7 @@ class DenseGraphDataset(GraphDataset):
         point_clouds = np.empty((batch_size, 3, 3600), dtype=np.float32)
         for i, (node, center) in enumerate(zip(nodes, patch_centers)):
             s = img_util.get_slices(center, self.patch_shape)
-            patches[i, 0, ...] = img_util.normalize(np.minimum(img[s], self.brightness_clip))
+            patches[i, 0, ...] = img[s]
             patches[i, 1, ...] = label_mask[s]
 
             subgraph = self.graph.get_rooted_subgraph(node, self.subgraph_radius)
