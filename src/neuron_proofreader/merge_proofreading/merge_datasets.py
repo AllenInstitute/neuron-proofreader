@@ -460,7 +460,7 @@ class MergeSiteDataset(Dataset):
             maximum value of 400.
         """
         img_patch = self.img_readers[brain_id].read(center, self.patch_shape)
-        img_path = np.minimum(img_patch, self.brightness_clip)
+        img_patch = np.minimum(img_patch, self.brightness_clip)
         return img_util.normalize(img_path)
 
     def get_segment_mask(self, subgraph):
