@@ -300,6 +300,12 @@ class GraphDataset(IterableDataset, ABC):
                         visited.add(nb)
         return label_mask
 
+    def is_contained(self, node):
+        voxel = self.graph.get_voxel(node)
+        shape = self.img_reader.shape()[2::]
+        buffer = np.max(self.patch_shape)
+        return img_util.is_contained(voxel, shape, buffer=buffer)
+
     def read_superchunk(self, nodes):
         # Compute bounding box
         patch_centers = self.get_patch_centers(nodes)
@@ -394,12 +400,18 @@ class DenseGraphDataset(GraphDataset):
         """
         nodes = list()
         for i, j in nx.dfs_edges(self.graph, source=root):
+            # Check whether node is contained outside image margin
+            
+
             # Check if starting new batch
             self.distance_traversed += self.graph.dist(i, j)
             if len(nodes) == 0:
-                root = i
-                last_node = i
-                nodes.append(i)
+                if self.is_contained(i):
+                    root = i
+                    last_node = i
+                    nodes.append(i)
+                else:
+                    continue
 
             # Check whether to yield batch
             is_node_far = self.graph.dist(root, j) > 512
@@ -414,7 +426,7 @@ class DenseGraphDataset(GraphDataset):
             # Visit j
             is_next = self.graph.dist(last_node, j) >= self.step_size - 2
             is_branching = self.graph.degree[j] >= 3
-            if is_next or is_branching:
+            if (is_next or is_branching) and self.is_contained(j):
                 last_node = j
                 nodes.append(j)
                 if len(nodes) == 1:
