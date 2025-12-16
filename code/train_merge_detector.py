@@ -132,9 +132,9 @@ def init_sampler(trainer, dataset):
 
 if __name__ == "__main__":
     # Paths
-    dataset_path = "/root/capsule/data"
+    dataset_path = "/root/capsule/data/models/V2"
     prefix_lookup_path = "/root/capsule/data/exaspim_image_prefixes.json"
-    model_path = None
+    model_path = "/root/capsule/data/models/V2/MergeDetectorCNN3D-20251216-129-0.8238.pth"
     output_dir = "/root/capsule/results"
 
     # Parameters
@@ -149,7 +149,7 @@ if __name__ == "__main__":
     use_distributed = False
 
     # Model
-    model_name = "MergeDetectorCNN3D-randomsites=80"
+    model_name = "MergeDetectorCNN3D-randomsites=80-finetune"
     model = CNN3D(
         patch_shape,
         n_conv_layers=6,

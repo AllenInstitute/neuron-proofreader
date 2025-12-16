@@ -204,8 +204,8 @@ def save_points(zip_path, pts, color, prefix):
 
 if __name__ == "__main__":
     # Parameters
-    model_name = "MergeDetectorCNN3D-24-20251214-122-0.7853"
-    exp_name = "CNN3D-V1"
+    model_name = "MergeDetectorCNN3D-20251216-129-0.8238"
+    exp_name = "V2"
 
     accept_threshold = 0.4
     anisotropy = (0.748, 0.748, 1.0)
@@ -222,9 +222,9 @@ if __name__ == "__main__":
     bucket_name = "allen-nd-goog"
     fragments_prefix = "automated_proofreading_dataset/raw_merge_sites"
     prefix_lookup_path = "/root/capsule/data/exaspim_image_prefixes.json"
-    merge_sites_path = "/root/capsule/data/merge_sites_df.csv"
-    test_idxs_path = "/root/capsule/data/test_idxs.csv"
-    model_path = f"/root/capsule/data/models/{exp_name}/{model_name}.pth"
+    merge_sites_path = "/root/capsule/data/{exp_name}/merge_sites_df.csv"
+    test_idxs_path = "/root/capsule/data/{exp_name}/test_idxs.csv"
+    model_path = f"/root/capsule/data/{exp_name}/{model_name}.pth"
     output_dir = f"/root/capsule/results/{exp_name}-{model_name}"
     util.mkdir(output_dir)
 
