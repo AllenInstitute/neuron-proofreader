@@ -77,6 +77,7 @@ class MergeSiteDataset(Dataset):
         subgraph_radius=100,
         node_spacing=5,
         patch_shape=(128, 128, 128),
+        use_new_mask=False,
     ):
         """
         Instantiates a MergeSiteDataset object.
@@ -106,6 +107,7 @@ class MergeSiteDataset(Dataset):
         self.merge_sites_df = merge_sites_df
         self.patch_shape = patch_shape
         self.subgraph_radius = subgraph_radius
+        self.use_new_mask = use_new_mask
 
         # Data structures
         self.graphs = dict()
@@ -484,10 +486,13 @@ class MergeSiteDataset(Dataset):
             Binary mask for a given subgraph within a patch.
         """
         # Read segmentation
-        segment_mask = self.segmentation_readers[brain_id].read(
-            center, self.patch_shape
-        )
-        segment_mask = (segment_mask > 0).astype(float)
+        if self.use_new_mask:
+            segment_mask = self.segmentation_readers[brain_id].read(
+                center, self.patch_shape
+            )
+            segment_mask = (segment_mask > 0).astype(float)
+        else:
+            segment_mask = np.zeros(self.patch_shape)
 
         # Annotate fragment
         center = subgraph.get_voxel(0)
