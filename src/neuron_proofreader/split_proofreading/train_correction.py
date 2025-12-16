@@ -14,222 +14,22 @@ To do: explain how the train pipeline is organized. how is the data organized?
 from collections import defaultdict
 from concurrent.futures import as_completed, ProcessPoolExecutor
 from copy import deepcopy
-from datetime import datetime
-from sklearn.metrics import (
-    accuracy_score,
-    f1_score,
-    precision_score,
-    recall_score,
-)
-from torch import nn
-from torch.optim.lr_scheduler import CosineAnnealingLR
-from torch.utils.data import Dataset, DataLoader
-from torch.utils.tensorboard import SummaryWriter
+from torch.utils.data import DataLoader, IterableDataset
 
 import numpy as np
 import os
 import random
-import torch
 
 from neuron_proofreader.proposal_graph import ProposalGraph
 from neuron_proofreader.machine_learning.augmentation import ImageTransforms
 from neuron_proofreader.split_proofreading import datasets
-from neuron_proofreader.split_proofreading.feature_generation import (
-    FeatureGenerator
+from neuron_proofreader.split_proofreading.feature_extraction import (
+    FeaturePipeline
 )
 from neuron_proofreader.utils import ml_util, util
 
 
-# --- Custom Trainer ---
-class Trainer:
-    """
-    Custom class for a training graph neural network to correct split mistakes
-    by classifying edge proposals.
-    """
-
-    def __init__(
-        self,
-        output_dir,
-        batch_size=64,
-        device="cuda",
-        lr=1e-4,
-        n_epochs=1000,
-    ):
-        """
-        Instantiates a Trainer object.
-
-        Parameters
-        ----------
-        ...
-        """
-        # Initializations
-        exp_name = "session-" + datetime.today().strftime("%Y%m%d_%H%M")
-        exp_dir = os.path.join(output_dir, exp_name)
-        pos_weight = torch.Tensor([0.5]).to(device, dtype=torch.float)
-        util.mkdir(exp_dir)
-
-        # Instance attributes
-        self.batch_size = batch_size
-        self.criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-        self.device = device
-        self.lr = lr
-        self.n_epochs = n_epochs
-        self.exp_dir = exp_dir
-        self.writer = SummaryWriter(log_dir=exp_dir)
-
-    def run(self, model, train_dataset, val_dataset):
-        """
-        Trains a graph neural network in the case where "datasets" is a
-        dictionary of datasets such that each corresponds to a distinct graph.
-
-        Parameters
-        ----------
-        ...
-
-        Returns
-        -------
-        torch.nn.Module
-            Graph neural network that has been fit onto the given graph
-            dataset.
-        """
-        # Initializations
-        model.to(self.device)
-        optimizer = torch.optim.AdamW(
-            model.parameters(), lr=self.lr, weight_decay=1e-3
-        )
-        scheduler = CosineAnnealingLR(optimizer, T_max=20)
-
-        # Dataloaders
-        train_dataloader = GraphDataLoader(train_dataset, self.batch_size)
-        val_dataloader = GraphDataLoader(val_dataset, 200)
-
-        # Main
-        best_f1, n_upds = 0, 0
-        for epoch in range(self.n_epochs):
-            y, hat_y, losses = list(), list(), list()
-            model.train()
-            for dataset in train_dataloader:
-                # Forward pass
-                hat_y_i, y_i = self.predict(model, dataset.data)
-                loss = self.criterion(hat_y_i + 1e-8, y_i)
-                self.writer.add_scalar("loss", loss, epoch)
-
-                # Backward pass
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-
-                # Store prediction
-                y.extend(ml_util.toCPU(y_i))
-                hat_y.extend(ml_util.toCPU(hat_y_i))
-                losses.append(float(loss.detach()))
-                n_upds += 1
-
-                # Check whether to validate model
-                if n_upds % 100 == 0:
-                    train_f1 = self.compute_metrics(y, hat_y, "train", epoch)
-                    best_f1 = self.validate_step(
-                        val_dataloader, model, epoch, best_f1, train_f1
-                    )
-
-            self.writer.add_scalar("loss", np.mean(losses), epoch)
-            train_f1 = self.compute_metrics(y, hat_y, "train", epoch)
-            scheduler.step()
-
-    def predict(self, model, data):
-        """
-        Runs "data" through "self.model" to generate a prediction.
-
-        Parameters
-        ----------
-        data : GraphDataset
-            Graph dataset that corresponds to a single connected component.
-
-        Returns
-        -------
-        torch.Tensor
-            Ground truth.
-        torch.Tensor
-            Prediction.
-        """
-        x, edge_index, edge_attr = ml_util.get_inputs(data, self.device)
-        hat_y = model(x, edge_index, edge_attr)
-        y = data["proposal"]["y"]
-        if torch.isnan(hat_y).any():
-            print("Loss is NaN!")
-            print("hat_y:", truncate(hat_y, y))
-            print("y:", y)
-            for key in x:
-                if torch.isnan(x[key]).any():
-                    print(f"x[{key}]: {x[key]}")
-        return truncate(hat_y, y), y
-
-    def validate_step(self, dataloader, model, epoch, best_f1, train_f1):
-        # Generate predictions
-        with torch.no_grad():
-            model.eval()
-            y, hat_y = [], []
-            for dataset in dataloader:
-                hat_y_i, y_i = self.predict(model, dataset.data)
-                y.extend(ml_util.toCPU(y_i))
-                hat_y.extend(ml_util.toCPU(hat_y_i))
-
-        # Check for new best model
-        val_f1 = self.compute_metrics(y, hat_y, "val", epoch)
-        if val_f1 > best_f1:
-            print(f"Epoch {epoch}:  train_f1={train_f1}  val_f1={val_f1}")
-            best_f1 = val_f1
-            self.save_model(model, best_f1)
-        return best_f1
-
-    def compute_metrics(self, y, hat_y, prefix, epoch):
-        """
-        Computes and logs evaluation metrics for binary classification.
-
-        Parameters
-        ----------
-        y : torch.Tensor
-            Ground truth.
-        hat_y : torch.Tensor
-            Prediction.
-        prefix : str
-            Prefix to be added to the metric names when logging.
-        epoch : int
-            Current epoch.
-
-        Returns
-        -------
-        float
-            F1 score.
-        """
-        # Initializations
-        y = np.array(y, dtype=int).tolist()
-        hat_y = (np.array(hat_y) > 0).tolist()
-
-        # Compute
-        accuracy = accuracy_score(y, hat_y)
-        accuracy_dif = accuracy - np.sum(y) / len(y)
-        precision = precision_score(y, hat_y)
-        recall = recall_score(y, hat_y)
-        f1 = f1_score(y, hat_y)
-
-        # Log
-        self.writer.add_scalar(prefix + "_accuracy:", accuracy, epoch)
-        self.writer.add_scalar(prefix + "_accuracy_df:", accuracy_dif, epoch)
-        self.writer.add_scalar(prefix + "_precision:", precision, epoch)
-        self.writer.add_scalar(prefix + "_recall:", recall, epoch)
-        self.writer.add_scalar(prefix + "_f1:", f1, epoch)
-        return round(f1, 4)
-
-    def save_model(self, model, score):
-        date = datetime.today().strftime("%Y%m%d")
-        filename = f"GraphNeuralNet-{date}-{round(score, 4)}.pth"
-        path = os.path.join(self.exp_dir, filename)
-        torch.save(model.state_dict(), path)
-
-
-# --- Custom Dataset ---
-class GraphDataset(Dataset):
+class GraphDataset(IterableDataset):
     """
     Dataset for storing graphs used to train a graph neural network to perform
     split correction. Graphs are stored in the "self.graphs" attribute, which
@@ -243,16 +43,16 @@ class GraphDataset(Dataset):
         (2) gt_pointer: Path to ground truth SWC files.
         (2) pred_pointer: Path to predicted SWC files.
         (3) img_path: Path to whole-brain image stored in cloud bucket.
-        (4) segmentation_path: Path to whole-brain segmentation stored on GCS.
 
     Note: This dataset supports graphs from multiple whole-brain datasets.
     """
 
-    def __init__(self, config, transform=False):
-        # Instance Attributes
+    def __init__(self, config, patch_shape=(128, 128, 128), transform=False):
+        # Instance attributes
         self.features = dict()
         self.graphs = dict()
         self.keys = set()
+        self.patch_shape = patch_shape
 
         # Configs
         self.graph_config = config.graph_config
@@ -261,7 +61,7 @@ class GraphDataset(Dataset):
         # Data augmentation (if applicable)
         self.transform = ImageTransforms() if transform else False
 
-    # --- Data Properties ---
+    # --- Dataset Properties ---
     def __len__(self):
         """
         Counts the number of graphs in the dataset.
@@ -326,8 +126,13 @@ class GraphDataset(Dataset):
         )
         self.keys.add(key)
 
-        # Generate features
-        self.features[key] = self.generate_features(key, img_path)
+        # Generate features -- add segmentation path
+        feature_pipeline = FeaturePipeline(
+            img_path,
+            self.graph_config.search_radius,
+            patch_shape=self.patch_shape
+        )
+        self.features[key] = feature_pipeline.run(self.graphs[key])
 
     def load_graph(self, swc_pointer):
         """
@@ -341,52 +146,35 @@ class GraphDataset(Dataset):
 
         Returns
         -------
-        ProposalGraph
+        graph : ProposalGraph
             Graph constructed from SWC files.
         """
-        proposal_graph = ProposalGraph(
+        graph = ProposalGraph(
             min_size=self.graph_config.min_size,
             node_spacing=self.graph_config.node_spacing,
         )
-        proposal_graph.load(swc_pointer)
-        return proposal_graph
-
-    def generate_features(self, key, img_path):
-        # Initializations
-        feature_generator = FeatureGenerator(
-            self.graphs[key],
-            img_path,
-            anisotropy=self.ml_config.anisotropy,
-            is_multimodal=self.ml_config.is_multimodal,
-            multiscale=self.ml_config.multiscale,
-        )
-        batch = {
-            "proposals": self.graphs[key].list_proposals(),
-            "graph": self.graphs[key]
-        }
-
-        # Main
-        features = feature_generator.run(
-            batch, self.graph_config.search_radius
-        )
-        return features
+        graph.load(swc_pointer)
+        return graph
 
     # --- Get Data ---
+    def __iter__(self):
+        for key, graph in self.graphs.items():
+            pass
+
     def __getitem__(self, key):
         features = deepcopy(self.features[key])
-        if self.transform and self.ml_config.is_multimodal:
+        if self.transform:
             with ProcessPoolExecutor() as executor:
                 # Assign processes
-                processes = list()
+                pending = dict()
                 for proposal, patches in features["patches"].items():
-                    processes.append(
-                        executor.submit(self.transform, proposal, patches)
-                    )
+                    process = executor.submit(self.transform, patches)
+                    pending[process] = proposal
 
                 # Store results
-                for process in as_completed(processes):
-                    proposal, patches = process.result()
-                    features["patches"][proposal] = patches
+                for process in as_completed(pending.keys()):
+                    proposal = pending.pop(process)
+                    features["patches"][proposal] = process.result()
         return self.graphs[key], features
 
 
@@ -458,7 +246,8 @@ class GraphDataLoader:
 
 # -- Helpers --
 def generate_dataset_example_ids(bucket_name, dataset_prefix):
-    for brain_prefix in util.list_gcs_subdirectories(bucket_name, dataset_prefix):
+    brain_prefixes = util.list_gcs_subdirectories(bucket_name, dataset_prefix)
+    for brain_prefix in brain_prefixes:
         # Extract brain id
         brain_id = brain_prefix.split("/")[-2]
 
@@ -470,7 +259,8 @@ def generate_dataset_example_ids(bucket_name, dataset_prefix):
             segmentation_id = brain_segmentation_prefix.split("/")[-2]
 
             # Iterate over blocks
-            for block_prefix in util.list_gcs_subdirectories(bucket_name, brain_segmentation_prefix):
+            block_prefixes = util.list_gcs_subdirectories(bucket_name, brain_segmentation_prefix)
+            for block_prefix in block_prefixes:
                 # Extract block id
                 block_id = block_prefix.split("/")[-2]
                 yield brain_id, segmentation_id, block_id
