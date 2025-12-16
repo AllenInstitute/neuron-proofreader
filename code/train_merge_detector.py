@@ -90,6 +90,7 @@ def init_dataset(merge_sites_df):
     dataset = MergeSiteDataset(
         merge_sites_df,
         anisotropy=anisotropy,
+        brightness_clip=brightness_clip,
         node_spacing=5,
         patch_shape=patch_shape,
     )
@@ -132,15 +133,16 @@ def init_sampler(trainer, dataset):
 
 if __name__ == "__main__":
     # Paths
-    dataset_path = "/root/capsule/data/models/V2"
+    dataset_path = "/root/capsule/data/V3"
     prefix_lookup_path = "/root/capsule/data/exaspim_image_prefixes.json"
-    model_path = "/root/capsule/data/models/V2/MergeDetectorCNN3D-20251216-129-0.8238.pth"
+    model_path = "/root/capsule/data/V2/MergeDetectorCNN3D-20251216-129-0.8238.pth"
     output_dir = "/root/capsule/results"
 
     # Parameters
     anisotropy = (0.748, 0.748, 1.0)
     device = "cuda"
     batch_size = 20
+    brightness_clip = 300
     is_multimodal = False
     is_test = False
     lr = 1e-4
@@ -149,7 +151,7 @@ if __name__ == "__main__":
     use_distributed = False
 
     # Model
-    model_name = "MergeDetectorCNN3D-randomsites=80-finetune"
+    model_name = "MergeDetectorCNN3D-v3-randomsites=80-finetune-clip=300"
     model = CNN3D(
         patch_shape,
         n_conv_layers=6,
