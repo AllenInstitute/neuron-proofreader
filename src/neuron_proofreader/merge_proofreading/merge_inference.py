@@ -297,7 +297,7 @@ class GraphDataset(IterableDataset, ABC):
     def is_contained(self, node):
         voxel = self.graph.get_voxel(node)
         shape = self.img_reader.shape()[2::]
-        buffer = np.max(self.patch_shape)
+        buffer = np.max(self.patch_shape) + 1
         return img_util.is_contained(voxel, shape, buffer=buffer)
 
     def read_superchunk(self, nodes):
