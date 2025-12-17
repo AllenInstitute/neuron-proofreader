@@ -315,6 +315,11 @@ class GraphDataset(IterableDataset, ABC):
         superchunk = img_util.normalize(superchunk)
         return superchunk, start.astype(int)
 
+    def is_node_valid(self, node):
+        is_contained = self.is_contained(node)
+        is_leaf = self.graph.degree[node] > 1
+        return is_contained and not is_leaf
+
 
 class DenseGraphDataset(GraphDataset):
 
@@ -400,7 +405,7 @@ class DenseGraphDataset(GraphDataset):
             # Check if starting new batch
             self.distance_traversed += self.graph.dist(i, j)
             if len(nodes) == 0:
-                if self.is_contained(i):
+                if self.is_node_valid(i):
                     root = i
                     last_node = i
                     nodes.append(i)
@@ -420,7 +425,7 @@ class DenseGraphDataset(GraphDataset):
             # Visit j
             is_next = self.graph.dist(last_node, j) >= self.step_size - 2
             is_branching = self.graph.degree[j] >= 3
-            if (is_next or is_branching) and self.is_contained(j):
+            if (is_next or is_branching) and self.is_node_valid(j):
                 last_node = j
                 nodes.append(j)
                 if len(nodes) == 1:
