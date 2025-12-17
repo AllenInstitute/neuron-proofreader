@@ -503,7 +503,7 @@ class MergeSiteDataset(Dataset):
 
             # Populate mask
             voxels = geometry_util.make_digital_line(voxel1, voxel2)
-            img_util.annotate_voxels(segment_mask, voxels, kernel_size=5)
+            img_util.annotate_voxels(segment_mask, voxels)
         return segment_mask
 
     # --- Helpers ---
