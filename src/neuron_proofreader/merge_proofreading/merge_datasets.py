@@ -490,7 +490,7 @@ class MergeSiteDataset(Dataset):
             segment_mask = self.segmentation_readers[brain_id].read(
                 center, self.patch_shape
             )
-            segment_mask = (segment_mask > 0).astype(float)
+            segment_mask = 0.5 * (segment_mask > 0).astype(float)
         else:
             segment_mask = np.zeros(self.patch_shape)
 
@@ -503,7 +503,7 @@ class MergeSiteDataset(Dataset):
 
             # Populate mask
             voxels = geometry_util.make_digital_line(voxel1, voxel2)
-            img_util.annotate_voxels(segment_mask, voxels, val=3)
+            img_util.annotate_voxels(segment_mask, voxels, kernel_size=5)
         return segment_mask
 
     # --- Helpers ---

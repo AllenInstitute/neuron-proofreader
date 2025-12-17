@@ -371,7 +371,7 @@ class Trainer:
                     filename = f"{mistake_type}{i + idx_offset}.png"
                     output_path = os.path.join(self.mistakes_dir, filename)
                     img_util.plot_image_and_segmentation_mips(
-                        x[i, 0], x[i, 1], output_path
+                        x[i, 0], 2 * x[i, 1], output_path
                     )
 
     def save_model(self, epoch):
