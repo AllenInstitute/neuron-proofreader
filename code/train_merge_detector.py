@@ -66,14 +66,12 @@ def main():
 
     # Dataloaders
     trainer = init_trainer()
-    sampler = init_sampler(trainer, train_dataset)
     val_dataset.save_summary(trainer.log_dir)
 
     train_dataloader = MergeSiteDataLoader(
         train_dataset,
         batch_size=batch_size,
         is_multimodal=is_multimodal,
-        sampler=sampler,
     )
     val_dataloader = MergeSiteDataLoader(
         val_dataset,
@@ -125,18 +123,6 @@ def init_trainer():
     return trainer
 
 
-def init_sampler(trainer, dataset):
-    if use_distributed:
-        sampler = DistributedSampler(
-            dataset,
-            num_replicas=trainer.world_size,
-            rank=trainer.rank,
-        )
-    else:
-        sampler = None
-    return sampler
-
-
 def save_experiment_parameters():
     parameters = {
         "batch_size": batch_size,
@@ -169,7 +155,7 @@ if __name__ == "__main__":
     lr = 1e-4
     patch_shape = (128, 128, 128)
     save_mistake_mips = True
-    use_new_mask = True
+    use_new_mask = False
 
     # Model
     model_class = "MergeDetectorCNN3D"
