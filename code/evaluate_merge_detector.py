@@ -26,6 +26,8 @@ def main():
     # Run evaluation for each brain
     print("\nModel Name:", model_name)
     for brain_id in data_util.get_brain_ids(dataset.merge_sites_df, is_test=is_test):
+        if brain_id == "685221":
+            continue
         evaluate(brain_id, dataset.graphs[brain_id], dataset.merge_sites_df)
 
 
@@ -204,7 +206,7 @@ def save_points(zip_path, pts, color, prefix):
 
 if __name__ == "__main__":
     # Parameters
-    model_name = "MergeDetectorCNN3D-v3-randomsites=80-finetune-clip=300-20251216-15-0.9039"
+    model_name = "MergeDetectorCNN3D-randomsites=80-finetune-20251217-13-0.8312"
     exp_name = "V3"
 
     accept_threshold = 0.5
@@ -213,7 +215,7 @@ if __name__ == "__main__":
     d_tp = 32
     device = "cuda"
     is_multimodal = True
-    is_test = False
+    is_test = True
     node_spacing = 5
     patch_shape = (128, 128, 128)
     step_size = 20

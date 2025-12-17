@@ -81,7 +81,7 @@ def main():
     )
 
     # Train
-    print("Model Family:", model_name)
+    print("\nModel Family:", model_name)
     save_experiment_parameters()
     trainer.run(train_dataloader, val_dataloader)
 
@@ -110,8 +110,7 @@ def init_dataset(merge_sites_df):
 
 
 def init_trainer():
-    TrainerClass = DistributedTrainer if use_distributed else Trainer
-    trainer = TrainerClass(
+    trainer = Trainer(
         model,
         model_name,
         output_dir,
@@ -148,18 +147,18 @@ if __name__ == "__main__":
 
     # Parameters
     anisotropy = (0.748, 0.748, 1.0)
-    batch_size = 20
+    batch_size = 16
     brightness_clip = 300
     is_multimodal = False
     is_test = False
-    lr = 1e-4
+    lr = 1e-5
     patch_shape = (128, 128, 128)
     save_mistake_mips = True
-    use_new_mask = False
+    use_new_mask = True
 
     # Model
     model_class = "MergeDetectorCNN3D"
-    model_name = f"{model_class}-v3-run1-randomsites=80-clip=300-newmask={use_new_mask}-lr={lr}"
+    model_name = f"{model_class}-v3-run2-randomsites=80-clip=300-newmask={use_new_mask}-lr={lr}"
     if "MergeDetectorCNN3D" == model_class:
         model = CNN3D(
             patch_shape,
