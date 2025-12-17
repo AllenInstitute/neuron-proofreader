@@ -317,8 +317,8 @@ class GraphDataset(IterableDataset, ABC):
 
     def is_node_valid(self, node):
         is_contained = self.is_contained(node)
-        is_leaf = self.graph.degree[node] > 1
-        return is_contained and not is_leaf
+        is_nonleaf = self.graph.degree[node] > 1
+        return is_contained and is_nonleaf
 
 
 class DenseGraphDataset(GraphDataset):
