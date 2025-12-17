@@ -196,17 +196,18 @@ class RandomContrast3D:
         """
         self.factor_range = factor_range
 
-    def __call__(self, img_patch):
+    def __call__(self, patches):
         """
         Applies contrast to the input 3D image.
 
         Parameters
         ----------
-        img_patch : numpy.ndarray
-            Image to which contrast will be added.
+        patches : numpy.ndarray
+            Image with the shape (2, H, W, D), where "patches[0, ...]" is from
+            the input image and "patches[1, ...]" is from the segmentation.
         """
         factor = random.uniform(*self.factor_range)
-        img_patch = np.clip(img_patch * factor, 0, 1)
+        patches[0, ...] = np.clip(patches[0, ...] * factor, 0, 1)
 
 
 class RandomNoise3D:
@@ -232,12 +233,14 @@ class RandomNoise3D:
 
         Parameters
         ----------
-        img_patch : np.ndarray
-            Image to which noise will be added.
+        patches : numpy.ndarray
+            Image with the shape (2, H, W, D), where "patches[0, ...]" is from
+            the input image and "patches[1, ...]" is from the segmentation.
         """
         std = self.max_std * random.random()
-        img_patch += np.random.uniform(-std, std, img_patch.shape)
-        img_patch = np.clip(img_patch, 0, 1)
+        noise = np.random.uniform(-std, std, img_patch[0, ...].shape)
+        img_patch[0, ...] += noise
+        img_patch[0, ...] = np.clip(img_patch[0, ...], 0, 1)
 
 
 # --- Helpers ---
@@ -263,12 +266,13 @@ def rotate3d(img_patch, angle, axes, is_segmentation=False):
         Rotated 3D image patch.
     """
     order = 0 if is_segmentation else 3
+    multipler = 2 if is_segmentation else 1
     img_patch = rotate(
-        img_patch,
+        multipler * img_patch,
         angle,
         axes=axes,
         mode="grid-mirror",
         reshape=False,
         order=order,
     )
-    return img_patch
+    return img_patch / multipler
