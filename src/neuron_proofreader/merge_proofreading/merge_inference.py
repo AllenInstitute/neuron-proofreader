@@ -303,9 +303,9 @@ class GraphDataset(IterableDataset, ABC):
     def read_superchunk(self, nodes):
         # Compute bounding box
         patch_centers = self.get_patch_centers(nodes)
-        buffer = np.array(self.patch_shape) / 2
-        start = patch_centers.min(axis=0) - buffer
-        end = patch_centers.max(axis=0) + buffer + 1
+        buffer = np.array(self.patch_shape) / 2 + 1
+        start = patch_centers.min(axis=0) - buffer 
+        end = patch_centers.max(axis=0) + buffer
 
         # Read image
         shape = (end - start).astype(int)
