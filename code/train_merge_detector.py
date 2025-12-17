@@ -166,10 +166,10 @@ if __name__ == "__main__":
     brightness_clip = 300
     is_multimodal = False
     is_test = False
-    lr = 1e-5
+    lr = 1e-4
     patch_shape = (128, 128, 128)
     save_mistake_mips = True
-    use_new_mask = False
+    use_new_mask = True
 
     # Model
     model_class = "MergeDetectorCNN3D"
