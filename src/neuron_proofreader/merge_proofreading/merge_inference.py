@@ -284,16 +284,10 @@ class GraphDataset(IterableDataset, ABC):
             # Visit node
             node = queue.pop()
             voxel = self.graph.get_voxel(node) - offset
-            is_contained = img_util.is_contained(voxel, img_shape, buffer=3)
-            if is_contained:
-                label_mask[
-                    voxel[0] - 2: voxel[0] + 3,
-                    voxel[1] - 2: voxel[1] + 3,
-                    voxel[2] - 2: voxel[2] + 3
-                ] = 1
+            img_util.annotate_voxels(label_mask, [voxel], kernel_size=5)
 
             # Update queue
-            if is_contained:
+            if img_util.is_contained(voxel, img_shape):
                 for nb in self.graph.neighbors(node):
                     if nb not in visited:
                         queue.append(nb)
