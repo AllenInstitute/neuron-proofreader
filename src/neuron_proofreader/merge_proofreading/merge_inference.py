@@ -399,9 +399,6 @@ class DenseGraphDataset(GraphDataset):
         """
         nodes = list()
         for i, j in nx.dfs_edges(self.graph, source=root):
-            # Check whether node is contained outside image margin
-            
-
             # Check if starting new batch
             self.distance_traversed += self.graph.dist(i, j)
             if len(nodes) == 0:
@@ -480,7 +477,7 @@ class DenseGraphDataset(GraphDataset):
         return nodes, batch
 
     # --- Helpers ---
-    def estimate_iterations(self):
+    def estimate_iterations(self, min_size):
         """
         Estimates the number of iterations required to search graph.
 
@@ -495,7 +492,7 @@ class DenseGraphDataset(GraphDataset):
         for nodes in map(list, nx.connected_components(self.graph)):
             node = util.sample_once(nodes)
             length_component = self.graph.path_length(root=node)
-            if length_component > self.min_size:
+            if length_component > min_size: #self.min_size:
                 length += length_component
                 n_componenets += 1
         print("# Fragments to Search:", n_componenets)
