@@ -173,7 +173,7 @@ class MergeDetector:
         # Upload results to S3 (if applicable)
         if output_prefix_s3:
             bucket_name, prefix = util.parse_cloud_path(output_prefix_s3)
-            util.upload_dir_to_s3(self.output_dir, bucket_name, prefix)
+            util.upload_dir_to_s3(output_dir, bucket_name, prefix)
 
     def save_parameters(self, output_dir):
         json_path = os.path.join(output_dir, "detection_parameters.json")
