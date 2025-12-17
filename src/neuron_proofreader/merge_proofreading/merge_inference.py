@@ -477,7 +477,7 @@ class DenseGraphDataset(GraphDataset):
         return nodes, batch
 
     # --- Helpers ---
-    def estimate_iterations(self, min_size):
+    def estimate_iterations(self):
         """
         Estimates the number of iterations required to search graph.
 
@@ -492,7 +492,7 @@ class DenseGraphDataset(GraphDataset):
         for nodes in map(list, nx.connected_components(self.graph)):
             node = util.sample_once(nodes)
             length_component = self.graph.path_length(root=node)
-            if length_component > min_size: #self.min_size:
+            if length_component > self.min_size:
                 length += length_component
                 n_componenets += 1
         print("# Fragments to Search:", n_componenets)
