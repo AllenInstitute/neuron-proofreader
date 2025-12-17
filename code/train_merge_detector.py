@@ -35,6 +35,7 @@ from neuron_proofreader.merge_proofreading.merge_datasets import (
     MergeSiteValDataset,
     MergeSiteDataLoader
 )
+from neuron_proofreader.utils import util
 
 
 def main():
@@ -82,6 +83,8 @@ def main():
     )
 
     # Train
+    print("Model Family:", model_name)
+    save_experiment_parameters()
     trainer.run(train_dataloader, val_dataloader)
 
 
@@ -93,13 +96,17 @@ def init_dataset(merge_sites_df):
         brightness_clip=brightness_clip,
         node_spacing=5,
         patch_shape=patch_shape,
+        use_new_mask=use_new_mask
     )
 
     # Load data
     data_util.load_groundtruth(dataset, is_test=is_test)
     data_util.load_fragments(dataset, is_test=is_test)
     data_util.load_images(
-        dataset, is_test=is_test, prefix_lookup_path=prefix_lookup_path
+        dataset,
+        image_prefixes_path,
+        segmentation_prefixes_path,
+        is_test=is_test,
     )
     return dataset
 
@@ -110,7 +117,6 @@ def init_trainer():
         model,
         model_name,
         output_dir,
-        device=device,
         lr=lr,
         save_mistake_mips=save_mistake_mips
     )
@@ -131,33 +137,49 @@ def init_sampler(trainer, dataset):
     return sampler
 
 
+def save_experiment_parameters():
+    parameters = {
+        "batch_size": batch_size,
+        "lr": lr,
+        "is_finetuned": model_path != None,
+        "is_multimodal": is_multimodal,
+        "model_class": model_class,
+        "model_path": model_path,
+        "patch_shape": patch_shape,
+        "use_new_mask": use_new_mask,
+    }
+    path = os.path.join(output_dir, "experiment_parameters.json")
+    util.write_json(path, parameters)
+
+
 if __name__ == "__main__":
     # Paths
     dataset_path = "/root/capsule/data/V3"
-    prefix_lookup_path = "/root/capsule/data/exaspim_image_prefixes.json"
+    image_prefixes_path = "/root/capsule/data/exaspim_image_prefixes.json"
+    segmentation_prefixes_path = "/root/capsule/data/exaspim_segmentation_prefixes.json"
     model_path = "/root/capsule/data/V2/MergeDetectorCNN3D-20251216-129-0.8238.pth"
     output_dir = "/root/capsule/results"
 
     # Parameters
     anisotropy = (0.748, 0.748, 1.0)
-    device = "cuda"
     batch_size = 20
     brightness_clip = 300
     is_multimodal = False
     is_test = False
-    lr = 1e-4
+    lr = 1e-5
     patch_shape = (128, 128, 128)
     save_mistake_mips = True
-    use_distributed = False
+    use_new_mask = False
 
     # Model
-    model_name = "MergeDetectorCNN3D-v3-randomsites=80-finetune-clip=300"
-    model = CNN3D(
-        patch_shape,
-        n_conv_layers=6,
-        n_feat_channels=24,
-        use_double_conv=True
-    )
+    model_class = "MergeDetectorCNN3D"
+    model_name = f"{model_class}-v3-run1-randomsites=80-clip=300-newmask={use_new_mask}-lr={lr}"
+    if "MergeDetectorCNN3D" == model_class:
+        model = CNN3D(
+            patch_shape,
+            n_conv_layers=6,
+            n_feat_channels=24,
+        )
 
     # Main
     main()

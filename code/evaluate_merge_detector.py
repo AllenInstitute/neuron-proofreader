@@ -204,8 +204,8 @@ def save_points(zip_path, pts, color, prefix):
 
 if __name__ == "__main__":
     # Parameters
-    model_name = "MergeDetectorVisionDGCNN-20251216-118-0.8085"
-    exp_name = "V2"
+    model_name = "MergeDetectorCNN3D-v3-randomsites=80-finetune-clip=300-20251216-15-0.9039"
+    exp_name = "V3"
 
     accept_threshold = 0.5
     anisotropy = (0.748, 0.748, 1.0)
@@ -229,7 +229,12 @@ if __name__ == "__main__":
     util.mkdir(output_dir)
 
     # Model
-    model = VisionDGCNN(patch_shape)
+    model = CNN3D(
+        patch_shape,
+        n_conv_layers=6,
+        n_feat_channels=24,
+        use_double_conv=True
+    )
 
     # Run evaluation
     main()
