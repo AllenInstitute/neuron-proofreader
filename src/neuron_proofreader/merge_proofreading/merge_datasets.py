@@ -178,7 +178,9 @@ class MergeSiteDataset(Dataset):
             Pointer to SWC files to be loaded into graph.
         """
         self.gt_graphs[brain_id] = SkeletonGraph(
-            anisotropy=self.anisotropy, node_spacing=self.node_spacing
+            anisotropy=self.anisotropy,
+            node_spacing=self.node_spacing,
+            use_anisotropy=False
         )
         self.gt_graphs[brain_id].load(swc_pointer)
         self.gt_graphs[brain_id].set_kdtree()
