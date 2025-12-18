@@ -24,7 +24,13 @@ import torch
 from neuron_proofreader.machine_learning.point_cloud_models import (
     subgraph_to_point_cloud,
 )
-from neuron_proofreader.utils import img_util, ml_util, swc_util, util
+from neuron_proofreader.utils import (
+    geometry_util,
+    img_util,
+    ml_util,
+    swc_util,
+    util,
+)
 
 
 class MergeDetector:
@@ -202,7 +208,7 @@ class GraphDataset(IterableDataset, ABC):
         is_multimodal=False,
         min_search_size=0,
         prefetch=128,
-        subgraph_radius=100
+        subgraph_radius=100,
     ):
         # Call parent class
         super().__init__()
@@ -263,9 +269,7 @@ class GraphDataset(IterableDataset, ABC):
         for nodes in nx.connected_components(self.graph):
             # Compute path length
             node = util.sample_once(list(nodes))
-            length = self.graph.path_length(
-                root=node, max_depth=self.min_size
-            )
+            length = self.graph.path_length(root=node, max_depth=self.min_size)
 
             # Check if path length satisfies threshold
             if length > self.min_size:
@@ -273,26 +277,39 @@ class GraphDataset(IterableDataset, ABC):
         return component_ids
 
     def get_patch_centers(self, nodes):
-        patch_centers = [self.graph.get_voxel(u) for u in nodes]
+        patch_centers = [self.graph.get_voxel(i) for i in nodes]
         return np.array(patch_centers, dtype=int)
 
     def get_label_mask(self, nodes, img_shape, offset):
-        label_mask = np.zeros(img_shape)
+        segment_mask = np.zeros(img_shape)
+        subgraph = self.get_contained_subgraph(nodes, img_shape, offset)
+        for i, j in subgraph.edges:
+            voxel_i = self.graph.get_voxel(i) - offset
+            voxel_j = self.graph.get_voxel(j) - offset
+            voxels = geometry_util.make_digital_line(voxel_i, voxel_j)
+            img_util.annotate_voxels(segment_mask, voxels)
+        return segment_mask
+
+    def get_contained_subgraph(self, nodes, img_shape, offset):
         queue = list(nodes)
         visited = set(nodes)
+        subgraph = nx.Graph()
         while queue:
             # Visit node
-            node = queue.pop()
-            voxel = self.graph.get_voxel(node) - offset
-            img_util.annotate_voxels(label_mask, [voxel])
+            i = queue.pop()
+            voxel_i = self.graph.get_voxel(i) - offset
+            if not img_util.is_contained(voxel_i, img_shape, buffer=1):
+                continue
 
             # Update queue
-            if img_util.is_contained(voxel, img_shape):
-                for nb in self.graph.neighbors(node):
-                    if nb not in visited:
-                        queue.append(nb)
-                        visited.add(nb)
-        return label_mask
+            for j in self.graph.neighbors(i):
+                voxel_j = self.graph.get_voxel(j) - offset
+                if img_util.is_contained(voxel_j, img_shape):
+                    subgraph.add_edge(i, j)
+                    if j not in visited:
+                        queue.append(j)
+                        visited.add(j)
+        return subgraph
 
     def is_contained(self, node):
         voxel = self.graph.get_voxel(node)
@@ -303,8 +320,8 @@ class GraphDataset(IterableDataset, ABC):
     def read_superchunk(self, nodes):
         # Compute bounding box
         patch_centers = self.get_patch_centers(nodes)
-        buffer = np.array(self.patch_shape) / 2 + 1
-        start = patch_centers.min(axis=0) - buffer 
+        buffer = 1 + np.array(self.patch_shape) // 2
+        start = patch_centers.min(axis=0) - buffer
         end = patch_centers.max(axis=0) + buffer
 
         # Read image
@@ -334,7 +351,7 @@ class DenseGraphDataset(GraphDataset):
         min_search_size=0,
         prefetch=128,
         step_size=10,
-        subgraph_radius=100
+        subgraph_radius=100,
     ):
         # Call parent class
         super().__init__(
@@ -346,7 +363,7 @@ class DenseGraphDataset(GraphDataset):
             is_multimodal=is_multimodal,
             min_search_size=min_search_size,
             prefetch=prefetch,
-            subgraph_radius=subgraph_radius
+            subgraph_radius=subgraph_radius,
         )
 
         # Instance attributes
@@ -438,42 +455,38 @@ class DenseGraphDataset(GraphDataset):
         patch_centers = self.get_patch_centers(nodes) - offset
 
         # Populate batch array
-        batch = np.empty((len(patch_centers), 2,) + self.patch_shape)
+        batch = np.empty((len(nodes), 2,) + self.patch_shape)
         for i, center in enumerate(patch_centers):
             s = img_util.get_slices(center, self.patch_shape)
-            try:
-                batch[i, 0, ...] = img[s]
-                batch[i, 1, ...] = label_mask[s]
-            except:
-                print("center:", center)
-                print("img.shape:", img.shape)
-                print("\noffset:", offset)
-                print("patch_centers:", patch_centers)
-                stop
+            batch[i, 0, ...] = img[s]
+            batch[i, 1, ...] = label_mask[s]
         return nodes, torch.tensor(batch, dtype=torch.float)
 
     def _get_multimodal_batch(self, nodes, img, offset):
         # Initializations
         label_mask = self.get_label_mask(nodes, img.shape, offset)
         patch_centers = self.get_patch_centers(nodes) - offset
-        batch_size = len(nodes)
 
         # Populate batch array
-        patches = np.empty((batch_size, 2,) + self.patch_shape)
-        point_clouds = np.empty((batch_size, 3, 3600), dtype=np.float32)
+        patches = np.empty((len(nodes), 2,) + self.patch_shape)
+        point_clouds = np.empty((len(nodes), 3, 3600), dtype=np.float32)
         for i, (node, center) in enumerate(zip(nodes, patch_centers)):
             s = img_util.get_slices(center, self.patch_shape)
             patches[i, 0, ...] = img[s]
             patches[i, 1, ...] = label_mask[s]
 
-            subgraph = self.graph.get_rooted_subgraph(node, self.subgraph_radius)
+            subgraph = self.graph.get_rooted_subgraph(
+                node, self.subgraph_radius
+            )
             point_clouds[i] = subgraph_to_point_cloud(subgraph)
 
         # Build batch dictionary
-        batch = ml_util.TensorDict({
-            "img": ml_util.to_tensor(patches),
-            "point_cloud": ml_util.to_tensor(point_clouds)
-        })
+        batch = ml_util.TensorDict(
+            {
+                "img": ml_util.to_tensor(patches),
+                "point_cloud": ml_util.to_tensor(point_clouds),
+            }
+        )
         return nodes, batch
 
     # --- Helpers ---
@@ -510,7 +523,7 @@ class SparseGraphDataset(GraphDataset):
         is_multimodal=False,
         min_search_size=0,
         prefetch=128,
-        subgraph_radius=100
+        subgraph_radius=100,
     ):
         # Call parent class
         super().__init__(
@@ -521,7 +534,7 @@ class SparseGraphDataset(GraphDataset):
             is_multimodal=is_multimodal,
             min_search_size=min_search_size,
             prefetch=prefetch,
-            subgraph_radius=subgraph_radius
+            subgraph_radius=subgraph_radius,
         )
 
         # Instance attributes
@@ -542,7 +555,7 @@ class SparseGraphDataset(GraphDataset):
                 patch_centers.append(self.graph.get_voxel(i))
 
             # Check whether to yield batch
-            is_node_far = self.graph.dist(root, j) > 512
+            is_node_far = self.graph.dist(root, j) > 256
             is_batch_full = len(patch_centers) == self.batch_size
             if is_node_far or is_batch_full:
                 # Yield batch metadata

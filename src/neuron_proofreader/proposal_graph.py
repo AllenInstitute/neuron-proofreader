@@ -83,9 +83,9 @@ class ProposalGraph(SkeletonGraph):
         soma_centroids : List[Tuple[float]] or None, optional
             Phyiscal coordinates of soma centroids. Default is None.
         use_anisotropy : bool, optional
-            Indication of whether to apply anisotropy to SWC files. Note: set
+            Indication of whether to apply anisotropy to SWC files. Note: Set
             to False when SWC files are in physical coordinates. Default is
-            False.
+            True.
         verbose : bool, optional
             Indication of whether to display a progress bar while building
             graph. Default is True.

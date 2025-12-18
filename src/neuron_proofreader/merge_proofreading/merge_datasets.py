@@ -130,7 +130,11 @@ class MergeSiteDataset(Dataset):
             Pointer to SWC files to be loaded into a graph.
         """
         # Load graphs
-        graph = SkeletonGraph(node_spacing=self.node_spacing)
+        graph = SkeletonGraph(
+            anisotropy=self.anisotropy,
+            node_spacing=self.node_spacing,
+            use_anisotropy=False
+        )
         graph.load(swc_pointer)
 
         # Remove groundtruth skeletons
@@ -173,8 +177,11 @@ class MergeSiteDataset(Dataset):
         swc_pointer : str
             Pointer to SWC files to be loaded into graph.
         """
-        node_spacing = 2 * self.node_spacing
-        self.gt_graphs[brain_id] = SkeletonGraph(node_spacing=node_spacing)
+        self.gt_graphs[brain_id] = SkeletonGraph(
+            anisotropy=self.anisotropy,
+            node_spacing=self.node_spacing,
+            use_anisotropy=False
+        )
         self.gt_graphs[brain_id].load(swc_pointer)
         self.gt_graphs[brain_id].set_kdtree()
 
@@ -305,7 +312,7 @@ class MergeSiteDataset(Dataset):
         """
         # Get example
         brain_id, subgraph, label = self.get_site(idx)
-        voxel = img_util.to_voxels(subgraph.node_xyz[0], self.anisotropy)
+        voxel = subgraph.get_voxel(0)
 
         # Extract subgraph and image patches centered at site
         img_patch = self.get_img_patch(brain_id, voxel)
