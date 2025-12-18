@@ -62,7 +62,7 @@ def load_groundtruth(dataset, is_test=False):
     print("\nLoading Ground Truth")
     root = "gs://allen-nd-goog/ground_truth_tracings"
     for brain_id in get_brain_ids(dataset.merge_sites_df, is_test):
-        swc_pointer = f"{root}/{brain_id}/world"
+        swc_pointer = f"{root}/{brain_id}/voxel"
         dataset.load_gt_graphs(brain_id, swc_pointer)
 
 
