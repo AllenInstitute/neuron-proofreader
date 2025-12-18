@@ -33,7 +33,7 @@ def main():
 
 def evaluate(brain_id, fragments_graph, merge_sites_df):
     # Paths
-    img_path = s3_util.get_img_prefix(brain_id, prefix_lookup_path)
+    img_path = s3_util.get_img_prefix(brain_id, image_prefixes_path)
     img_path = os.path.join(img_path, "0")
 
     # Dataset
@@ -42,6 +42,7 @@ def evaluate(brain_id, fragments_graph, merge_sites_df):
         img_path,
         patch_shape,
         batch_size=batch_size,
+        brightness_clip=brightness_clip,
         is_multimodal=is_multimodal,
         step_size=step_size,
     )
@@ -187,7 +188,10 @@ def init_dataset():
     data_util.load_groundtruth(dataset, is_test=is_test)
     data_util.load_fragments(dataset, is_test=is_test)
     data_util.load_images(
-        dataset, is_test=is_test, prefix_lookup_path=prefix_lookup_path
+        dataset,
+        image_prefixes_path,
+        segmentation_prefixes_path,
+        is_test=is_test,
     )
     dataset.remove_isolated_sites()
     return dataset
@@ -206,15 +210,16 @@ def save_points(zip_path, pts, color, prefix):
 
 if __name__ == "__main__":
     # Parameters
-    model_name = "MergeDetectorCNN3D-randomsites=80-finetune-20251217-13-0.8312"
-    exp_name = "V3"
+    model_name = "MergeDetectorCNN3D-20251216-121-0.8177"
+    exp_name = "V2"
 
     accept_threshold = 0.5
     anisotropy = (0.748, 0.748, 1.0)
     batch_size = 32
+    brightness_clip = 300
     d_tp = 32
     device = "cuda"
-    is_multimodal = True
+    is_multimodal = False
     is_test = True
     node_spacing = 5
     patch_shape = (128, 128, 128)
@@ -223,7 +228,8 @@ if __name__ == "__main__":
     # Paths
     bucket_name = "allen-nd-goog"
     fragments_prefix = "automated_proofreading_dataset/raw_merge_sites"
-    prefix_lookup_path = "/root/capsule/data/exaspim_image_prefixes.json"
+    image_prefixes_path = "/root/capsule/data/exaspim_image_prefixes.json"
+    segmentation_prefixes_path = "/root/capsule/data/exaspim_segmentation_prefixes.json"
     merge_sites_path = f"/root/capsule/data/{exp_name}/merge_sites_df.csv"
     test_idxs_path = f"/root/capsule/data/{exp_name}/test_idxs.csv"
     model_path = f"/root/capsule/data/{exp_name}/{model_name}.pth"
