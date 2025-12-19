@@ -208,7 +208,9 @@ class GraphDataset(IterableDataset, ABC):
         is_multimodal=False,
         min_search_size=0,
         prefetch=128,
+        segmentation_path=None,
         subgraph_radius=100,
+        use_new_mask=False
     ):
         # Call parent class
         super().__init__()
@@ -222,7 +224,9 @@ class GraphDataset(IterableDataset, ABC):
         self.min_size = min_search_size
         self.patch_shape = patch_shape
         self.prefetch = prefetch
+        self.segmentation_path = segmentation_path
         self.subgraph_radius = subgraph_radius
+        self.use_new_mask = use_new_mask
 
         # Batch getter
         if is_multimodal:
@@ -232,6 +236,10 @@ class GraphDataset(IterableDataset, ABC):
 
         # Image reader
         self.img_reader = img_util.TensorStoreReader(img_path)
+        if self.segmentation_path:
+            self.segmentation_reader = img_util.TensorStoreReader(
+                segmentation_path
+            )
 
     # --- Core routines ---
     def __iter__(self):
@@ -281,7 +289,15 @@ class GraphDataset(IterableDataset, ABC):
         return np.array(patch_centers, dtype=int)
 
     def get_label_mask(self, nodes, img_shape, offset):
-        segment_mask = np.zeros(img_shape)
+        # Read segmentation
+        if self.use_new_mask:
+            center = [o + s // 2 for o, s in zip(offset, img_shape)]
+            segment_mask = self.segmentation_reader.read(center, img_shape)
+            segment_mask = 0.5 * (segment_mask > 0).astype(int)
+        else:
+            segment_mask = np.zeros(img_shape)
+
+        # Annotate mask
         subgraph = self.get_contained_subgraph(nodes, img_shape, offset)
         for i, j in subgraph.edges:
             voxel_i = self.graph.get_voxel(i) - offset
@@ -350,8 +366,10 @@ class DenseGraphDataset(GraphDataset):
         is_multimodal=False,
         min_search_size=0,
         prefetch=128,
+        segmentation_path=None,
         step_size=10,
         subgraph_radius=100,
+        use_new_mask=False
     ):
         # Call parent class
         super().__init__(
@@ -363,7 +381,9 @@ class DenseGraphDataset(GraphDataset):
             is_multimodal=is_multimodal,
             min_search_size=min_search_size,
             prefetch=prefetch,
+            segmentation_path=segmentation_path,
             subgraph_radius=subgraph_radius,
+            use_new_mask=use_new_mask
         )
 
         # Instance attributes
@@ -523,7 +543,9 @@ class SparseGraphDataset(GraphDataset):
         is_multimodal=False,
         min_search_size=0,
         prefetch=128,
+        segmentation_path=None,
         subgraph_radius=100,
+        use_new_mask=False
     ):
         # Call parent class
         super().__init__(
@@ -534,7 +556,9 @@ class SparseGraphDataset(GraphDataset):
             is_multimodal=is_multimodal,
             min_search_size=min_search_size,
             prefetch=prefetch,
+            segmentation_path=segmentation_path,
             subgraph_radius=subgraph_radius,
+            use_new_mask=use_new_mask
         )
 
         # Instance attributes
