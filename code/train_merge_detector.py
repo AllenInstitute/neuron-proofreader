@@ -165,6 +165,8 @@ if __name__ == "__main__":
             n_conv_layers=6,
             n_feat_channels=24,
         )
+    else:
+        model = VisionDGCNN(patch_shape)
 
     # Main
     main()

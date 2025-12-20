@@ -42,7 +42,9 @@ def evaluate(brain_id, fragments_graph, merge_sites_df):
         batch_size=batch_size,
         brightness_clip=brightness_clip,
         is_multimodal=is_multimodal,
+        prefetch=64,
         step_size=step_size,
+        use_new_mask=use_new_mask
     )
 
     # Initialize merge detection object
@@ -208,13 +210,13 @@ def save_points(zip_path, pts, color, prefix):
 
 if __name__ == "__main__":
     # Parameters
-    model_name = "MergeDetectorCNN3D-20251216-130-0.8169"
-    exp_name = "V2"
+    model_name = "MergeDetectorCNN3D-v3-run1-randomsites=80-clip=300-newmask=True-lr=0.0001-20251219-120-0.8656"
+    exp_name = "V3"
 
     accept_threshold = 0.4
     anisotropy = (0.748, 0.748, 1.0)
     batch_size = 32
-    brightness_clip = 350
+    brightness_clip = 300
     d_tp = 32
     device = "cuda"
     is_multimodal = False
@@ -222,6 +224,7 @@ if __name__ == "__main__":
     node_spacing = 5
     patch_shape = (128, 128, 128)
     step_size = 20
+    use_new_mask = True
 
     # Paths
     bucket_name = "allen-nd-goog"
