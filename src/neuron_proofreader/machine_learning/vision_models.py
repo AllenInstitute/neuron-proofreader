@@ -28,7 +28,7 @@ class CNN3D(nn.Module):
         dropout=0.1,
         n_conv_layers=5,
         n_feat_channels=16,
-        use_double_conv=True
+        use_double_conv=True,
     ):
         """
         Instantiates a CNN3D object.
@@ -143,7 +143,7 @@ class ViT3D(nn.Module):
         depth=6,
         heads=8,
         mlp_dim=1024,
-        output_dim=1
+        output_dim=1,
     ):
         """
         Instantiates a ViT3D object.
@@ -177,7 +177,10 @@ class ViT3D(nn.Module):
 
         # Transformer Blocks
         self.transformer = nn.Sequential(
-            *[TransformerEncoderBlock(emb_dim, heads, mlp_dim) for _ in range(depth)]
+            *[
+                TransformerEncoderBlock(emb_dim, heads, mlp_dim)
+                for _ in range(depth)
+            ]
         )
         self.norm = nn.LayerNorm(emb_dim)
 
@@ -260,7 +263,7 @@ class ImageTokenizer3D(nn.Module):
         img_shape,
         dropout=0.05,
         n_cnn_layers=3,
-        n_cnn_channels=32
+        n_cnn_channels=32,
     ):
         """
         Instantiates a ImageTokenizer3D object.
@@ -463,13 +466,20 @@ def init_conv_layer(in_channels, out_channels, kernel_size, use_double_conv):
     """
     # Convolution
     layers = [
-        nn.Conv3d(in_channels, out_channels, kernel_size, padding=kernel_size//2),
+        nn.Conv3d(
+            in_channels, out_channels, kernel_size, padding=kernel_size // 2
+        ),
         nn.BatchNorm3d(out_channels),
         nn.GELU(),
     ]
     if use_double_conv:
         layers += [
-            nn.Conv3d(out_channels, out_channels, kernel_size, padding=kernel_size//2),
+            nn.Conv3d(
+                out_channels,
+                out_channels,
+                kernel_size,
+                padding=kernel_size // 2,
+            ),
             nn.BatchNorm3d(out_channels),
             nn.GELU(),
         ]
@@ -525,6 +535,6 @@ def init_mlp(input_dim, hidden_dim, output_dim, dropout=0.1):
         nn.Linear(input_dim, hidden_dim),
         nn.GELU(),
         nn.Dropout(p=dropout),
-        nn.Linear(hidden_dim, output_dim)
+        nn.Linear(hidden_dim, output_dim),
     )
     return mlp

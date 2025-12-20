@@ -73,7 +73,7 @@ class EGNN(nn.Module):
         self.device = device
         self.n_layers = n_layers
         self.embedding_in = nn.Linear(in_node_dim, self.hidden_dim)
-        self.embedding_out = nn.Linear(self.hidden_dim, 32)
+        self.embedding_out = nn.Linear(self.hidden_dim, out_node_dim)
 
         # Build architecture
         for i in range(0, n_layers):
@@ -93,16 +93,114 @@ class EGNN(nn.Module):
             )
         self.to(self.device)
 
-    def forward(self, h, x, edges):
+    # --- Core Routines ---
+    def forward(self, h, x, edge_index, batch):
         # Node embeddings
         h = self.embedding_in(h)
         for i in range(0, self.n_layers):
-            h, x, _ = self._modules["gcl_%d" % i](h, edges, x)
+            h, x, _ = self._modules["gcl_%d" % i](h, edge_index, x)
         h = self.embedding_out(h)
 
-        # Pooling layers
-        # --> fill in
-        return h, x
+        # Pool embeddings
+        h = self.pool(h, x, edge_index, batch)
+        print("h.size():", h.size())
+        return h
+
+    def pool(self, h, x, edge_index, batch):
+        # Move to CPU
+        batch = batch.detach().cpu()
+        edge_index = edge_index.detach().cpu()
+
+        # Iterate over graphs
+        h_graphs = list()
+        num_graphs = int(batch.max().item()) + 1
+        for graph_id in range(num_graphs):
+            # Build subgraph
+            node_mask = batch == graph_id
+            node_ids = (node_mask).nonzero(as_tuple=True)[0]
+            h_g = h[node_ids]
+            x_g = x[node_ids]
+
+            # Remap nodes and edges
+            id_map = {int(n): i for i, n in enumerate(node_ids.tolist())}
+            edge_mask = node_mask[edge_index[0]] & node_mask[edge_index[1]]
+            edge_index_g = edge_index[:, edge_mask]
+            edge_index_g = torch.stack([
+                torch.tensor([id_map[int(u)] for u in edge_index_g[0]]),
+                torch.tensor([id_map[int(v)] for v in edge_index_g[1]])
+            ], dim=0)
+
+            # Pool nonbranching paths for single graph
+            h_graph = self._pool_single_graph(h_g, x_g, edge_index_g)
+            h_graphs.append(h_graph)
+        return torch.cat(h_graphs, dim=0)
+
+    def _pool_single_graph(self, h, x, edge_index):
+        # Initializations
+        num_nodes = h.size(0)
+        adj, deg = self.get_adj_and_deg(edge_index, num_nodes)
+        visited = torch.zeros(num_nodes, dtype=torch.bool, device=h.device)
+
+        # Pool over non-branching paths
+        h_paths = list()
+        x_paths = list()
+        for start in range(num_nodes):
+            # Start paths at endpoints or branch points
+            if visited[start]:
+                continue
+            if deg[start] > 2:
+                # branch nodes are their own "path"
+                visited[start] = True
+                h_paths.append(h[start])
+                x_paths.append(x[start])
+                continue
+
+            # Walk non-branching path
+            path = [start]
+            visited[start] = True
+            prev = None
+            curr = start
+            while True:
+                nbs = [n for n in adj[curr] if n != prev]
+                if len(nbs) != 1:
+                    break
+                nxt = nbs[0]
+                if visited[nxt] or deg[nxt] > 2:
+                    break
+                path.append(nxt)
+                visited[nxt] = True
+                prev, curr = curr, nxt
+
+            # Pool along path
+            h_paths.append(self._pool(h, path))
+            x_paths.append(self._pool(x, path))
+
+        # Global pool over graph
+        h_paths = torch.stack(h_paths, dim=0)
+        h_graph = h_paths.mean(dim=0, keepdim=True)
+
+        x_paths = torch.stack(x_paths, dim=0)
+        x_graph = x_paths.mean(dim=0, keepdim=True)
+        return torch.cat((h_graph, x_graph), dim=1)
+
+    # --- Helpers ---
+    def get_adj_and_deg(self, edge_index, num_nodes):
+        # Compute node degrees
+        deg = torch.zeros(num_nodes, dtype=torch.long)
+        ones = torch.ones(edge_index.shape[1], dtype=torch.long)
+        deg.scatter_add_(0, edge_index[0], ones)
+        deg.scatter_add_(0, edge_index[1], ones)
+
+        # Build adjacency list
+        adj = [[] for _ in range(num_nodes)]
+        for u, v in edge_index.t().tolist():
+            adj[u].append(v)
+            adj[v].append(u)
+        return adj, deg
+
+    @staticmethod
+    def _pool(x, idxs):
+        return x[idxs].mean(dim=0)
 
 
 class E_GCL(nn.Module):
@@ -145,7 +243,7 @@ class E_GCL(nn.Module):
         self.coord_mlp = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             act_fn,
-            nn.Linear(hidden_dim, 1, bias=False)
+            nn.Linear(hidden_dim, 1, bias=False),
         )
         self.edge_mlp = nn.Sequential(
             nn.Linear(input_edge + edge_coords_dim + edges_in_dim, hidden_dim),
@@ -154,7 +252,9 @@ class E_GCL(nn.Module):
             act_fn,
         )
         if self.attention:
-            self.att_mlp = nn.Sequential(nn.Linear(hidden_dim, 1), nn.Sigmoid())
+            self.att_mlp = nn.Sequential(
+                nn.Linear(hidden_dim, 1), nn.Sigmoid()
+            )
 
     def edge_model(self, source, target, radial, edge_attr):
         if edge_attr is None:
@@ -220,9 +320,7 @@ class VisionEGNN(nn.Module):
         super().__init__()
 
         # Architecture
-        self.egnn = EGNN(
-            in_node_dim=1, hidden_dim=64, out_node_dim=output_dim
-        )
+        self.egnn = EGNN(in_node_dim=1, hidden_dim=64, out_node_dim=output_dim)
         self.vision_model = CNN3D(
             patch_shape,
             n_conv_layers=6,
@@ -246,10 +344,13 @@ class VisionEGNN(nn.Module):
         x : torch.Tensor
             Output of the neural network.
         """
+        # Modality-based embeddings
         x_img = self.vision_model(x["img"])
-        h_nodes, x_nodes = self.egnn(*x["graph"])
-        print(x_img.size(), h_nodes.size(), x_nodes.size())
-        x = torch.cat((x_img, h_nodes, x_nodes), dim=1)
+        x_graph = self.egnn(*x["graph"])
+        print(x_img.size(), x_graph.size())
+        x = torch.cat((x_img, x_graph), dim=1)
+
+        # Output layer
         x = self.output(x)
         return x
 
