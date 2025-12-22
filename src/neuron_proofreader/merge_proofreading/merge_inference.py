@@ -9,6 +9,7 @@ image segmentation.
 
 """
 
+from abc import ABC, abstractmethod
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from torch.nn.functional import sigmoid
 from torch.utils.data import IterableDataset
@@ -17,79 +18,68 @@ from tqdm import tqdm
 
 import networkx as nx
 import numpy as np
+import os
 import torch
 
-from neuron_proofreader import exp
-from neuron_proofreader.utils import img_util, ml_util, util
+from neuron_proofreader.machine_learning.point_cloud_models import (
+    subgraph_to_point_cloud,
+)
+from neuron_proofreader.utils import (
+    geometry_util,
+    img_util,
+    ml_util,
+    swc_util,
+    util,
+)
 
 
 class MergeDetector:
 
     def __init__(
         self,
-        graph,
-        img_path,
+        dataset,
         model,
         model_path,
-        patch_shape,
-        anisotropy=(1.0, 1.0, 1.0),
-        batch_size=32,
         device="cuda",
-        min_size=0,
-        prefetch=128,
         remove_detected_sites=False,
         threshold=0.4,
-        step_size=10,
     ):
         # Instance attributes
-        self.batch_size = batch_size
+        self.dataset = dataset
         self.device = device
-        self.graph = graph
-        self.node_preds = np.ones((len(graph.node_xyz)), dtype=np.float16)
-        self.patch_shape = patch_shape
+        self.node_preds = np.ones((len(dataset.graph.node_xyz))) * 1e-2
+        self.patch_shape = dataset.patch_shape
         self.remove_detected_sites = remove_detected_sites
-        self.step_size = step_size
         self.threshold = threshold
 
         # Load model
         self.model = model
         ml_util.load_model(model, model_path, device=self.device)
 
-        # Initialize dataset
-        self.dataset = IterableGraphDataset(
-            graph,
-            img_path,
-            patch_shape,
-            anisotropy=anisotropy,
-            batch_size=batch_size,
-            min_size=min_size,
-            prefetch=prefetch,
-            step_size=step_size,
-        )
-
     # --- Core routines
     def search_graph(self):
-        # Find fragment IDs to search
-        approx_length = self.graph.number_of_edges() * self.graph.node_spacing
-        pbar = tqdm(total=int(approx_length / self.step_size))
+        # Initialize progress bar
+        pbar = tqdm(total=self.dataset.estimate_iterations())
+        t0 = time()
 
         # Iterate over dataset
-        t0 = time()
+        likelihoods = list()
         merge_sites = list()
-        confidences = list()
         for nodes, x_nodes in self.dataset:
             y_nodes = self.predict(x_nodes)
             idxs = np.where(y_nodes > self.threshold)[0]
             if len(idxs) > 0:
                 merge_sites.extend(nodes[idxs].tolist())
-                confidences.extend(y_nodes[idxs].tolist())
+                likelihoods.extend(y_nodes[idxs].tolist())
 
-            self.node_preds[np.array(nodes)] = 10 * y_nodes
-            pbar.update(self.batch_size)
+            self.node_preds[np.array(nodes)] = y_nodes
+            pbar.update(len(nodes))
 
         # Non-maximum suppression of detected sites
-        merge_sites = self.filter_with_nms(merge_sites, confidences)
+        merge_sites = self.filter_with_nms(merge_sites, likelihoods)
         rate = self.dataset.distance_traversed / (time() - t0)
+
+        # Report results
         print("\n# Detected Merge Sites:", len(merge_sites))
         print(f"Distance Traversed: {self.dataset.distance_traversed:.2f}μm")
         print(f"Merge Proofreading Rate: {rate:.2f}μm/s")
@@ -118,9 +108,9 @@ class MergeDetector:
             y_nodes = sigmoid(self.model(x_nodes))
             return np.squeeze(ml_util.to_cpu(y_nodes, to_numpy=True), axis=1)
 
-    def filter_with_nms(self, merge_sites, confidences):
+    def filter_with_nms(self, merge_sites, likelihoods):
         # Sort by confidence
-        idxs = np.argsort(confidences)
+        idxs = np.argsort(likelihoods)
         merge_sites = [merge_sites[i] for i in idxs]
 
         # NMS
@@ -129,7 +119,7 @@ class MergeDetector:
         while merge_sites:
             # Local max
             root = merge_sites.pop()
-            xyz_root = self.graph.node_xyz[root]
+            xyz_root = self.dataset.graph.node_xyz[root]
             if root in merge_sites_set:
                 filtered_merge_sites.add(root)
                 merge_sites_set.remove(root)
@@ -143,17 +133,17 @@ class MergeDetector:
                 # Visit node
                 i, dist_i = queue.pop()
                 if i in merge_sites_set:
-                    xyz_i = self.graph.node_xyz[i]
+                    xyz_i = self.dataset.graph.node_xyz[i]
                     iou = img_util.compute_iou3d(
                         xyz_i, xyz_root, self.patch_shape, self.patch_shape
                     )
                     if iou > 0.35:
                         merge_sites_set.remove(i)
-                        self.node_preds[i] = 1
+                        self.node_preds[i] = 1e-2
 
                 # Populate queue
-                for j in self.graph.neighbors(i):
-                    dist_j = dist_i + self.graph.dist(i, j)
+                for j in self.dataset.graph.neighbors(i):
+                    dist_j = dist_i + self.dataset.graph.dist(i, j)
                     if j not in visited and dist_j < self.patch_shape[0]:
                         queue.append((j, dist_j))
                         visited.add(j)
@@ -162,52 +152,256 @@ class MergeDetector:
     def remove_merge_sites(self, detected_merge_sites):
         pass
 
+    # --- Helpers ---
+    def get_detected_sites(self, threshold):
+        nodes = np.where(self.node_preds >= threshold)[0]
+        return [self.dataset.graph.node_xyz[i] for i in nodes]
+
+    def save_results(self, output_dir, output_prefix_s3=None):
+        # Get predicted merge sites
+        nodes = np.where(self.node_preds >= self.threshold)[0]
+        detected_sites = [self.dataset.graph.node_xyz[i] for i in nodes]
+
+        # Save predicted merge sites
+        zip_path = os.path.join(output_dir, "detected_sites.zip")
+        swc_util.write_points(
+            zip_path,
+            detected_sites,
+            color="1.0 0.0 0.0",
+            prefix="merge-site",
+            radius=10,
+        )
+
+        # Save fragments
+        fragments_path = os.path.join(output_dir, "fragments.zip")
+        self.dataset.graph.to_zipped_swcs(fragments_path)
+
+        # Upload results to S3 (if applicable)
+        if output_prefix_s3:
+            bucket_name, prefix = util.parse_cloud_path(output_prefix_s3)
+            util.upload_dir_to_s3(output_dir, bucket_name, prefix)
+
+    def save_parameters(self, output_dir):
+        json_path = os.path.join(output_dir, "detection_parameters.json")
+        parameters = {
+            "accept_threshold": self.threshold,
+            "is_multimodal": self.dataset.is_multimodal,
+            "min_search_size": self.dataset.min_size,
+            "patch_shape": self.patch_shape,
+            "remove_detected_sites": self.remove_detected_sites,
+            "search_mode": self.dataset.search_mode,
+            "subgraph_radius": self.dataset.subgraph_radius,
+        }
+        util.write_json(json_path, parameters)
+
 
 # --- Data Handling ---
-class IterableGraphDataset(IterableDataset):
+class GraphDataset(IterableDataset, ABC):
 
     def __init__(
         self,
         graph,
         img_path,
         patch_shape,
-        anisotropy=(1.0, 1.0, 1.0),
         batch_size=16,
-        min_size=0,
+        brightness_clip=300,
+        is_multimodal=False,
+        min_search_size=0,
         prefetch=128,
-        step_size=10,
-        subgraph_radius=100
+        segmentation_path=None,
+        subgraph_radius=100,
+        use_new_mask=False
     ):
         # Call parent class
         super().__init__()
 
         # Instance attributes
-        self.anisotropy = anisotropy
         self.batch_size = batch_size
+        self.brightness_clip = brightness_clip
         self.distance_traversed = 0
         self.graph = graph
-        self.min_size = min_size
+        self.is_multimodal = is_multimodal
+        self.min_size = min_search_size
         self.patch_shape = patch_shape
         self.prefetch = prefetch
-        self.step_size = step_size
+        self.segmentation_path = segmentation_path
         self.subgraph_radius = subgraph_radius
+        self.use_new_mask = use_new_mask
+
+        # Batch getter
+        if is_multimodal:
+            self.get_batch = self._get_multimodal_batch
+        else:
+            self.get_batch = self._get_batch
 
         # Image reader
-        self.img_reader = img_util.init_reader(img_path)
+        self.img_reader = img_util.TensorStoreReader(img_path)
+        if self.segmentation_path:
+            self.segmentation_reader = img_util.TensorStoreReader(
+                segmentation_path
+            )
 
     # --- Core routines ---
     def __iter__(self):
+        # Find fragment IDs to check
+        valid_ids = self.find_fragments_to_search()
+
+        # Search graph
+        visited_ids = set()
+        for u in self.graph.get_leafs():
+            component_id = self.graph.node_component_id[u]
+            if component_id not in visited_ids and component_id in valid_ids:
+                visited_ids.add(component_id)
+                yield from self._generate_batches_from_component(u)
+
+    @abstractmethod
+    def _generate_batches_from_component(self, root):
+        """
+        Abstract method to be implemented by subclasses.
+        """
+        pass
+
+    @abstractmethod
+    def _generate_batch_nodes(self, root):
+        """
+        Abstract method to be implemented by subclasses.
+        """
+
+    # --- Helpers ---
+    @abstractmethod
+    def estimate_iterations(self):
+        pass
+
+    def find_fragments_to_search(self):
+        component_ids = set()
+        for nodes in nx.connected_components(self.graph):
+            # Compute path length
+            node = util.sample_once(list(nodes))
+            length = self.graph.path_length(root=node, max_depth=self.min_size)
+
+            # Check if path length satisfies threshold
+            if length > self.min_size:
+                component_ids.add(self.graph.node_component_id[node])
+        return component_ids
+
+    def get_patch_centers(self, nodes):
+        patch_centers = [self.graph.get_voxel(i) for i in nodes]
+        return np.array(patch_centers, dtype=int)
+
+    def get_label_mask(self, nodes, img_shape, offset):
+        # Read segmentation
+        if self.use_new_mask:
+            center = [o + s // 2 for o, s in zip(offset, img_shape)]
+            segment_mask = self.segmentation_reader.read(center, img_shape)
+            segment_mask = 0.5 * (segment_mask > 0).astype(int)
+        else:
+            segment_mask = np.zeros(img_shape)
+
+        # Annotate mask
+        subgraph = self.get_contained_subgraph(nodes, img_shape, offset)
+        for i, j in subgraph.edges:
+            voxel_i = self.graph.get_voxel(i) - offset
+            voxel_j = self.graph.get_voxel(j) - offset
+            voxels = geometry_util.make_digital_line(voxel_i, voxel_j)
+            img_util.annotate_voxels(segment_mask, voxels)
+        return segment_mask
+
+    def get_contained_subgraph(self, nodes, img_shape, offset):
+        queue = list(nodes)
+        visited = set(nodes)
+        subgraph = nx.Graph()
+        while queue:
+            # Visit node
+            i = queue.pop()
+            voxel_i = self.graph.get_voxel(i) - offset
+            if not img_util.is_contained(voxel_i, img_shape, buffer=1):
+                continue
+
+            # Update queue
+            for j in self.graph.neighbors(i):
+                voxel_j = self.graph.get_voxel(j) - offset
+                if img_util.is_contained(voxel_j, img_shape):
+                    subgraph.add_edge(i, j)
+                    if j not in visited:
+                        queue.append(j)
+                        visited.add(j)
+        return subgraph
+
+    def is_contained(self, node):
+        voxel = self.graph.get_voxel(node)
+        shape = self.img_reader.shape()[2::]
+        buffer = np.max(self.patch_shape) + 1
+        return img_util.is_contained(voxel, shape, buffer=buffer)
+
+    def read_superchunk(self, nodes):
+        # Compute bounding box
+        patch_centers = self.get_patch_centers(nodes)
+        buffer = 1 + np.array(self.patch_shape) // 2
+        start = patch_centers.min(axis=0) - buffer
+        end = patch_centers.max(axis=0) + buffer
+
+        # Read image
+        shape = (end - start).astype(int)
+        center = (start + shape // 2).astype(int)
+        superchunk = self.img_reader.read(center, shape)
+        superchunk = np.minimum(superchunk, self.brightness_clip)
+        superchunk = img_util.normalize(superchunk)
+        return superchunk, start.astype(int)
+
+    def is_node_valid(self, node):
+        is_contained = self.is_contained(node)
+        is_nonleaf = self.graph.degree[node] > 1
+        return is_contained and is_nonleaf
+
+
+class DenseGraphDataset(GraphDataset):
+
+    def __init__(
+        self,
+        graph,
+        img_path,
+        patch_shape,
+        batch_size=16,
+        brightness_clip=300,
+        is_multimodal=False,
+        min_search_size=0,
+        prefetch=128,
+        segmentation_path=None,
+        step_size=10,
+        subgraph_radius=100,
+        use_new_mask=False
+    ):
+        # Call parent class
+        super().__init__(
+            graph,
+            img_path,
+            patch_shape,
+            batch_size=batch_size,
+            brightness_clip=brightness_clip,
+            is_multimodal=is_multimodal,
+            min_search_size=min_search_size,
+            prefetch=prefetch,
+            segmentation_path=segmentation_path,
+            subgraph_radius=subgraph_radius,
+            use_new_mask=use_new_mask
+        )
+
+        # Instance attributes
+        self.search_mode = "dense"
+        self.step_size = step_size
+
+    def _generate_batches_from_component(self, root):
         # Subroutines
         def submit_thread():
             try:
-                nodes, patch_centers = next(batch_metadata_iter)
-                thread = executor.submit(self.read_superchunk, patch_centers)
-                pending[thread] = (nodes, patch_centers)
+                nodes = next(batch_nodes_generator)
+                thread = executor.submit(self.read_superchunk, nodes)
+                pending[thread] = nodes
             except StopIteration:
                 pass
 
         # Main
-        batch_metadata_iter = self.generate_batch_metadata()
+        batch_nodes_generator = self._generate_batch_nodes(root)
         with ThreadPoolExecutor(max_workers=128) as executor:
             try:
                 # Prefetch batches
@@ -220,67 +414,172 @@ class IterableGraphDataset(IterableDataset):
                     done, _ = wait(pending.keys(), return_when=FIRST_COMPLETED)
                     for thread in done:
                         # Process completed thread
-                        nodes, patch_centers = pending.pop(thread)
+                        nodes = pending.pop(thread)
                         img, offset = thread.result()
-                        yield self.get_multimodal_batch(img, offset, patch_centers, nodes)
+                        yield self.get_batch(nodes, img, offset)
 
                         # Continue submitting threads
                         submit_thread()
             finally:
                 pass
 
-    def generate_batch_metadata(self):
+    def _generate_batch_nodes(self, root):
         """
-        Generates metadata (nodes, patch_centers) used to generate batches.
-
-        Parameters
-        ----------
-        None
+        Generates batches of nodes from the connected component that contains
+        the given root node.
 
         Returns
         -------
-        iterator
-            Generator that yields node IDs and patch centers used to generate
-            batches across the whole graph.
-        """
-        # Find fragment IDs to check
-        valid_ids = self.find_fragments_to_search()
-
-        # Search graph
-        visited_ids = set()
-        for i in self.graph.get_leafs():
-            component_id = self.graph.node_component_id[i]
-            if component_id not in visited_ids and component_id in valid_ids:
-                visited_ids.add(component_id)
-                yield from self._generate_batch_metadata_for_component(i)
-
-    def _generate_batch_metadata_for_component(self, root):
-        """
-        Generates metadata (nodes, patch_centers) used to generate batches
-        for the connected component containing the given root node.
-
-        Returns
-        -------
-        iterator
-            Generator that yields node IDs and patch centers used to generate
-            batches for the connected component containing the given root
-            node.
+        Iterator[numpy.ndarray]
+            Generator that yields batches of nodes from the connected
+            component containing the given root node.
         """
         nodes = list()
-        patch_centers = list()
-        visited = set()
         for i, j in nx.dfs_edges(self.graph, source=root):
             # Check if starting new batch
             self.distance_traversed += self.graph.dist(i, j)
-            if len(patch_centers) == 0:
-                root = i
-                last_node = i
-                nodes.append(i)
-                patch_centers.append(self.get_voxel(i))
-                visited.add(i)
+            if len(nodes) == 0:
+                if self.is_node_valid(i):
+                    root = i
+                    last_node = i
+                    nodes.append(i)
+                else:
+                    continue
 
             # Check whether to yield batch
             is_node_far = self.graph.dist(root, j) > 512
+            is_batch_full = len(nodes) == self.batch_size
+            if is_node_far or is_batch_full:
+                # Yield nodes in batch
+                yield np.array(nodes, dtype=int)
+
+                # Reset batch metadata
+                nodes = list()
+
+            # Visit j
+            is_next = self.graph.dist(last_node, j) >= self.step_size - 2
+            is_branching = self.graph.degree[j] >= 3
+            if (is_next or is_branching) and self.is_node_valid(j):
+                last_node = j
+                nodes.append(j)
+                if len(nodes) == 1:
+                    root = j
+
+        # Yield any remaining nodes after the loop
+        if nodes:
+            yield np.array(nodes, dtype=int)
+
+    def _get_batch(self, nodes, img, offset):
+        # Initializations
+        label_mask = self.get_label_mask(nodes, img.shape, offset)
+        patch_centers = self.get_patch_centers(nodes) - offset
+
+        # Populate batch array
+        batch = np.empty((len(nodes), 2,) + self.patch_shape)
+        for i, center in enumerate(patch_centers):
+            s = img_util.get_slices(center, self.patch_shape)
+            batch[i, 0, ...] = img[s]
+            batch[i, 1, ...] = label_mask[s]
+        return nodes, torch.tensor(batch, dtype=torch.float)
+
+    def _get_multimodal_batch(self, nodes, img, offset):
+        # Initializations
+        label_mask = self.get_label_mask(nodes, img.shape, offset)
+        patch_centers = self.get_patch_centers(nodes) - offset
+
+        # Populate batch array
+        patches = np.empty((len(nodes), 2,) + self.patch_shape)
+        point_clouds = np.empty((len(nodes), 3, 3600), dtype=np.float32)
+        for i, (node, center) in enumerate(zip(nodes, patch_centers)):
+            s = img_util.get_slices(center, self.patch_shape)
+            patches[i, 0, ...] = img[s]
+            patches[i, 1, ...] = label_mask[s]
+
+            subgraph = self.graph.get_rooted_subgraph(
+                node, self.subgraph_radius
+            )
+            point_clouds[i] = subgraph_to_point_cloud(subgraph)
+
+        # Build batch dictionary
+        batch = ml_util.TensorDict(
+            {
+                "img": ml_util.to_tensor(patches),
+                "point_cloud": ml_util.to_tensor(point_clouds),
+            }
+        )
+        return nodes, batch
+
+    # --- Helpers ---
+    def estimate_iterations(self):
+        """
+        Estimates the number of iterations required to search graph.
+
+        Returns
+        -------
+        int
+            Estimated number of iterations required to search graph.
+        """
+        # Set min size
+        length = 0
+        n_componenets = 0
+        for nodes in map(list, nx.connected_components(self.graph)):
+            node = util.sample_once(nodes)
+            length_component = self.graph.path_length(root=node)
+            if length_component > self.min_size:
+                length += length_component
+                n_componenets += 1
+        print("# Fragments to Search:", n_componenets)
+        return int(length / self.step_size)
+
+
+class SparseGraphDataset(GraphDataset):
+
+    def __init__(
+        self,
+        graph,
+        img_path,
+        patch_shape,
+        batch_size=16,
+        is_multimodal=False,
+        min_search_size=0,
+        prefetch=128,
+        segmentation_path=None,
+        subgraph_radius=100,
+        use_new_mask=False
+    ):
+        # Call parent class
+        super().__init__(
+            graph,
+            img_path,
+            patch_shape,
+            batch_size=batch_size,
+            is_multimodal=is_multimodal,
+            min_search_size=min_search_size,
+            prefetch=prefetch,
+            segmentation_path=segmentation_path,
+            subgraph_radius=subgraph_radius,
+            use_new_mask=use_new_mask
+        )
+
+        # Instance attributes
+        self.search_mode = "branching_points"
+
+    def _generate_batches_from_component(self):
+        pass
+
+    def _generate_batch_nodes(self, root):
+        nodes = list()
+        patch_centers = list()
+        for i, j in nx.dfs_edges(self.graph, source=root):
+            # Check if starting new batch
+            self.distance_traversed += self.graph.dist(i, j)
+            if len(patch_centers) == 0 and self.graph.degree[i] > 2:
+                root = i
+                nodes.append(i)
+                patch_centers.append(self.graph.get_voxel(i))
+
+            # Check whether to yield batch
+            is_node_far = self.graph.dist(root, j) > 256
             is_batch_full = len(patch_centers) == self.batch_size
             if is_node_far or is_batch_full:
                 # Yield batch metadata
@@ -293,121 +592,20 @@ class IterableGraphDataset(IterableDataset):
                 patch_centers = list()
 
             # Visit j
-            if j not in visited:
-                visited.add(j)
-                is_next = self.graph.dist(last_node, j) >= self.step_size - 1
-                is_branching = self.graph.degree[j] >= 3
-                if is_next or is_branching:
-                    last_node = j
-                    nodes.append(j)
-                    patch_centers.append(self.get_voxel(j))
-                    if len(patch_centers) == 1:
-                        root = j
-
-        # Yield any remaining nodes after the loop
-        if patch_centers:
-            patch_centers = np.array(patch_centers, dtype=int)
-            nodes = np.array(nodes, dtype=int)
-            yield nodes, patch_centers
-
-    def get_batch(self, img, offset, patch_centers, nodes):
-        # Initializations
-        label_mask = self.get_label_mask(nodes, img.shape, offset)
-        patch_centers -= offset
-
-        # Populate batch array
-        batch = np.empty((len(patch_centers), 2,) + self.patch_shape)
-        for i, center in enumerate(patch_centers):
-            s = img_util.get_slices(center, self.patch_shape)
-            batch[i, 0, ...] = img_util.normalize(np.minimum(img[s], 300))
-            batch[i, 1, ...] = label_mask[s]
-        return nodes, torch.tensor(batch, dtype=torch.float)
-
-    def get_multimodal_batch(self, img, offset, patch_centers, nodes):
-        # Initializations
-        label_mask = self.get_label_mask(nodes, img.shape, offset)
-        patch_centers -= offset
-        batch_size = len(patch_centers)
-
-        # Populate batch array
-        patches = np.empty((batch_size, 2,) + self.patch_shape)
-        point_clouds = np.empty((batch_size, 3, 3200), dtype=np.float32)
-        for i, (center, node) in enumerate(zip(patch_centers, nodes)):
-            s = img_util.get_slices(center, self.patch_shape)
-            patches[i, 0, ...] = img_util.normalize(np.minimum(img[s], 300))
-            patches[i, 1, ...] = label_mask[s]
-
-            subgraph = self.graph.get_rooted_subgraph(node, self.subgraph_radius)
-            point_clouds[i] = exp.subgraph_to_point_cloud(subgraph)
-
-        # Compile batch dictionary
-        batch = exp.TensorDict({
-            "img": ml_util.to_tensor(patches),
-            "point_cloud": ml_util.to_tensor(point_clouds)
-        })
-        return nodes, batch
+            if self.graph.degree[j] > 2:
+                nodes.append(j)
+                patch_centers.append(self.graph.get_voxel(j))
+                if len(patch_centers) == 1:
+                    root = j
 
     # --- Helpers ---
-    def find_fragments_to_search(self):
-        component_ids = set()
-        for nodes in nx.connected_components(self.graph):
-            # Compute path length
-            node = util.sample_once(list(nodes))
-            l = self.graph.path_length(root=node, max_depth=self.min_size)
-
-            # Check if path length satisfies threshold
-            if l > self.min_size:
-                component_ids.add(self.graph.node_component_id[node])
-        return component_ids
-
-    def read_superchunk(self, patch_centers):
-        # Compute bounding box
-        buffer = np.array(self.patch_shape) / 2
-        start = patch_centers.min(axis=0) - buffer
-        end = patch_centers.max(axis=0) + buffer + 1
-
-        # Read image
-        shape = (end - start).astype(int)
-        center = (start + shape // 2).astype(int)
-        superchunk = self.img_reader.read(center, shape)
-        return superchunk, start.astype(int)
-
-    def get_label_mask(self, nodes, img_shape, offset):
-        label_mask = np.zeros(img_shape)
-        queue = list(nodes)
-        visited = set(nodes)
-        while queue:
-            # Visit node
-            node = queue.pop()
-            voxel = self.get_voxel(node) - offset
-            is_contained = img_util.is_contained(voxel, img_shape, buffer=3)
-            if is_contained:
-                label_mask[
-                    voxel[0] - 2: voxel[0] + 3,
-                    voxel[1] - 2: voxel[1] + 3,
-                    voxel[2] - 2: voxel[2] + 3
-                ] = 1
-            # Update queue
-            if is_contained:
-                for nb in self.graph.neighbors(node):
-                    if nb not in visited:
-                        queue.append(nb)
-                        visited.add(nb)
-        return label_mask
-
-    def get_voxel(self, node):
+    def estimate_iterations(self):
         """
-        Gets the voxel coordinate of the given node.
-
-        Parameters
-        ----------
-        node : int
-            Node ID.
+        Estimates the number of iterations required to search graph.
 
         Returns
         -------
-        Tuple[int]
-            Voxel coordinate of the given node.
+        int
+            Estimated number of iterations required to search graph.
         """
-        xyz = self.graph.node_xyz[node]
-        return img_util.to_voxels(xyz, self.anisotropy)
+        return len(self.graph.get_branchings())

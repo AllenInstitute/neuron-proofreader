@@ -328,23 +328,11 @@ class InferencePipeline:
 
         # Save result on s3 (if applicable)
         if self.s3_dict is not None:
-            self.save_to_s3()
-
-    def save_to_s3(self):
-        """
-        Saves a corrected swc files to s3 along with metadata and runtimes.
-        """
-        bucket_name = self.s3_dict["bucket_name"]
-        for name in os.listdir(self.output_dir):
-            object_path = os.path.join(self.output_dir, name)
-            if os.path.isdir(object_path):
-                prefix = os.path.join(self.s3_dict["prefix"], name)
-                util.upload_dir_to_s3(object_path, bucket_name, prefix)
-            else:
-                s3_path = os.path.join(self.s3_dict["prefix"], name)
-                util.upload_file_to_s3(object_path, bucket_name, s3_path)
-        results_prefix = self.s3_dict["prefix"] + "/corrected-swcs/"
-        print("Results at", f"{bucket_name}/{results_prefix}")
+            util.upload_dir_to_s3(
+                self.output_dir,
+                self.s3_dict["bucket_name"],
+                self.s3_dict["prefix"]
+            )
 
     # --- io ---
     def save_connections(self, round_id=None):

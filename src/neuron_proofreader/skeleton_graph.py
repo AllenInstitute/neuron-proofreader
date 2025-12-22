@@ -46,6 +46,7 @@ class SkeletonGraph(nx.Graph):
         min_size=0,
         node_spacing=1,
         prune_depth=20,
+        use_anisotropy=True,
         verbose=False,
     ):
         """
@@ -63,6 +64,10 @@ class SkeletonGraph(nx.Graph):
         prune_depth : float, optional
             Branches with length less than "prune_depth" microns are removed.
             Default is 20μm.
+        use_anisotropy : bool, optional
+            Indication of whether to apply anisotropy to SWC files. Note: Set
+            to False when SWC files are in physical coordinates. Default is
+            True.
         verbose : bool, optional
             Indication of whether to display a progress bar while building
             graph. Default is True.
@@ -77,6 +82,7 @@ class SkeletonGraph(nx.Graph):
         self.node_spacing = node_spacing
 
         # Graph Loader
+        anisotropy = anisotropy if use_anisotropy else (1.0, 1.0, 1.0)
         self.graph_loader = gutil.GraphLoader(
             anisotropy=anisotropy,
             min_size=min_size,
@@ -360,6 +366,11 @@ class SkeletonGraph(nx.Graph):
         offset = [c - s // 2 for c, s in zip(center, patch_shape)]
         return tuple([v - o for v, o in zip(voxel, offset)])
 
+    def get_node_segment_id(self, node):
+        component_id = self.node_component_id[node]
+        swc_id = self.component_id_to_swc_id[component_id]
+        return swc_id.split(".")[0]
+
     def get_nodes_with_component_id(self, component_id):
         """
         Gets all nodes with the given componenet ID.
@@ -375,6 +386,24 @@ class SkeletonGraph(nx.Graph):
             Nodes with the given component ID.
         """
         return set(np.where(self.node_component_id == component_id)[0])
+
+    def get_nodes_with_segment_id(self, segment_id):
+        nodes = set()
+        query_id = f"{segment_id}."
+        for swc_id in self.get_swc_ids():
+            segment_id = int(swc_id.replace(".0", ""))
+            if segment_id == query_id:
+                component_id = self.get_component_id_from_swc_id(swc_id)
+                nodes = nodes.union(
+                    self.get_nodes_with_component_id(component_id)
+                )
+        return nodes
+
+    def get_component_id_from_swc_id(self, query_swc_id):
+        for component_id, swc_id in self.component_id_to_swc_id.items():
+            if query_swc_id == swc_id:
+                return component_id
+        raise ValueError(f"SWC ID={query_swc_id} not found")
 
     def get_rooted_subgraph(self, root, radius):
         """
@@ -447,7 +476,7 @@ class SkeletonGraph(nx.Graph):
         Set[str]
             Set of all unique SWC IDs of nodes in the graph.
         """
-        return np.unique(list(self.component_id_to_swc_id.values()))
+        return set(self.component_id_to_swc_id.values())
 
     # --- Writer ---
     def to_zipped_swcs(self, zip_path, preserve_radius=False):
@@ -464,7 +493,7 @@ class SkeletonGraph(nx.Graph):
             Default is False.
         """
         with zipfile.ZipFile(zip_path, "w") as zip_writer:
-            for nodes in nx.connected_components(self):
+            for nodes in map(list, nx.connected_components(self)):
                 root = util.sample_once(nodes)
                 self.component_to_zipped_swc(
                     zip_writer, root, preserve_radius=preserve_radius

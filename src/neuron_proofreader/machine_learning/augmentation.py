@@ -84,17 +84,11 @@ class RandomFlip3D:
         patches : numpy.ndarray
             Image with the shape (2, H, W, D), where "patches[0, ...]" is from
             the input image and "patches[1, ...]" is from the segmentation.
-
-        Returns
-        -------
-        patches : numpy.ndarray
-            Flipped 3D image and segmentation patch.
         """
         for axis in self.axes:
             if random.random() > 0.5:
                 patches[0, ...] = np.flip(patches[0, ...], axis=axis)
                 patches[1, ...] = np.flip(patches[1, ...], axis=axis)
-        return patches
 
 
 class RandomRotation3D:
@@ -125,18 +119,12 @@ class RandomRotation3D:
         patches : numpy.ndarray
             Image with the shape (2, H, W, D), where "patches[0, ...]" is from
             the input image and "patches[1, ...]" is from the segmentation.
-
-        Returns
-        -------
-        patches : numpy.ndarray
-            Rotated 3D image and segmentation patch.
         """
         for axes in self.axes:
             if random.random() < 0.5:
                 angle = random.uniform(*self.angles)
                 patches[0, ...] = rotate3d(patches[0, ...], angle, axes)
                 patches[1, ...] = rotate3d(patches[1, ...], angle, axes, True)
-        return patches
 
 
 class RandomScale3D:
@@ -208,22 +196,18 @@ class RandomContrast3D:
         """
         self.factor_range = factor_range
 
-    def __call__(self, img_patch):
+    def __call__(self, patches):
         """
         Applies contrast to the input 3D image.
 
         Parameters
         ----------
-        img_patch : numpy.ndarray
-            Image to which contrast will be added.
-
-        Returns
-        -------
-        numpy.ndarray
-            Contrasted 3D image.
+        patches : numpy.ndarray
+            Image with the shape (2, H, W, D), where "patches[0, ...]" is from
+            the input image and "patches[1, ...]" is from the segmentation.
         """
         factor = random.uniform(*self.factor_range)
-        return np.clip(img_patch * factor, 0, 1)
+        patches[0, ...] = np.clip(patches[0, ...] * factor, 0, 1)
 
 
 class RandomNoise3D:
@@ -231,7 +215,7 @@ class RandomNoise3D:
     Adds random Gaussian noise to a 3D image.
     """
 
-    def __init__(self, max_std=0.5):
+    def __init__(self, max_std=0.3):
         """
         Initializes a RandomNoise3D transformer.
 
@@ -239,7 +223,7 @@ class RandomNoise3D:
         ----------
         max_std : float, optional
             Maximum standard deviation of the Gaussian noise distribution.
-            Default is 0.16.
+            Default is 0.3.
         """
         self.max_std = max_std
 
@@ -249,18 +233,14 @@ class RandomNoise3D:
 
         Parameters
         ----------
-        img_patch : np.ndarray
-            Image to which noise will be added.
-
-        Returns
-        -------
-        img_patch : numpy.ndarray
-            Noisy 3D image.
+        patches : numpy.ndarray
+            Image with the shape (2, H, W, D), where "patches[0, ...]" is from
+            the input image and "patches[1, ...]" is from the segmentation.
         """
         std = self.max_std * random.random()
-        noise = np.random.uniform(0, std, img_patch.shape)
-        img_patch += noise
-        return img_patch
+        noise = np.random.uniform(-std, std, img_patch[0, ...].shape)
+        img_patch[0, ...] += noise
+        img_patch[0, ...] = np.clip(img_patch[0, ...], 0, 1)
 
 
 # --- Helpers ---
@@ -286,12 +266,13 @@ def rotate3d(img_patch, angle, axes, is_segmentation=False):
         Rotated 3D image patch.
     """
     order = 0 if is_segmentation else 3
+    multipler = 2 if is_segmentation else 1
     img_patch = rotate(
-        img_patch,
+        multipler * img_patch,
         angle,
         axes=axes,
         mode="grid-mirror",
         reshape=False,
         order=order,
     )
-    return img_patch
+    return img_patch / multipler

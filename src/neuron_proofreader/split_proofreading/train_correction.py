@@ -23,6 +23,7 @@ from sklearn.metrics import (
 )
 from torch import nn
 from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.utils.data import Dataset, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 import numpy as np
@@ -228,7 +229,7 @@ class Trainer:
 
 
 # --- Custom Dataset ---
-class GraphDataset:
+class GraphDataset(Dataset):
     """
     Dataset for storing graphs used to train a graph neural network to perform
     split correction. Graphs are stored in the "self.graphs" attribute, which
@@ -313,7 +314,6 @@ class GraphDataset:
         gt_pointer,
         pred_pointer,
         img_path,
-        segmentation_path=None
     ):
         # Add graph
         self.graphs[key] = self.load_graph(pred_pointer)
@@ -327,9 +327,7 @@ class GraphDataset:
         self.keys.add(key)
 
         # Generate features
-        self.features[key] = self.generate_features(
-            key, img_path, segmentation_path
-        )
+        self.features[key] = self.generate_features(key, img_path)
 
     def load_graph(self, swc_pointer):
         """
@@ -338,14 +336,8 @@ class GraphDataset:
 
         Parameters
         ----------
-        swc_pointer : Any
-            Object that points to SWC files to be read, must be one of:
-                - swc_dir (str): Path to directory containing SWC files.
-                - swc_path (str): Path to single SWC file.
-                - swc_path_list (List[str]): List of paths to SWC files.
-                - swc_zip (str): Path to a ZIP archive containing SWC files.
-                - gcs_dict (dict): Dictionary that contains the keys
-                  "bucket_name" and "path" to read from a GCS bucket.
+        swc_pointer : str
+            Path to SWC files to be loaded.
 
         Returns
         -------
@@ -359,7 +351,7 @@ class GraphDataset:
         proposal_graph.load(swc_pointer)
         return proposal_graph
 
-    def generate_features(self, key, img_path, segmentation_path):
+    def generate_features(self, key, img_path):
         # Initializations
         feature_generator = FeatureGenerator(
             self.graphs[key],
@@ -367,7 +359,6 @@ class GraphDataset:
             anisotropy=self.ml_config.anisotropy,
             is_multimodal=self.ml_config.is_multimodal,
             multiscale=self.ml_config.multiscale,
-            segmentation_path=segmentation_path,
         )
         batch = {
             "proposals": self.graphs[key].list_proposals(),
@@ -466,6 +457,25 @@ class GraphDataLoader:
 
 
 # -- Helpers --
+def generate_dataset_example_ids(bucket_name, dataset_prefix):
+    for brain_prefix in util.list_gcs_subdirectories(bucket_name, dataset_prefix):
+        # Extract brain id
+        brain_id = brain_prefix.split("/")[-2]
+
+        # Iterate over segmentations
+        pred_prefix = os.path.join(brain_prefix, "pred_swcs/")
+        prefixes = util.list_gcs_subdirectories(bucket_name, pred_prefix)
+        for brain_segmentation_prefix in prefixes:
+            # Extract segmentation id
+            segmentation_id = brain_segmentation_prefix.split("/")[-2]
+
+            # Iterate over blocks
+            for block_prefix in util.list_gcs_subdirectories(bucket_name, brain_segmentation_prefix):
+                # Extract block id
+                block_id = block_prefix.split("/")[-2]
+                yield brain_id, segmentation_id, block_id
+
+
 def truncate(hat_y, y):
     """
     Truncates "hat_y" so that this tensor has the same shape as "y". Note this

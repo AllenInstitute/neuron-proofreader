@@ -178,6 +178,30 @@ def fit_spline_1d(pts, k=3, s=None):
     return UnivariateSpline(t, pts, k=k, s=s)
 
 
+def make_voxels_connected(voxels):
+    """
+    Makes a list of voxels that form a discrete curve 27-connected.
+
+    Parameters
+    ----------
+    voxels : List[Tuple[int]]
+        List of voxel coordinates that form a discrete path.
+
+    Returns
+    -------
+    voxels_out : numpy.ndarray
+        List of voxels that is 27-connected.
+    """
+    voxels = np.asarray(voxels, dtype=int)
+    voxels_out = []
+    for a, b in zip(voxels[:-1], voxels[1:]):
+        line = make_digital_line(a, b)
+        if voxels_out:
+            line = line[1:]
+        voxels_out.extend(line)
+    return np.array(voxels_out, dtype=int)
+
+
 def path_length(path):
     """
     Computes the path length of list of xyz coordinates that form a path.
@@ -185,14 +209,14 @@ def path_length(path):
     Parameters
     ----------
     path : list
-        xyz coordinates that form a path.
+        List of coordinates that form a discrete path.
 
     Returns
     -------
     float
         Path length of "path".
     """
-    return np.sum([dist(path[i], path[i - 1]) for i in range(1, len(path))])
+    return np.sum([dist(a, b) for a, b in zip(path[:-1], path[1:])])
 
 
 def resample_path(pts, n_pts):
@@ -268,7 +292,7 @@ def smooth_curve_1d(pts, n_pts=None, s=None):
 def smooth_curve_3d(pts, n_pts=None, s=None):
     """
     Smooths an Nx3 array of points by fitting a spline. Points are assumed
-    to form a continuous curve that does not have any ßbranching points.
+    to form a continuous curve that does not have any branching points.
 
     Parameters
     ----------
@@ -282,7 +306,7 @@ def smooth_curve_3d(pts, n_pts=None, s=None):
 
     Returns
     -------
-    numpy.ndarray
+    pts : numpy.ndarray
         Smoothed points.
     """
     # Fit spline
@@ -307,7 +331,7 @@ def truncate_path(xyz_path, depth):
     Parameters
     ----------
     xyz_path : array-like
-        xyz coordinates that form a continuous path.
+        Coordinates that form a discrete path.
     depth : int
         Path length in microns to extract from input path.
 
@@ -332,9 +356,9 @@ def query_ball(kdtree, xyz, radius):
     Parameters
     ----------
     kdtree : scipy.spatial.cKDTree
-        The KD-tree data structure containing the points to query.
+        KD-tree to be queried.
     xyz : numpy.ndarray
-        The target 3D coordinate (x, y, z) around which to search for points.
+        Target 3D coordinate (x, y, z) around which to search for points.
     radius : float
         The radius within which to search for points.
 

@@ -40,14 +40,15 @@ def listdir(path, extension=None):
 
     Returns
     -------
-    List[str]
+    filenames : List[str]
         Filenames in directory with extension "extension" if provided.
         Otherwise, list of all files in directory.
     """
-    if extension is None:
-        return [f for f in os.listdir(path)]
+    filenames = [f for f in os.listdir(path) if not f.startswith(".")]
+    if extension:
+        return [f for f in filenames if f.endswith(extension)]
     else:
-        return [f for f in os.listdir(path) if f.endswith(extension)]
+        return filenames
 
 
 def list_files_in_zip(zip_content):
@@ -138,8 +139,7 @@ def mkdir(path, delete=False):
     if delete:
         rmdir(path)
 
-    if not os.path.exists(path):
-        os.mkdir(path)
+    os.makedirs(path, exist_ok=True)
 
 
 def rmdir(path):
@@ -303,7 +303,7 @@ def write_json(path, contents):
     path : str
         Path that txt file is written to.
     contents : dict
-        Contents to be written to JSON file.
+        Contents to be written to a JSON file.
     """
     with open(path, "w") as f:
         json.dump(contents, f)

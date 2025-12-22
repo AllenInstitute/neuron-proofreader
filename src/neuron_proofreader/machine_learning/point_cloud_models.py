@@ -21,6 +21,111 @@ from neuron_proofreader.machine_learning.vision_models import (
 
 
 # --- Architectures ---
+class PointNet2(nn.Module):
+
+    def __init__(self, output_dim=1):
+        super().__init__()
+        self.sa1 = PointNetSetAbstraction(
+            n_points=512, mlp_channels=[64, 64, 128]
+        )
+        self.sa2 = PointNetSetAbstraction(
+            n_points=128, mlp_channels=[128, 128, 256]
+        )
+        self.sa3 = PointNetSetAbstraction(
+            n_points=None, mlp_channels=[256, 512, 1024]
+        )  # global
+        self.fc1 = nn.Linear(1024, 512)
+        self.bn1 = nn.BatchNorm1d(512)
+        self.drop1 = nn.Dropout(0.4)
+        self.fc2 = nn.Linear(512, 256)
+        self.bn2 = nn.BatchNorm1d(256)
+        self.drop2 = nn.Dropout(0.4)
+        self.fc3 = nn.Linear(256, output_dim)
+
+    def forward(self, x):
+        """
+        x: [B, N, 3]
+        """
+        xyz, f1 = self.sa1(x)
+        xyz, f2 = self.sa2(xyz)
+        xyz, f3 = self.sa3(xyz)
+        x = F.relu(self.bn1(self.fc1(f3)))
+        x = self.drop1(x)
+        x = F.relu(self.bn2(self.fc2(x)))
+        x = self.drop2(x)
+        x = self.fc3(x)
+        return x
+
+
+class VisionPointNet(nn.Module):
+
+    def __init__(self, patch_shape, output_dim=128):
+        super().__init__()
+
+        self.point_net = PointNet2(output_dim=output_dim)
+        self.vision_model = CNN3D(
+            patch_shape,
+            n_conv_layers=6,
+            n_feat_channels=20,
+            output_dim=output_dim,
+            use_double_conv=True,
+        )
+        self.output = init_feedforward(2 * output_dim, 1, 3)
+
+    def forward(self, x):
+        """
+        Passes the given input through this neural network.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input vector of features.
+
+        Returns
+        -------
+        x : torch.Tensor
+            Output of the neural network.
+        """
+        x_img = self.vision_model(x["img"])
+        x_pc = self.point_net(x["point_cloud"])
+        x = torch.cat((x_img, x_pc), dim=1)
+        x = self.output(x)
+        return x
+
+
+class PointNetSetAbstraction(nn.Module):
+    """
+    PointNet++ Set Abstraction (SA) layer
+    """
+
+    def __init__(self, n_points, mlp_channels):
+        super().__init__()
+        self.n_points = n_points
+        layers = []
+        last_channel = 3
+        for out_ch in mlp_channels:
+            layers.append(nn.Conv1d(last_channel, out_ch, 1))
+            layers.append(nn.BatchNorm1d(out_ch))
+            layers.append(nn.ReLU())
+            last_channel = out_ch
+        self.mlp = nn.Sequential(*layers)
+
+    def forward(self, xyz):
+        """
+        xyz: [B, N, 3]
+        """
+        B, N, _ = xyz.shape
+        if self.n_points is not None:
+            idx = farthest_point_sample(xyz, self.n_points)
+            new_xyz = index_points(xyz, idx)
+        else:
+            new_xyz = xyz
+        # MLP expects [B, C, N]
+        features = self.mlp(new_xyz.transpose(1, 2))
+        features = torch.max(features, 2)[0]  # global pooling
+        return new_xyz, features
+
+
 class DGCNN(nn.Module):
 
     def __init__(self, input_dim=3, output_dim=64, k=16):
@@ -86,6 +191,19 @@ class DGCNN(nn.Module):
         return x[batch_indices, idx, :]
 
     def forward(self, x):
+        """
+        Passes the given input through this neural network.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input vector of features.
+
+        Returns
+        -------
+        x : torch.Tensor
+            Output of the neural network.
+        """
         x1 = F.relu(self.conv1(self.get_graph_feature(x, self.k)))
         x1 = x1.max(dim=-1)[0]
 

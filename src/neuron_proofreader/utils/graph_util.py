@@ -20,7 +20,6 @@ constructs a custom graph object called a "FragmentsGraph".
 
 Note: We use the term "branch" to refer to a path in a graph from a branching
       node to a leaf.
-
 """
 
 from collections import defaultdict, deque
@@ -195,7 +194,7 @@ class GraphLoader:
                         )
 
         # Report results
-        if self.verbose:
+        if self.verbose and high_risk_cnt > 0:
             print("# High Risk Merges Detected:", high_risk_cnt)
         return irreducibles
 
@@ -233,7 +232,7 @@ class GraphLoader:
             leafs = set(get_leafs(graph))
             while leafs:
                 # Extract for connected component
-                leaf = util.sample_once(leafs)
+                leaf = util.sample_once(list(leafs))
                 irreducibles, visited = self.get_irreducibles(graph, leaf)
                 leafs -= visited
 
