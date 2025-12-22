@@ -1,3 +1,14 @@
+"""
+Created on Thu Nov 20 5:00:00 2025
+
+@author: Anna Grim
+@email: anna.grim@alleninstitute.org
+
+Code for point cloud models that perform machine learning tasks within
+NeuronProofreader pipelines.
+
+"""
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -161,6 +172,7 @@ class DGCNN(nn.Module):
 
     @staticmethod
     def knn(x, k):
+        # Compute pairwise distance
         inner = -2 * torch.matmul(x, x.transpose(2, 1))
         xx = torch.sum(x**2, dim=2, keepdim=True)
         pairwise_distance = -xx - inner - xx.transpose(2, 1)
@@ -208,11 +220,9 @@ class DGCNN(nn.Module):
 
 class VisionDGCNN(nn.Module):
 
-    def __init__(self, patch_shape, output_dim=256):
-        # Call parent class
+    def __init__(self, patch_shape, output_dim=128):
         super().__init__()
 
-        # Model architecture
         self.dgcnn = DGCNN(output_dim=output_dim)
         self.vision_model = CNN3D(
             patch_shape,
@@ -245,45 +255,7 @@ class VisionDGCNN(nn.Module):
 
 
 # --- Point Cloud Generation ---
-def farthest_point_sample(xyz, n_points):
-    """
-    Farthest Point Sampling (FPS)
-    xyz: [B, N, 3]
-    return: [B, n_points] indices
-    """
-    B, N, _ = xyz.shape
-    centroids = torch.zeros(B, n_points, dtype=torch.long, device=xyz.device)
-    distance = torch.ones(B, N, device=xyz.device) * 1e10
-    farthest = torch.randint(0, N, (B,), dtype=torch.long, device=xyz.device)
-    batch_indices = torch.arange(B, dtype=torch.long, device=xyz.device)
-    for i in range(n_points):
-        centroids[:, i] = farthest
-        centroid = xyz[batch_indices, farthest, :].view(B, 1, 3)
-        dist = torch.sum((xyz - centroid) ** 2, -1)
-        mask = dist < distance
-        distance[mask] = dist[mask]
-        farthest = torch.max(distance, -1)[1]
-    return centroids
-
-
-def index_points(points, idx):
-    """
-    Index points from xyz/features
-    points: [B, N, C]
-    idx: [B, S]
-    return: [B, S, C]
-    """
-    B = points.shape[0]
-    S = idx.shape[1]
-    batch_indices = (
-        torch.arange(B, dtype=torch.long, device=points.device)
-        .view(B, 1)
-        .repeat(1, S)
-    )
-    return points[batch_indices, idx, :]
-
-
-def subgraph_to_point_cloud(graph, n_points=3600):
+def subgraph_to_point_cloud(graph, n_points=3200):
     point_cloud = list()
     for n1, n2 in graph.edges:
         # Use average radius
