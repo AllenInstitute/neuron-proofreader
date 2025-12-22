@@ -34,6 +34,9 @@ def evaluate(brain_id, fragments_graph, merge_sites_df):
     img_path = s3_util.get_img_prefix(brain_id, image_prefixes_path)
     img_path = os.path.join(img_path, "0")
 
+    segmentation_prefixes = util.read_json(segmentation_prefixes_path)
+    segmentation_path = segmentation_prefixes[brain_id]
+
     # Dataset
     dataset = DenseGraphDataset(
         fragments_graph,
@@ -43,6 +46,7 @@ def evaluate(brain_id, fragments_graph, merge_sites_df):
         brightness_clip=brightness_clip,
         is_multimodal=is_multimodal,
         prefetch=64,
+        segmentation_path=segmentation_path,
         step_size=step_size,
         use_new_mask=use_new_mask
     )
@@ -210,7 +214,7 @@ def save_points(zip_path, pts, color, prefix):
 
 if __name__ == "__main__":
     # Parameters
-    model_name = "MergeDetectorCNN3D-v3-run1-randomsites=80-clip=300-newmask=True-lr=0.0001-20251219-120-0.8656"
+    model_name = "MergeDetectorCNN3D-v3-run1-randomsites=80-clip=300-newmask=True-lr=0.0001-20251219-118-0.8638"
     exp_name = "V3"
 
     accept_threshold = 0.4
