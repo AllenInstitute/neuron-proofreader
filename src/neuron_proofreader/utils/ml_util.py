@@ -93,26 +93,26 @@ def get_batch(graph, proposals, batch_size, flagged_proposals=set()):
 class TensorDict(dict):
 
     def to(self, device, non_blocking=False):
-        def move(v):
-            if torch.is_tensor(v):
-                # Ensure float tensors are float32 (not double)
-                if v.dtype == torch.float64:
-                    v = v.float()
-                return v.to(device, non_blocking=non_blocking)
-            elif hasattr(v, "to"):
-                v = v.to(device)
-                # Also normalize float dtype for PyG Data, Batch, etc.
-                if hasattr(v, "pos") and isinstance(v.pos, torch.Tensor):
-                    if v.pos.dtype == torch.float64:
-                        v.pos = v.pos.float()
-                return v
-            elif isinstance(v, dict):
-                return {kk: move(vv) for kk, vv in v.items()}
-            elif isinstance(v, tuple):
-                return tuple([move(vv) for vv in v])
-            else:
-                return v
-        return TensorDict({k: move(v) for k, v in self.items()})
+        return TensorDict({k: self.move(v) for k, v in self.items()})
+
+    @staticmethod
+    def move(v):
+        if torch.is_tensor(v):
+            if v.dtype == torch.float64:
+                v = v.float()
+            return v.to(device, non_blocking=non_blocking)
+        elif hasattr(v, "to"):
+            v = v.to(device)
+            if hasattr(v, "pos") and isinstance(v.pos, torch.Tensor):
+                if v.pos.dtype == torch.float64:
+                    v.pos = v.pos.float()
+            return v
+        elif isinstance(v, dict):
+            return {kk: move(vv) for kk, vv in v.items()}
+        elif isinstance(v, tuple):
+            return tuple([move(vv) for vv in v])
+        else:
+            return v
 
 
 # --- Miscellaneous ---
@@ -164,12 +164,20 @@ def line_graph(edges):
 
 
 def load_model(model, model_path, device="cuda"):
-    state_dict = torch.load(model_path, map_location=device)
-    new_state_dict = dict()
-    for key, val in state_dict.items():
-        key = key.replace("module.", "")
-        new_state_dict[key] = val
-    model.load_state_dict(new_state_dict)
+    """
+    Loads a PyTorch model checkpoint, moves the model to the speficied device,
+    and sets it to evaluation mode.
+
+    Parameters
+    ----------
+    model : torch.nn.Module
+        Instantiated model architecture into which the weights will be loaded.
+    model_path : str or Path
+        Path to the saved PyTorch checkpoint.
+    device : str, optional
+        Device to load the model onto. Default is "cuda".
+    """
+    model.load_state_dict(torch.load(model_path, map_location=device))
     model.to(device)
     model.eval()
 
