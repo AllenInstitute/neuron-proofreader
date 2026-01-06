@@ -214,7 +214,7 @@ def save_points(zip_path, pts, color, prefix):
 
 if __name__ == "__main__":
     # Parameters
-    model_name = "MergeDetectorCNN3D-v3-run2-randomsites=80-clip=300-newmask=False-lr=1e-05-20251219-130-0.8412"
+    model_name = "MergeDetectorCNN3D-v3-run1-randomsites=80-clip=300-newmask=True-lr=0.0001-20251219-120-0.8656"
     exp_name = "V3"
 
     accept_threshold = 0.4
@@ -228,14 +228,15 @@ if __name__ == "__main__":
     node_spacing = 5
     patch_shape = (128, 128, 128)
     step_size = 20
-    use_new_mask = False
+    use_new_mask = True
 
     # Paths
     bucket_name = "allen-nd-goog"
     fragments_prefix = "automated_proofreading_dataset/raw_merge_sites"
     image_prefixes_path = "/root/capsule/data/exaspim_image_prefixes.json"
     segmentation_prefixes_path = "/root/capsule/data/exaspim_segmentation_prefixes.json"
-    merge_sites_path = f"/root/capsule/data/{exp_name}/merge_sites_df.csv"
+    #merge_sites_path = f"/root/capsule/data/{exp_name}/merge_sites_df.csv"
+    merge_sites_path = f"/root/capsule/data/V4/merge_sites_df.csv"
     test_idxs_path = f"/root/capsule/data/{exp_name}/test_idxs.csv"
     model_path = f"/root/capsule/data/{exp_name}/{model_name}.pth"
     output_dir = f"/root/capsule/results/{exp_name}-{model_name}"
