@@ -325,7 +325,7 @@ class Trainer:
             True if the model achieved a new best F1 score and was saved.
             False otherwise.
         """
-        if stats["f1"] > self.best_f1 and stats["recall"] > 0.83:
+        if stats["f1"] > self.best_f1:
             self.best_f1 = stats["f1"]
             self.save_model(epoch)
             return True

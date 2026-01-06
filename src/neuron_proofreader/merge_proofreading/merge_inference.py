@@ -284,7 +284,7 @@ class GraphDataset(IterableDataset, ABC):
             # Visit node
             node = queue.pop()
             voxel = self.graph.get_voxel(node) - offset
-            img_util.annotate_voxels(label_mask, [voxel], kernel_size=5)
+            img_util.annotate_voxels(label_mask, [voxel])
 
             # Update queue
             if img_util.is_contained(voxel, img_shape):
