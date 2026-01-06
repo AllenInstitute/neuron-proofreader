@@ -58,7 +58,7 @@ def main():
 
     # Dataset
     dataset = init_dataset(merge_sites_df)
-    train_dataset = MergeSiteTrainDataset(dataset, train_idxs)
+    train_dataset = MergeSiteTrainDataset(dataset, train_idxs, negative_bias)
     val_dataset = MergeSiteValDataset(dataset, val_idxs)
     print("len(train_dataset):", len(train_dataset))
     print("len(val_dataset):", len(val_dataset))
@@ -138,27 +138,28 @@ def save_experiment_parameters():
 
 
 if __name__ == "__main__":
-    # Paths
-    dataset_path = "/root/capsule/data/V3"
-    image_prefixes_path = "/root/capsule/data/exaspim_image_prefixes.json"
-    segmentation_prefixes_path = "/root/capsule/data/exaspim_segmentation_prefixes.json"
-    model_path = "/root/capsule/data/V2/MergeDetectorCNN3D-20251216-129-0.8238.pth"
-    output_dir = "/root/capsule/results"
-
     # Parameters
     anisotropy = (0.748, 0.748, 1.0)
     batch_size = 16
     brightness_clip = 300
     is_multimodal = False
     is_test = False
-    lr = 1e-5
+    lr = 1e-4
+    negative_bias = 0
     patch_shape = (128, 128, 128)
     save_mistake_mips = True
-    use_new_mask = True
+    use_new_mask = False
+
+    # Paths
+    dataset_path = "/root/capsule/data/V4"
+    image_prefixes_path = "/root/capsule/data/exaspim_image_prefixes.json"
+    segmentation_prefixes_path = "/root/capsule/data/exaspim_segmentation_prefixes.json"
+    model_path = None
+    output_dir = "/root/capsule/results"
 
     # Model
     model_class = "MergeDetectorCNN3D"
-    model_name = f"{model_class}-v3-run2-randomsites=80-clip=300-newmask={use_new_mask}-lr={lr}"
+    model_name = f"{model_class}-v4-run1-newmask={use_new_mask}-negativebias={negative_bias}"
     if "MergeDetectorCNN3D" == model_class:
         model = CNN3D(
             patch_shape,
