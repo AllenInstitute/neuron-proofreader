@@ -624,7 +624,7 @@ class MergeSiteTrainDataset(MergeSiteDataset):
     A class for storing and retrieving training examples.
     """
 
-    def __init__(self, base_dataset=None, idxs=None):
+    def __init__(self, base_dataset=None, idxs=None, negative_bias=0):
         """
         Instantiates a MergeSiteTrainDataset object.
 
@@ -634,12 +634,15 @@ class MergeSiteTrainDataset(MergeSiteDataset):
             Dataset to be instantiated as a train dataset.
         idxs : List[int], optional
             Indices of examples to be kept in train dataset.
+        negative_bias : float, optional
+            Specifies percentage of additional negative examples to add.
         """
         # Create sub-dataset
         subset_dataset = base_dataset.subset(self.__class__, idxs)
         self.__dict__.update(subset_dataset.__dict__)
 
         # Instance attributes
+        self.negative_bias = negative_bias
         self.transform = ImageTransforms()
 
     # --- Getters ---
@@ -689,8 +692,10 @@ class MergeSiteTrainDataset(MergeSiteDataset):
             return self.get_indexed_positive_site(idx)
         elif np.random.random() < self.random_negative_example_prob:
             return self.get_random_negative_site()
-        else:
+        elif abs(idx) < len(self):
             return self.get_indexed_negative_site(abs(idx))
+        else:
+            return self.get_random_negative_site()
 
     # --- Helpers ---
     def get_idxs(self):
@@ -702,7 +707,8 @@ class MergeSiteTrainDataset(MergeSiteDataset):
         numpy.ndarray
             Example indices to iterate over.
         """
-        return np.arange(-len(self) + 1, len(self))
+        n_negative_examples = int(len(self) * (1 + self.negative_bias))
+        return np.arange(-n_negative_examples + 1, len(self))
 
 
 class MergeSiteValDataset(MergeSiteDataset):
@@ -908,6 +914,7 @@ class MergeSiteDataLoader(DataLoader):
         dataset,
         batch_size=32,
         is_multimodal=False,
+        modality=None,
         sampler=None,
         use_shuffle=True
     ):
@@ -928,9 +935,11 @@ class MergeSiteDataLoader(DataLoader):
         """
         # Call parent class
         super().__init__(dataset, batch_size=batch_size, sampler=sampler)
+        assert modality in [None, "graph", "pointcloud"]
 
         # Instance attributes
         self.is_multimodal = is_multimodal
+        self.modality = modality
         self.patches_shape = (2,) + self.dataset.patch_shape
         self.use_shuffle = use_shuffle
 
@@ -952,10 +961,12 @@ class MergeSiteDataLoader(DataLoader):
         # Iterate over indices
         for start in range(0, len(idxs), self.batch_size):
             end = min(start + self.batch_size, len(idxs))
-            if self.is_multimodal:
-                yield self._load_multimodal_batch(idxs[start: end])
+            if self.is_multimodal and self.modality == "graph":
+                yield self._load_image_graph_batch(idxs[start: end])
+            elif self.is_multimodal and self.modality == "pointcloud":
+                yield self._load_image_pc_batch(idxs[start: end])
             else:
-                yield self._load_batch(idxs[start: end])
+                yield self._load_image_batch(idxs[start: end])
 
     def _load_image_batch(self, batch_idxs):
         """
@@ -970,8 +981,8 @@ class MergeSiteDataLoader(DataLoader):
         -------
         patches : torch.Tensor
             Image patches for the batch.
-        labels : torch.Tensor
-            Labels corresponding to each patch.
+        targets : torch.Tensor
+            Target labels corresponding to each patch.
         """
         with ThreadPoolExecutor() as executor:
             # Assign threads
@@ -982,11 +993,11 @@ class MergeSiteDataLoader(DataLoader):
 
             # Store results
             patches = np.zeros((len(batch_idxs),) + self.patches_shape)
-            labels = np.zeros((len(batch_idxs), 1))
+            targets = np.zeros((len(batch_idxs), 1))
             for thread in as_completed(pending.keys()):
                 i = pending.pop(thread)
-                patches[i], _, labels[i] = thread.result()
-        return ml_util.to_tensor(patches), ml_util.to_tensor(labels)
+                patches[i], _, targets[i] = thread.result()
+        return ml_util.to_tensor(patches), ml_util.to_tensor(targets)
 
     def _load_image_pc_batch(self, batch_idxs):
         """
@@ -1001,8 +1012,8 @@ class MergeSiteDataLoader(DataLoader):
         -------
         batch : Dict[str, torch.Tensor]
             Dictionary that maps modality names to batch features.
-        labels : torch.Tensor
-            Labels corresponding to each patch.
+        targets : torch.Tensor
+            Target labels corresponding to each patch.
         """
         with ThreadPoolExecutor() as executor:
             # Assign threads
@@ -1013,11 +1024,11 @@ class MergeSiteDataLoader(DataLoader):
 
             # Store results
             patches = np.zeros((len(batch_idxs),) + self.patches_shape)
-            labels = np.zeros((len(batch_idxs), 1))
+            targets = np.zeros((len(batch_idxs), 1))
             point_clouds = np.zeros((len(batch_idxs), 3, 3600))
             for thread in as_completed(pending.keys()):
                 i = pending.pop(thread)
-                patches[i], subgraph, labels[i] = thread.result()
+                patches[i], subgraph, targets[i] = thread.result()
                 point_clouds[i] = subgraph_to_point_cloud(subgraph)
 
         # Set batch dictionary
@@ -1027,7 +1038,7 @@ class MergeSiteDataLoader(DataLoader):
                 "point_cloud": ml_util.to_tensor(point_clouds),
             }
         )
-        return batch, ml_util.to_tensor(labels)
+        return batch, ml_util.to_tensor(targets)
 
     def _load_image_graph_batch(self, idxs):
         """
@@ -1042,8 +1053,8 @@ class MergeSiteDataLoader(DataLoader):
         -------
         batch : Dict[str, torch.Tensor]
             Dictionary that maps modality names to batch features.
-        labels : torch.Tensor
-            Labels corresponding to each patch.
+        targets : torch.Tensor
+            Target labels corresponding to each patch.
         """
         with ThreadPoolExecutor() as executor:
             # Assign threads
@@ -1052,12 +1063,12 @@ class MergeSiteDataLoader(DataLoader):
                 threads.append(executor.submit(self.dataset.__getitem__, idx))
 
             # Store results
-            labels = np.zeros((len(idxs), 1))
+            targets = np.zeros((len(idxs), 1))
             patches = np.zeros((len(idxs),) + self.patches_shape)
             h, x, edge_index, batches = list(), list(), list(), list()
             node_offset = 0
             for i, thread in enumerate(as_completed(threads)):
-                patches[i], subgraph, labels[i] = thread.result()
+                patches[i], subgraph, targets[i] = thread.result()
                 h_i, x_i, edge_index_i = subgraph_to_data(subgraph)
                 n_i = h_i.size(0)
 
@@ -1084,4 +1095,4 @@ class MergeSiteDataLoader(DataLoader):
                 "graph": (h, x, edge_index, batches)
             }
         )
-        return batch, ml_util.to_tensor(labels)
+        return batch, ml_util.to_tensor(targets)
