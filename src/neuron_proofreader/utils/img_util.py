@@ -9,6 +9,7 @@ Helper routines for reading and processing images.
 """
 
 from abc import ABC, abstractmethod
+from fastremap import mask_except, renumber, unique
 from matplotlib.colors import ListedColormap
 from scipy.ndimage import zoom
 
@@ -629,6 +630,31 @@ def pad_to_shape(img, target_shape, pad_value=0):
     for s, t in zip(img.shape, target_shape):
         pads.append(((t - s) // 2, (t - s + 1) // 2))
     return np.pad(img, pads, mode='constant', constant_values=pad_value)
+
+
+def remove_small_segments(segmentation, min_size):
+    """
+    Removes small segments from a segmentation.
+
+    Parameters
+    ----------
+    segmentation : numpy.ndarray
+        Integer array representing a segmentation mask. Each unique
+        nonzero value corresponds to a distinct segment.
+    min_size : int
+        Minimum size (in voxels) for a segment to be kept.
+
+    Returns
+    -------
+    segmentation : numpy.ndarray
+        New segmentation of the same shape as the input, with only the
+        retained segments renumbered contiguously.
+    """
+    ids, cnts = unique(segmentation, return_counts=True)
+    ids = [i for i, cnt in zip(ids, cnts) if cnt > min_size and i != 0]
+    ids = mask_except(segmentation, ids)
+    segmentation, _ = renumber(ids, preserve_zero=True, in_place=True)
+    return segmentation
 
 
 def resize(img, new_shape):

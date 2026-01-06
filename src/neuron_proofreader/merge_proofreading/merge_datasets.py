@@ -501,6 +501,7 @@ class MergeSiteDataset(Dataset):
             segment_mask = self.segmentation_readers[brain_id].read(
                 center, self.patch_shape
             )
+            segment_mask = img_util.remove_small_segments(segment_mask, 1000)
             segment_mask = 0.5 * (segment_mask > 0).astype(float)
         else:
             segment_mask = np.zeros(self.patch_shape)
