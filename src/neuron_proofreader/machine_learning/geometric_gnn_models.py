@@ -13,10 +13,8 @@ from torch import nn
 
 import torch
 
-from neuron_proofreader.machine_learning.vision_models import (
-    CNN3D,
-    init_feedforward,
-)
+from neuron_proofreader.machine_learning.vision_models import CNN3D
+from neuron_proofreader.utils import ml_util
 
 
 # --- Multimodal GNN Architectures ---

@@ -14,10 +14,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from neuron_proofreader.machine_learning.vision_models import (
-    CNN3D,
-    init_feedforward,
-)
+from neuron_proofreader.machine_learning.vision_models import CNN3D
+from neuron_proofreader.utils import ml_util
 
 
 # --- Architectures ---
@@ -70,7 +68,7 @@ class VisionPointNet(nn.Module):
             output_dim=output_dim,
             use_double_conv=True,
         )
-        self.output = init_feedforward(2 * output_dim, 1, 3)
+        self.output = ml_util.init_feedforward(2 * output_dim, 1, 3)
 
     def forward(self, x):
         """
@@ -231,7 +229,7 @@ class VisionDGCNN(nn.Module):
             output_dim=output_dim,
             use_double_conv=True,
         )
-        self.output = init_feedforward(2 * output_dim, 1, 3)
+        self.output = ml_util.init_feedforward(2 * output_dim, 1, 3)
 
     def forward(self, x):
         """

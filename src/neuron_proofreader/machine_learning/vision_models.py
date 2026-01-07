@@ -10,9 +10,12 @@ NeuronProofreading pipelines.
 """
 
 from einops import rearrange
+from neurobase.finetune import finetune_model
 
 import torch
 import torch.nn as nn
+
+from neuron_proofreader.utils import ml_util
 
 
 # --- CNNs ---
@@ -61,7 +64,7 @@ class CNN3D(nn.Module):
 
         # Output layer
         flat_size = self._get_flattened_size()
-        self.output = init_feedforward(flat_size, output_dim, 3)
+        self.output = ml_util.init_feedforward(flat_size, output_dim, 3)
 
         # Initialize weights
         self.apply(self.init_weights)
@@ -128,6 +131,36 @@ class CNN3D(nn.Module):
 
 
 # --- Transformers ---
+class MAE3D(nn.Module):
+
+    def __init__(self):
+        # Call parent closs
+        super().__init__()
+
+        # Load model
+        full_model = finetune_model(
+            checkpoint_path="/home/jupyter/models/best_model-v1_mae_S.ckpt",
+            model_config="mae_S",
+            task_head_config="binary_classifier",
+            freeze_encoder=True
+        )
+
+        # Instance attributes
+        self.encoder = full_model.encoder
+        self.output = ml_util.init_feedforward(2 * 384, 1, 2)
+
+    def forward(self, x):
+        latent0 = self.encoder(x[:, 0:1, ...])
+        latent1 = self.encoder(x[:, 1:2, ...])
+
+        x0 = latent0["latents"][:, 0, :]
+        x1 = latent1["latents"][:, 0, :]
+
+        x = torch.cat((x0, x1), dim=1)
+        x = self.output(x)
+        return x
+
+
 class ViT3D(nn.Module):
     """
     A class that implements a 3D Vision transformer.
@@ -185,7 +218,7 @@ class ViT3D(nn.Module):
         self.norm = nn.LayerNorm(emb_dim)
 
         # Output layer
-        self.output = init_feedforward(emb_dim, output_dim, 2)
+        self.output = ml_util.init_feedforward(emb_dim, output_dim, 2)
 
         # Initialize weights
         self._init_weights()
@@ -486,55 +519,3 @@ def init_conv_layer(in_channels, out_channels, kernel_size, use_double_conv):
     # Pooling
     layers.append(nn.MaxPool3d(kernel_size=2))
     return nn.Sequential(*layers)
-
-
-def init_feedforward(input_dim, output_dim, n_layers):
-    """
-    Initializes a feed forward neural network.
-
-    Parameters
-    ----------
-    input_dim : int
-        Dimension of the input.
-    output_dim : int
-        Dimension of the output of this network.
-    n_layers : int
-        Number of layers in the network.
-    """
-    layers = list()
-    input_dim_i = input_dim
-    output_dim_i = input_dim // 2
-    for i in range(n_layers):
-        layers.append(init_mlp(input_dim_i, input_dim_i * 2, output_dim_i))
-        input_dim_i = input_dim_i // 2
-        output_dim_i = output_dim_i // 2 if i < n_layers - 2 else output_dim
-    return nn.Sequential(*layers)
-
-
-def init_mlp(input_dim, hidden_dim, output_dim, dropout=0.1):
-    """
-    Initializes a multi-layer perceptron (MLP).
-
-    Parameters
-    ----------
-    input_dim : int
-        Dimension of input feature vector.
-    hidden_dim : int
-        Dimension of embedded feature vector.
-    output_dim : int
-        Dimension of output feature vector.
-    dropout : float, optional
-        Fraction of values to randomly drop during training. Default is 0.1.
-
-    Returns
-    -------
-    mlp : nn.Sequential
-        Multi-layer perception network.
-    """
-    mlp = nn.Sequential(
-        nn.Linear(input_dim, hidden_dim),
-        nn.GELU(),
-        nn.Dropout(p=dropout),
-        nn.Linear(hidden_dim, output_dim),
-    )
-    return mlp

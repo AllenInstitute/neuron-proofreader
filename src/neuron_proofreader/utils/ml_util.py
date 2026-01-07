@@ -14,10 +14,64 @@ from collections import deque
 import networkx as nx
 import numpy as np
 import torch
+import torch.nn as nn
 
 from neuron_proofreader.utils import util
 
 GNN_DEPTH = 2
+
+
+# --- Architectures ---
+def init_feedforward(input_dim, output_dim, n_layers):
+    """
+    Initializes a feed forward neural network.
+
+    Parameters
+    ----------
+    input_dim : int
+        Dimension of the input.
+    output_dim : int
+        Dimension of the output of this network.
+    n_layers : int
+        Number of layers in the network.
+    """
+    layers = list()
+    input_dim_i = input_dim
+    output_dim_i = input_dim // 2
+    for i in range(n_layers):
+        layers.append(init_mlp(input_dim_i, input_dim_i * 2, output_dim_i))
+        input_dim_i = input_dim_i // 2
+        output_dim_i = output_dim_i // 2 if i < n_layers - 2 else output_dim
+    return nn.Sequential(*layers)
+
+
+def init_mlp(input_dim, hidden_dim, output_dim, dropout=0.1):
+    """
+    Initializes a multi-layer perceptron (MLP).
+
+    Parameters
+    ----------
+    input_dim : int
+        Dimension of input feature vector.
+    hidden_dim : int
+        Dimension of embedded feature vector.
+    output_dim : int
+        Dimension of output feature vector.
+    dropout : float, optional
+        Fraction of values to randomly drop during training. Default is 0.1.
+
+    Returns
+    -------
+    mlp : nn.Sequential
+        Multi-layer perception network.
+    """
+    mlp = nn.Sequential(
+        nn.Linear(input_dim, hidden_dim),
+        nn.GELU(),
+        nn.Dropout(p=dropout),
+        nn.Linear(hidden_dim, output_dim),
+    )
+    return mlp
 
 
 # --- Batch Generation ---
