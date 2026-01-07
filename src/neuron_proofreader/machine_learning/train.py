@@ -43,6 +43,8 @@ class Trainer:
         Path to directory that tensorboard and checkpoints are saved to.
     max_epochs : int
         Maximum number of training epochs.
+    min_recall : float, optional
+        Minimum recall required for model checkpoints to be saved.
     model : torch.nn.Module
         Model that is trained to perform binary classification.
     model_name : str
@@ -65,6 +67,7 @@ class Trainer:
         device="cuda",
         lr=1e-3,
         max_epochs=200,
+        min_recall=0,
         save_mistake_mips=False
     ):
         """
@@ -82,6 +85,9 @@ class Trainer:
             Learning rate. Default is 1e-3.
         max_epochs : int, optional
             Maximum number of training epochs. Default is 200.
+        min_recall : float, optional
+            Minimum recall required for model checkpoints to be saved. Default
+            is 0.
         save_mistake_mips : bool, optional
             Indication of whether to save MIPs of mistakes. Default is False.
         """
@@ -95,6 +101,7 @@ class Trainer:
         self.device = device
         self.log_dir = log_dir
         self.max_epochs = max_epochs
+        self.min_recall = min_recall
         self.mistakes_dir = os.path.join(log_dir, "mistakes")
         self.model_name = model_name
         self.save_mistake_mips = save_mistake_mips
@@ -325,7 +332,7 @@ class Trainer:
             True if the model achieved a new best F1 score and was saved.
             False otherwise.
         """
-        if stats["f1"] > self.best_f1 and stats["recall"] > 0.83:
+        if stats["f1"] > self.best_f1 and stats["recall"] > self.min_recall:
             self.best_f1 = stats["f1"]
             self.save_model(epoch)
             return True

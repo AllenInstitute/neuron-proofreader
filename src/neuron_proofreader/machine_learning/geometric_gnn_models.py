@@ -17,7 +17,200 @@ from neuron_proofreader.machine_learning.vision_models import CNN3D
 from neuron_proofreader.utils import ml_util
 
 
-# --- Architectures ---
+# --- Multimodal GNN Architectures ---
+class VisionSkeleton(nn.Module):
+
+    def __init__(self, ggnn_name, patch_shape, output_dim=128):
+        # Call parent class
+        super().__init__()
+        assert ggnn_name in ["egnn"]
+
+        # Architecture
+        self.skeleton_model = SkeletonGNN(ggnn_name, output_dim=output_dim)
+        self.vision_model = CNN3D(
+            patch_shape,
+            n_conv_layers=6,
+            n_feat_channels=20,
+            output_dim=output_dim,
+            use_double_conv=True,
+        )
+        self.output = init_feedforward(2 * output_dim + 3, 1, 3)
+
+    def forward(self, x):
+        """
+        Passes the given input through this neural network.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input vector of features.
+
+        Returns
+        -------
+        x : torch.Tensor
+            Output of the neural network.
+        """
+        # Modality-based embeddings
+        x_img = self.vision_model(x["img"])
+        x_skel = self.skeleton_model(*x["graph"])
+        print(x_img.size(), x_skel.size())
+        x = torch.cat((x_img, x_skel), dim=1)
+
+        # Output layer
+        x = self.output(x)
+        return x
+
+
+class SkeletonGNN(nn.Module):
+
+    def __init__(self, ggnn_name, output_dim=128):
+        # Call parent class
+        super().__init__()
+
+        # Instance attributes
+        self.gnn_h = None
+        self.gnn_x = None
+
+        # Set geometric gnn
+        if ggnn_name == "egnn":
+            self.geometric_gnn = EGNN(
+                in_node_dim=1,
+                hidden_dim=64,
+                out_node_dim=output_dim
+            )
+
+    # --- Core Routines ---
+    def forward(self, h, x, edge_index, batch):
+        h, x = self.geometric_gnn(h, x, edge_index)
+        return self.pool(h, x, edge_index, batch)
+
+    def pool(self, h, x, edge_index, batch):
+        # Move to CPU
+        batch = batch.detach().cpu()
+        edge_index = edge_index.detach().cpu()
+
+        # Iterate over graphs
+        h_skels = list()
+        num_graphs = int(batch.max().item()) + 1
+        for graph_id in range(num_graphs):
+            # Extract subgraph
+            node_mask = batch == graph_id
+            h_g, x_g, edge_index_g = self.extract_subgraph(
+                h, x, edge_index, node_mask
+            )
+
+            # Pool node embeddings
+            h_g, x_g, edge_index_g = self.pool_nonbranching_paths(h_g, x_g, edge_index_g)
+
+            # Encode pooled graph
+            h_g, x_g, edge_index_g = self.encode_pooled_graph()
+            h_g = h_g.mean(dim=0)
+            x_g = x_g.mean(dim=0)
+            h_skels.append(torch.cat((h_g, x_g), dim=1))
+        return torch.cat(h_skels, dim=0)
+
+    def _pool_nonbranching_paths(self, h, x, edge_index):
+        # Extract adjacency matrix and degrees
+        num_nodes = h.size(0)
+        adj, deg = self.get_adj_and_deg(edge_index, num_nodes)
+
+        # Search graph
+        node_to_path = torch.full((num_nodes,), -1, device=h.device)
+        path_idx = 0
+        h_pooled = list()
+        x_pooled = list()
+        visited = set()
+        for start in range(num_nodes):
+            # Check whether to visit
+            if start in visited:
+                continue
+
+            # Case 1: Branch points are singleton paths
+            if deg[start] > 2:
+                node_to_path[start] = path_idx
+                h_pooled.append(h[start])
+                x_pooled.append(x[start])
+                path_idx += 1
+                visited.add(start)
+                continue
+
+            # Case 2: Non-branching path traversal
+            path = [start]
+            visited.add(start)
+            prev = None
+            cur = start
+            while True:
+                nbs = [n for n in adj[cur] if n != prev]
+                if len(nbs) != 1:
+                    break
+
+                nxt = nbs[0]
+                if nxt in visited or deg[nxt] > 2:
+                    break
+
+                path.append(nxt)
+                visited.add(nxt)
+                prev, cur = cur, nxt
+
+            h_pooled.append(h[path].mean(dim=0))
+            x_pooled.append(x[path].mean(dim=0))
+
+            for n in path:
+                node_to_path[n] = path_idx
+
+            path_idx += 1
+
+        # Finish
+        h_pooled = torch.stack(h_pooled, dim=0)
+        x_pooled = torch.stack(x_pooled, dim=0)
+        edge_index_pooled = self.get_edge_index_pooled(edge_index, node_to_path)
+        return h_pooled, x_pooled, edge_index_pooled
+
+    def get_adj_and_deg(self, edge_index, num_nodes):
+        # Compute node degrees
+        deg = torch.zeros(num_nodes, dtype=torch.long)
+        ones = torch.ones(edge_index.shape[1], dtype=torch.long)
+        deg.scatter_add_(0, edge_index[0], ones)
+        deg.scatter_add_(0, edge_index[1], ones)
+
+        # Build adjacency list
+        adj = [[] for _ in range(num_nodes)]
+        for u, v in edge_index.t().tolist():
+            adj[u].append(v)
+            adj[v].append(u)
+        return adj, deg
+
+    # --- Helpers ---
+    def extract_subgraph(self, h, x, edge_index, node_mask):
+        # Build subgraph
+        node_ids = (node_mask).nonzero(as_tuple=True)[0]
+        h_g = h[node_ids]
+        x_g = x[node_ids]
+
+        # Remap nodes and edges
+        id_map = {int(n): i for i, n in enumerate(node_ids.tolist())}
+        edge_mask = node_mask[edge_index[0]] & node_mask[edge_index[1]]
+        edge_index_g = edge_index[:, edge_mask]
+        edge_index_g = torch.stack([
+            torch.tensor([id_map[int(u)] for u in edge_index_g[0]]),
+            torch.tensor([id_map[int(v)] for v in edge_index_g[1]])
+        ], dim=0)
+        return h_g, x_g, edge_index_g
+
+    @staticmethod
+    def get_edge_index_pooled(edge_index, node_to_path):
+        # Extract edges in pooled graph
+        src, dst = edge_index
+        src_p = node_to_path[src]
+        dst_p = node_to_path[dst]
+
+        # Remove intra-path edges
+        mask = src_p != dst_p
+        edge_index_pooled = torch.stack([src_p[mask], dst_p[mask]], dim=0)
+        return torch.unique(edge_index_pooled, dim=1)
+
+
+# --- Geometric GNN Architectures ---
 class EGNN(nn.Module):
 
     def __init__(
@@ -92,113 +285,12 @@ class EGNN(nn.Module):
         self.to(self.device)
 
     # --- Core Routines ---
-    def forward(self, h, x, edge_index, batch):
-        # Node embeddings
+    def forward(self, h, x, edge_index):
         h = self.embedding_in(h)
         for i in range(0, self.n_layers):
             h, x, _ = self._modules["gcl_%d" % i](h, edge_index, x)
         h = self.embedding_out(h)
-
-        # Pool embeddings
-        h = self.pool(h, x, edge_index, batch)
-        print("h.size():", h.size())
-        return h
-
-    def pool(self, h, x, edge_index, batch):
-        # Move to CPU
-        batch = batch.detach().cpu()
-        edge_index = edge_index.detach().cpu()
-
-        # Iterate over graphs
-        h_graphs = list()
-        num_graphs = int(batch.max().item()) + 1
-        for graph_id in range(num_graphs):
-            # Build subgraph
-            node_mask = batch == graph_id
-            node_ids = (node_mask).nonzero(as_tuple=True)[0]
-            h_g = h[node_ids]
-            x_g = x[node_ids]
-
-            # Remap nodes and edges
-            id_map = {int(n): i for i, n in enumerate(node_ids.tolist())}
-            edge_mask = node_mask[edge_index[0]] & node_mask[edge_index[1]]
-            edge_index_g = edge_index[:, edge_mask]
-            edge_index_g = torch.stack([
-                torch.tensor([id_map[int(u)] for u in edge_index_g[0]]),
-                torch.tensor([id_map[int(v)] for v in edge_index_g[1]])
-            ], dim=0)
-
-            # Pool nonbranching paths for single graph
-            h_graph = self._pool_single_graph(h_g, x_g, edge_index_g)
-            h_graphs.append(h_graph)
-        return torch.cat(h_graphs, dim=0)
-
-    def _pool_single_graph(self, h, x, edge_index):
-        # Initializations
-        num_nodes = h.size(0)
-        adj, deg = self.get_adj_and_deg(edge_index, num_nodes)
-        visited = torch.zeros(num_nodes, dtype=torch.bool, device=h.device)
-
-        # Pool over non-branching paths
-        h_paths = list()
-        x_paths = list()
-        for start in range(num_nodes):
-            # Start paths at endpoints or branch points
-            if visited[start]:
-                continue
-            if deg[start] > 2:
-                # branch nodes are their own "path"
-                visited[start] = True
-                h_paths.append(h[start])
-                x_paths.append(x[start])
-                continue
-
-            # Walk non-branching path
-            path = [start]
-            visited[start] = True
-            prev = None
-            curr = start
-            while True:
-                nbs = [n for n in adj[curr] if n != prev]
-                if len(nbs) != 1:
-                    break
-                nxt = nbs[0]
-                if visited[nxt] or deg[nxt] > 2:
-                    break
-                path.append(nxt)
-                visited[nxt] = True
-                prev, curr = curr, nxt
-
-            # Pool along path
-            h_paths.append(self._pool(h, path))
-            x_paths.append(self._pool(x, path))
-
-        # Global pool over graph
-        h_paths = torch.stack(h_paths, dim=0)
-        h_graph = h_paths.mean(dim=0, keepdim=True)
-
-        x_paths = torch.stack(x_paths, dim=0)
-        x_graph = x_paths.mean(dim=0, keepdim=True)
-        return torch.cat((h_graph, x_graph), dim=1)
-
-    # --- Helpers ---
-    def get_adj_and_deg(self, edge_index, num_nodes):
-        # Compute node degrees
-        deg = torch.zeros(num_nodes, dtype=torch.long)
-        ones = torch.ones(edge_index.shape[1], dtype=torch.long)
-        deg.scatter_add_(0, edge_index[0], ones)
-        deg.scatter_add_(0, edge_index[1], ones)
-
-        # Build adjacency list
-        adj = [[] for _ in range(num_nodes)]
-        for u, v in edge_index.t().tolist():
-            adj[u].append(v)
-            adj[v].append(u)
-        return adj, deg
-
-    @staticmethod
-    def _pool(x, idxs):
-        return x[idxs].mean(dim=0)
+        return h, x
 
 
 class E_GCL(nn.Module):
@@ -309,48 +401,6 @@ class E_GCL(nn.Module):
         h, agg = self.node_model(h, edge_index, edge_feat, node_attr)
 
         return h, coord, edge_attr
-
-
-class VisionEGNN(nn.Module):
-
-    def __init__(self, patch_shape, output_dim=128):
-        # Call parent class
-        super().__init__()
-
-        # Architecture
-        self.egnn = EGNN(in_node_dim=1, hidden_dim=64, out_node_dim=output_dim)
-        self.vision_model = CNN3D(
-            patch_shape,
-            n_conv_layers=6,
-            n_feat_channels=20,
-            output_dim=output_dim,
-            use_double_conv=True,
-        )
-        self.output = iml_util.nit_feedforward(2 * output_dim + 3, 1, 3)
-
-    def forward(self, x):
-        """
-        Passes the given input through this neural network.
-
-        Parameters
-        ----------
-        x : torch.Tensor
-            Input vector of features.
-
-        Returns
-        -------
-        x : torch.Tensor
-            Output of the neural network.
-        """
-        # Modality-based embeddings
-        x_img = self.vision_model(x["img"])
-        x_graph = self.egnn(*x["graph"])
-        print(x_img.size(), x_graph.size())
-        x = torch.cat((x_img, x_graph), dim=1)
-
-        # Output layer
-        x = self.output(x)
-        return x
 
 
 def unsorted_segment_sum(data, segment_ids, num_segments):

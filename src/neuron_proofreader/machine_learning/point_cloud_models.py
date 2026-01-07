@@ -253,7 +253,7 @@ class VisionDGCNN(nn.Module):
 
 
 # --- Point Cloud Generation ---
-def subgraph_to_point_cloud(graph, n_points=3200):
+def subgraph_to_point_cloud(graph, n_points=3600):
     point_cloud = list()
     for n1, n2 in graph.edges:
         # Use average radius

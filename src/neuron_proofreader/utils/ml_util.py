@@ -146,15 +146,15 @@ def get_batch(graph, proposals, batch_size, flagged_proposals=set()):
 # --- Data Structures ---
 class TensorDict(dict):
 
-    def to(self, device, non_blocking=False):
-        return TensorDict({k: self.move(v) for k, v in self.items()})
+    def to(self, device):
+        return TensorDict({k: self.move(v, device) for k, v in self.items()})
 
     @staticmethod
-    def move(v):
+    def move(v, device):
         if torch.is_tensor(v):
             if v.dtype == torch.float64:
                 v = v.float()
-            return v.to(device, non_blocking=non_blocking)
+            return v.to(device, non_blocking=False)
         elif hasattr(v, "to"):
             v = v.to(device)
             if hasattr(v, "pos") and isinstance(v.pos, torch.Tensor):
