@@ -597,12 +597,13 @@ def normalize(img):
 
     Returns
     -------
-    numpy.ndarray
+    img : numpy.ndarray
         Normalized image.
     """
     try:
-        mn, mx = np.percentile(img, [1, 99.9])
-        return np.clip((img - mn) / (mx - mn + 1e-5), 0, 1)
+        #mn, mx = np.percentile(img, [1, 99.9])
+        #return np.clip((img - mn) / (mx - mn + 1e-5), 0, 1)
+        return (img - img.mean()) / (img.std() + 1e-8)
     except Exception as e:
         print("Image Normalization Failed:", e)
         return np.zeros(img.shape)

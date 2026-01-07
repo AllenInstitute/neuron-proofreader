@@ -13,10 +13,8 @@ from torch import nn
 
 import torch
 
-from neuron_proofreader.machine_learning.vision_models import (
-    CNN3D,
-    init_feedforward,
-)
+from neuron_proofreader.machine_learning.vision_models import CNN3D
+from neuron_proofreader.utils import ml_util
 
 
 # --- Architectures ---
@@ -328,7 +326,7 @@ class VisionEGNN(nn.Module):
             output_dim=output_dim,
             use_double_conv=True,
         )
-        self.output = init_feedforward(2 * output_dim + 3, 1, 3)
+        self.output = iml_util.nit_feedforward(2 * output_dim + 3, 1, 3)
 
     def forward(self, x):
         """
