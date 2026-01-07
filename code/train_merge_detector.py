@@ -143,7 +143,7 @@ if __name__ == "__main__":
     batch_size = 16
     brightness_clip = 300
     is_multimodal = False
-    is_test = False
+    is_test = True
     lr = 1e-4
     negative_bias = 0
     patch_shape = (128, 128, 128)
