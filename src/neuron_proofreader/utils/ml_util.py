@@ -93,10 +93,10 @@ def get_batch(graph, proposals, batch_size, flagged_proposals=set()):
 class TensorDict(dict):
 
     def to(self, device, non_blocking=False):
-        return TensorDict({k: self.move(v) for k, v in self.items()})
+        return TensorDict({k: self.move(v, device) for k, v in self.items()})
 
     @staticmethod
-    def move(v):
+    def move(v, device):
         if torch.is_tensor(v):
             if v.dtype == torch.float64:
                 v = v.float()
