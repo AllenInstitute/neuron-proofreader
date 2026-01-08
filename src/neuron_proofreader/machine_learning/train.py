@@ -38,7 +38,7 @@ class Trainer:
     criterion : torch.nn.BCEWithLogitsLoss
         Loss function used during training.
     device : str, optional
-        Device that model is run on. Default is "cuda".
+        Device that model is run on.
     log_dir : str
         Path to directory that tensorboard and checkpoints are saved to.
     max_epochs : int
@@ -163,6 +163,7 @@ class Trainer:
             # Forward pass
             self.optimizer.zero_grad()
             hat_y_i, loss_i = self.forward_pass(x_i, y_i)
+            print(loss_i)
 
             # Backward pass
             self.scaler.scale(loss_i).backward()
@@ -270,9 +271,9 @@ class Trainer:
         Parameters
         ----------
         y : torch.Tensor
-            Ground truth labels of shape (B, 1).
+            Ground truth labels with shape (B, 1).
         hat_y : torch.Tensor
-            Model predictions of the same shape as ground truth.
+            Predicted labels with shape (B, 1).
 
         Returns
         -------
@@ -363,6 +364,7 @@ class Trainer:
         y : numpy.ndarray
             Ground truth labels with shape (B, 1).
         hat_y : numpy.ndarray
+            Predicted labels with shape (B, 1).
         """
         if self.save_mistake_mips:
             # Initializations

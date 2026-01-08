@@ -14,6 +14,107 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from neuron_proofreader.utils import util
+
+
+# --- Architectures ---
+class FeedForwardNet(nn.Module):
+    """
+    A class that implements a feed forward neural network.
+    """
+
+    def __init__(self, input_dim, output_dim, n_layers):
+        """
+        Instantiates a FeedFowardNet object.
+
+        Parameters
+        ----------
+        input_dim : int
+            Dimension of the input.
+        output_dim : int
+            Dimension of the output of the network.
+        n_layers : int
+            Number of layers in the network.
+        """
+        # Call parent class
+        super().__init__()
+
+        # Instance attributes
+        self.net = self.build_network(input_dim, output_dim, n_layers)
+
+    def build_network(self, input_dim, output_dim, n_layers):
+        # Set input/output dimensions
+        input_dim_i = input_dim
+        output_dim_i = input_dim // 2
+
+        # Build architecture
+        layers = []
+        for i in range(n_layers):
+            mlp = init_mlp(input_dim_i, input_dim_i * 2, output_dim_i)
+            layers.append(mlp)
+
+            input_dim_i = input_dim_i // 2
+            output_dim_i = (
+                output_dim_i // 2 if i < n_layers - 2 else output_dim
+            )
+
+        # Initialize weights
+        net = nn.Sequential(*layers)
+        net.apply(self._init_weights)
+        return net
+
+    @staticmethod
+    def _init_weights(m):
+        if isinstance(m, nn.Linear):
+            nn.init.kaiming_normal_(m.weight, nonlinearity="leaky_relu")
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+
+    def forward(self, x):
+        """
+        Passes the given input through this neural network.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input vector of features.
+
+        Returns
+        -------
+        x : torch.Tensor
+            Output of the neural network.
+        """
+        return self.net(x)
+
+
+def init_mlp(input_dim, hidden_dim, output_dim, dropout=0.1):
+    """
+    Initializes a multi-layer perceptron (MLP).
+
+    Parameters
+    ----------
+    input_dim : int
+        Dimension of input.
+    hidden_dim : int
+        Dimension of the hidden layer.
+    output_dim : int
+        Dimension of output.
+    dropout : float, optional
+        Fraction of values to randomly drop during training. Default is 0.1.
+
+    Returns
+    -------
+    mlp : nn.Sequential
+        Multi-layer perception network.
+    """
+    mlp = nn.Sequential(
+        nn.Linear(input_dim, hidden_dim),
+        nn.LeakyReLU(),
+        nn.Dropout(p=dropout),
+        nn.Linear(hidden_dim, output_dim),
+    )
+    return mlp
+
 
 # --- Data Structures ---
 class TensorDict(dict):
@@ -41,10 +142,9 @@ class TensorDict(dict):
 
 
 # --- Miscellaneous ---
-def get_inputs(data, device="cpu"):
+def get_inputs(data, device="cuda"):
     """
-    Extracts input data for a graph-based model and optionally moves it to a
-    GPU.
+    Extracts input data for a gnn model and optionally moves it to a device.
 
     Parameters
     ----------
@@ -54,16 +154,16 @@ def get_inputs(data, device="cpu"):
             - edge_index_dict: Dictionary of edge indices for edge types.
             - edge_attr_dict: Dictionary of edge attributes for edge types.
     device : str, optional
-        Target device for the data, 'cuda' for GPU and 'cpu' for CPU. The
-        default is "cpu".
+        Device to load the model onto. Default is "cuda".
 
     Returns
     --------
-    tuple:
-        Tuple containing the following:
-            - x (dict): Node features dictionary.
-            - edge_index (dict): Edge indices dictionary.
-            - edge_attr (dict): Edge attributes dictionary.
+    x : dict
+        Node features dictionary.
+    edge_index : dict
+        Edge indices dictionary.
+    edge_attr : dict
+        Edge attributes dictionary.
     """
     data.to(device)
     return data.x_dict, data.edge_index_dict, data.edge_attr_dict
