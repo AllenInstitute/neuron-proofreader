@@ -10,7 +10,6 @@ NeuronProofreading pipelines.
 """
 
 from einops import rearrange
-from neurobase.finetune import finetune_model
 
 import torch
 import torch.nn as nn
@@ -131,36 +130,6 @@ class CNN3D(nn.Module):
 
 
 # --- Transformers ---
-class MAE3D(nn.Module):
-
-    def __init__(self):
-        # Call parent closs
-        super().__init__()
-
-        # Load model
-        full_model = finetune_model(
-            checkpoint_path="/home/jupyter/models/best_model-v1_mae_S.ckpt",
-            model_config="mae_S",
-            task_head_config="binary_classifier",
-            freeze_encoder=True
-        )
-
-        # Instance attributes
-        self.encoder = full_model.encoder
-        self.output = ml_util.init_feedforward(2 * 384, 1, 2)
-
-    def forward(self, x):
-        latent0 = self.encoder(x[:, 0:1, ...])
-        latent1 = self.encoder(x[:, 1:2, ...])
-
-        x0 = latent0["latents"][:, 0, :]
-        x1 = latent1["latents"][:, 0, :]
-
-        x = torch.cat((x0, x1), dim=1)
-        x = self.output(x)
-        return x
-
-
 class ViT3D(nn.Module):
     """
     A class that implements a 3D Vision transformer.
