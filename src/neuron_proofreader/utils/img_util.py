@@ -635,7 +635,7 @@ def pad_to_shape(img, target_shape, pad_value=0):
     return np.pad(img, pads, mode='constant', constant_values=pad_value)
 
 
-def resize(img, new_shape):
+def resize(img, new_shape, is_segmentation=False):
     """
     Resize a 3D image to the specified new shape using linear interpolation.
 
@@ -653,7 +653,9 @@ def resize(img, new_shape):
     """
     depth, height, width = img.shape
     zoom_factors = np.array(new_shape) / np.array([depth, height, width])
-    return zoom(img, zoom_factors, order=1)
+    order = 0 if is_segmentation else 3
+    multipler = 4 if is_segmentation else 1
+    return zoom(img, zoom_factors, order=order)
 
 
 def to_physical(voxel, anisotropy, offset=(0, 0, 0)):

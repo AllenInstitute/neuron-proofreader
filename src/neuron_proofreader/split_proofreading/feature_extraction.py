@@ -301,16 +301,16 @@ class ImageFeatureExtractor:
         self.annotate_edge(graph, u, segmentation_mask, offset)
         self.annotate_edge(graph, v, segmentation_mask, offset)
         self.annotate_proposal(graph, proposal, segmentation_mask, offset)
-        return img_util.resize(segmentation_mask, self.patch_shape)
+        return img_util.resize(segmentation_mask, self.patch_shape, True)
 
     def annotate_edge(self, graph, node, patch, offset):
         voxels = self.get_local_coordinates(graph, node, offset)
         voxels = geometry_util.make_voxels_connected(voxels)
-        img_util.annotate_voxels(patch, voxels, kernel_size=5, val=2)
+        img_util.annotate_voxels(patch, voxels, val=0.5)
 
     def annotate_proposal(self, graph, proposal, patch, offset):
         profile_line = self.get_profile_line(graph, proposal, offset)
-        img_util.annotate_voxels(patch, profile_line, kernel_size=5, val=3)
+        img_util.annotate_voxels(patch, profile_line, val=1)
 
     # --- Helpers ---
     def compute_proposal_crop(self, graph, proposal):
@@ -348,7 +348,7 @@ class ImageFeatureExtractor:
     def read_segmentation_mask(self, center, shape):
         if self.segmentation_reader:
             patch = self.segmentation_reader.read(center, shape)
-            return (patch > 0).astype(float)
+            return 0.25 * (patch > 0).astype(float)
         else:
             return np.zeros(shape)
 
