@@ -14,6 +14,8 @@ from einops import rearrange
 import torch
 import torch.nn as nn
 
+from neuron_proofreader.utils import ml_util
+
 
 # --- CNNs ---
 class CNN3D(nn.Module):
@@ -28,7 +30,7 @@ class CNN3D(nn.Module):
         dropout=0.1,
         n_conv_layers=5,
         n_feat_channels=16,
-        use_double_conv=True
+        use_double_conv=True,
     ):
         """
         Instantiates a CNN3D object.
@@ -61,7 +63,7 @@ class CNN3D(nn.Module):
 
         # Output layer
         flat_size = self._get_flattened_size()
-        self.output = init_feedforward(flat_size, output_dim, 3)
+        self.output = ml_util.init_feedforward(flat_size, output_dim, 3)
 
         # Initialize weights
         self.apply(self.init_weights)
@@ -143,7 +145,7 @@ class ViT3D(nn.Module):
         depth=6,
         heads=8,
         mlp_dim=1024,
-        output_dim=1
+        output_dim=1,
     ):
         """
         Instantiates a ViT3D object.
@@ -177,12 +179,15 @@ class ViT3D(nn.Module):
 
         # Transformer Blocks
         self.transformer = nn.Sequential(
-            *[TransformerEncoderBlock(emb_dim, heads, mlp_dim) for _ in range(depth)]
+            *[
+                TransformerEncoderBlock(emb_dim, heads, mlp_dim)
+                for _ in range(depth)
+            ]
         )
         self.norm = nn.LayerNorm(emb_dim)
 
         # Output layer
-        self.output = init_feedforward(emb_dim, output_dim, 2)
+        self.output = ml_util.init_feedforward(emb_dim, output_dim, 2)
 
         # Initialize weights
         self._init_weights()
@@ -260,7 +265,7 @@ class ImageTokenizer3D(nn.Module):
         img_shape,
         dropout=0.05,
         n_cnn_layers=3,
-        n_cnn_channels=32
+        n_cnn_channels=32,
     ):
         """
         Instantiates a ImageTokenizer3D object.
@@ -463,68 +468,23 @@ def init_conv_layer(in_channels, out_channels, kernel_size, use_double_conv):
     """
     # Convolution
     layers = [
-        nn.Conv3d(in_channels, out_channels, kernel_size, padding=kernel_size//2),
+        nn.Conv3d(
+            in_channels, out_channels, kernel_size, padding=kernel_size // 2
+        ),
         nn.BatchNorm3d(out_channels),
         nn.GELU(),
     ]
     if use_double_conv:
         layers += [
-            nn.Conv3d(out_channels, out_channels, kernel_size, padding=kernel_size//2),
+            nn.Conv3d(
+                out_channels,
+                out_channels,
+                kernel_size,
+                padding=kernel_size // 2,
+            ),
             nn.BatchNorm3d(out_channels),
             nn.GELU(),
         ]
     # Pooling
     layers.append(nn.MaxPool3d(kernel_size=2))
     return nn.Sequential(*layers)
-
-
-def init_feedforward(input_dim, output_dim, n_layers):
-    """
-    Initializes a feed forward neural network.
-
-    Parameters
-    ----------
-    input_dim : int
-        Dimension of the input.
-    output_dim : int
-        Dimension of the output of this network.
-    n_layers : int
-        Number of layers in the network.
-    """
-    layers = list()
-    input_dim_i = input_dim
-    output_dim_i = input_dim // 2
-    for i in range(n_layers):
-        layers.append(init_mlp(input_dim_i, input_dim_i * 2, output_dim_i))
-        input_dim_i = input_dim_i // 2
-        output_dim_i = output_dim_i // 2 if i < n_layers - 2 else output_dim
-    return nn.Sequential(*layers)
-
-
-def init_mlp(input_dim, hidden_dim, output_dim, dropout=0.1):
-    """
-    Initializes a multi-layer perceptron (MLP).
-
-    Parameters
-    ----------
-    input_dim : int
-        Dimension of input feature vector.
-    hidden_dim : int
-        Dimension of embedded feature vector.
-    output_dim : int
-        Dimension of output feature vector.
-    dropout : float, optional
-        Fraction of values to randomly drop during training. Default is 0.1.
-
-    Returns
-    -------
-    mlp : nn.Sequential
-        Multi-layer perception network.
-    """
-    mlp = nn.Sequential(
-        nn.Linear(input_dim, hidden_dim),
-        nn.GELU(),
-        nn.Dropout(p=dropout),
-        nn.Linear(hidden_dim, output_dim)
-    )
-    return mlp

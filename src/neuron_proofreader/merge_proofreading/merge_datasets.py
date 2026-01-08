@@ -19,8 +19,12 @@ import numpy as np
 import os
 import pandas as pd
 import random
+import torch
 
 from neuron_proofreader.machine_learning.augmentation import ImageTransforms
+from neuron_proofreader.machine_learning.geometric_gnn_models import (
+    subgraph_to_data,
+)
 from neuron_proofreader.machine_learning.point_cloud_models import (
     subgraph_to_point_cloud,
 )
@@ -67,15 +71,17 @@ class MergeSiteDataset(Dataset):
     patch_shape : Tuple[int], optional
         Shape of the 3D image patches to extract.
     """
-    random_negative_example_prob = 0.5
+    random_negative_example_prob = 0.8
 
     def __init__(
         self,
         merge_sites_df,
         anisotropy=(1.0, 1.0, 1.0),
+        brightness_clip=400,
         subgraph_radius=100,
         node_spacing=5,
         patch_shape=(128, 128, 128),
+        use_new_mask=False,
     ):
         """
         Instantiates a MergeSiteDataset object.
@@ -88,6 +94,8 @@ class MergeSiteDataset(Dataset):
         anisotropy : Tuple[float], optional
             Image to physical coordinates scaling factors to account for the
             anisotropy of the microscope. Default is (1.0, 1.0, 1.0).
+        brightness_clip : int, optional
+            ...
         subgraph_radius : int, optional
             Radius (in microns) around merge sites used to extract rooted
             subgraph. Default is 100μm.
@@ -98,15 +106,18 @@ class MergeSiteDataset(Dataset):
         """
         # Instance attributes
         self.anisotropy = anisotropy
+        self.brightness_clip = brightness_clip
         self.node_spacing = node_spacing
         self.merge_sites_df = merge_sites_df
         self.patch_shape = patch_shape
         self.subgraph_radius = subgraph_radius
+        self.use_new_mask = use_new_mask
 
         # Data structures
-        self.img_readers = dict()
         self.graphs = dict()
         self.gt_graphs = dict()
+        self.img_readers = dict()
+        self.segmentation_readers = dict()
         self.merge_site_kdtrees = dict()
 
     # --- Load Data ---
@@ -123,7 +134,11 @@ class MergeSiteDataset(Dataset):
             Pointer to SWC files to be loaded into a graph.
         """
         # Load graphs
-        graph = SkeletonGraph(node_spacing=self.node_spacing)
+        graph = SkeletonGraph(
+            anisotropy=self.anisotropy,
+            node_spacing=self.node_spacing,
+            use_anisotropy=False
+        )
         graph.load(swc_pointer)
 
         # Remove groundtruth skeletons
@@ -133,6 +148,16 @@ class MergeSiteDataset(Dataset):
                     graph.component_id_to_swc_id, swc_id
                 )
                 nodes = graph.get_nodes_with_component_id(component_id)
+                graph.remove_nodes(nodes, relabel_nodes=False)
+
+        # Remove fragments excluded from merge sites
+        brain_idxs = self.merge_sites_df["brain_id"] == brain_id
+        merge_sites = self.merge_sites_df[brain_idxs]
+        segment_ids = set(merge_sites["segment_id"].unique())
+        for nodes in map(list, list(nx.connected_components(graph))):
+            node = util.sample_once(nodes)
+            segment_id = graph.get_node_segment_id(node)
+            if segment_id not in segment_ids:
                 graph.remove_nodes(nodes, relabel_nodes=False)
         graph.relabel_nodes()
 
@@ -156,12 +181,15 @@ class MergeSiteDataset(Dataset):
         swc_pointer : str
             Pointer to SWC files to be loaded into graph.
         """
-        node_spacing = 2 * self.node_spacing
-        self.gt_graphs[brain_id] = SkeletonGraph(node_spacing=node_spacing)
+        self.gt_graphs[brain_id] = SkeletonGraph(
+            anisotropy=self.anisotropy,
+            node_spacing=self.node_spacing,
+            use_anisotropy=False
+        )
         self.gt_graphs[brain_id].load(swc_pointer)
         self.gt_graphs[brain_id].set_kdtree()
 
-    def load_image(self, brain_id, img_path):
+    def load_images(self, brain_id, img_path, segmentation_path):
         """
         Loads image reader for a whole-brain dataset, then stores it in the
         "img_readers" attribute.
@@ -170,10 +198,15 @@ class MergeSiteDataset(Dataset):
         ----------
         brain_id : str
             Unique identifier for a whole-brain dataset.
-        swc_pointer : str
-            Pointer to SWC files to be loaded into graph.
+        img_path : str
+            Path to whole-brain image.
+        segmentation_path : str
+            Path to segmentation of whole-brain image.
         """
         self.img_readers[brain_id] = img_util.TensorStoreReader(img_path)
+        self.segmentation_readers[brain_id] = img_util.TensorStoreReader(
+            segmentation_path
+        )
 
     # --- Create Subclass Dataset ---
     def subset(self, cls, idxs):
@@ -210,7 +243,7 @@ class MergeSiteDataset(Dataset):
             xyz = self.merge_sites_df["xyz"][i]
             if brain_id in self.graphs:
                 d, _ = self.graphs[brain_id].kdtree.query(xyz)
-                if d < 20:
+                if d < 10:
                     idxs.append(i)
 
         # Drop isolated sites
@@ -283,11 +316,11 @@ class MergeSiteDataset(Dataset):
         """
         # Get example
         brain_id, subgraph, label = self.get_site(idx)
-        voxel = img_util.to_voxels(subgraph.node_xyz[0], self.anisotropy)
+        voxel = subgraph.get_voxel(0)
 
         # Extract subgraph and image patches centered at site
         img_patch = self.get_img_patch(brain_id, voxel)
-        segment_mask = self.get_segment_mask(subgraph)
+        segment_mask = self.get_segment_mask(brain_id, voxel, subgraph)
 
         # Stack image channels
         try:
@@ -443,13 +476,13 @@ class MergeSiteDataset(Dataset):
         -------
         img_patch : numpy.ndarray
             Extracted image patch, which has been normalized and clipped to a
-            maximum value of 400.
+            maximum value of "self.brightness_clip".
         """
         img_patch = self.img_readers[brain_id].read(center, self.patch_shape)
-        img_patch = img_util.normalize(np.minimum(img_patch, 400))
-        return img_patch
+        img_patch = np.minimum(img_patch, self.brightness_clip)
+        return img_util.normalize(img_patch)
 
-    def get_segment_mask(self, subgraph):
+    def get_segment_mask(self, brain_id, center, subgraph):
         """
         Generates a binary mask for a given subgraph within a patch.
 
@@ -463,8 +496,18 @@ class MergeSiteDataset(Dataset):
         segment_mask : numpy.ndarray
             Binary mask for a given subgraph within a patch.
         """
+        # Read segmentation
+        if self.use_new_mask:
+            segment_mask = self.segmentation_readers[brain_id].read(
+                center, self.patch_shape
+            )
+            segment_mask = img_util.remove_small_segments(segment_mask, 1000)
+            segment_mask = 0.5 * (segment_mask > 0).astype(float)
+        else:
+            segment_mask = np.zeros(self.patch_shape)
+
+        # Annotate fragment
         center = subgraph.get_voxel(0)
-        segment_mask = np.zeros(self.patch_shape)
         for node1, node2 in subgraph.edges:
             # Get local voxel coordinates
             voxel1 = subgraph.get_local_voxel(node1, center, self.patch_shape)
@@ -472,7 +515,7 @@ class MergeSiteDataset(Dataset):
 
             # Populate mask
             voxels = geometry_util.make_digital_line(voxel1, voxel2)
-            img_util.annotate_voxels(segment_mask, voxels, kernel_size=3)
+            img_util.annotate_voxels(segment_mask, voxels)
         return segment_mask
 
     # --- Helpers ---
@@ -487,7 +530,9 @@ class MergeSiteDataset(Dataset):
         """
         return len(self.merge_sites_df)
 
-    def check_nearby_branching(self, brain_id, root, max_depth=70, use_gt=False):
+    def check_nearby_branching(
+        self, brain_id, root, max_depth=60, use_gt=False
+    ):
         """
         Checks if there is a branching node within a specified depth from the
         given node.
@@ -579,7 +624,7 @@ class MergeSiteTrainDataset(MergeSiteDataset):
     A class for storing and retrieving training examples.
     """
 
-    def __init__(self, base_dataset=None, idxs=None):
+    def __init__(self, base_dataset=None, idxs=None, negative_bias=0):
         """
         Instantiates a MergeSiteTrainDataset object.
 
@@ -589,12 +634,15 @@ class MergeSiteTrainDataset(MergeSiteDataset):
             Dataset to be instantiated as a train dataset.
         idxs : List[int], optional
             Indices of examples to be kept in train dataset.
+        negative_bias : float, optional
+            Specifies percentage of additional negative examples to add.
         """
         # Create sub-dataset
         subset_dataset = base_dataset.subset(self.__class__, idxs)
         self.__dict__.update(subset_dataset.__dict__)
 
         # Instance attributes
+        self.negative_bias = negative_bias
         self.transform = ImageTransforms()
 
     # --- Getters ---
@@ -644,8 +692,10 @@ class MergeSiteTrainDataset(MergeSiteDataset):
             return self.get_indexed_positive_site(idx)
         elif np.random.random() < self.random_negative_example_prob:
             return self.get_random_negative_site()
-        else:
+        elif abs(idx) < len(self):
             return self.get_indexed_negative_site(abs(idx))
+        else:
+            return self.get_random_negative_site()
 
     # --- Helpers ---
     def get_idxs(self):
@@ -657,7 +707,8 @@ class MergeSiteTrainDataset(MergeSiteDataset):
         numpy.ndarray
             Example indices to iterate over.
         """
-        return np.arange(-len(self) + 1, len(self))
+        n_negative_examples = int(len(self) * (1 + self.negative_bias))
+        return np.arange(-n_negative_examples + 1, len(self))
 
 
 class MergeSiteValDataset(MergeSiteDataset):
@@ -738,7 +789,8 @@ class MergeSiteValDataset(MergeSiteDataset):
             # Filter branching nodes near other branching nodes
             nodes = list()
             for u in graph.get_branchings():
-                if not self.check_nearby_branching(brain_id, u):
+                is_branchy = self.check_nearby_branching(brain_id, u)
+                if not is_branchy and graph.degree[u] == 3:
                     nodes.append(u)
 
             # Add nodes to examples
@@ -862,6 +914,7 @@ class MergeSiteDataLoader(DataLoader):
         dataset,
         batch_size=32,
         is_multimodal=False,
+        modality=None,
         sampler=None,
         use_shuffle=True
     ):
@@ -882,9 +935,11 @@ class MergeSiteDataLoader(DataLoader):
         """
         # Call parent class
         super().__init__(dataset, batch_size=batch_size, sampler=sampler)
+        assert modality in [None, "graph", "pointcloud"]
 
         # Instance attributes
         self.is_multimodal = is_multimodal
+        self.modality = modality
         self.patches_shape = (2,) + self.dataset.patch_shape
         self.use_shuffle = use_shuffle
 
@@ -906,12 +961,14 @@ class MergeSiteDataLoader(DataLoader):
         # Iterate over indices
         for start in range(0, len(idxs), self.batch_size):
             end = min(start + self.batch_size, len(idxs))
-            if self.is_multimodal:
-                yield self._load_multimodal_batch(idxs[start: end])
+            if self.is_multimodal and self.modality == "graph":
+                yield self._load_image_graph_batch(idxs[start: end])
+            elif self.is_multimodal and self.modality == "pointcloud":
+                yield self._load_image_pc_batch(idxs[start: end])
             else:
-                yield self._load_batch(idxs[start: end])
+                yield self._load_image_batch(idxs[start: end])
 
-    def _load_batch(self, batch_idxs):
+    def _load_image_batch(self, batch_idxs):
         """
         Loads a batch of samples from the dataset using multithreading.
 
@@ -924,8 +981,8 @@ class MergeSiteDataLoader(DataLoader):
         -------
         patches : torch.Tensor
             Image patches for the batch.
-        labels : torch.Tensor
-            Labels corresponding to each patch.
+        targets : torch.Tensor
+            Target labels corresponding to each patch.
         """
         with ThreadPoolExecutor() as executor:
             # Assign threads
@@ -936,13 +993,13 @@ class MergeSiteDataLoader(DataLoader):
 
             # Store results
             patches = np.zeros((len(batch_idxs),) + self.patches_shape)
-            labels = np.zeros((len(batch_idxs), 1))
+            targets = np.zeros((len(batch_idxs), 1))
             for thread in as_completed(pending.keys()):
                 i = pending.pop(thread)
-                patches[i], _, labels[i] = thread.result()
-        return ml_util.to_tensor(patches), ml_util.to_tensor(labels)
+                patches[i], _, targets[i] = thread.result()
+        return ml_util.to_tensor(patches), ml_util.to_tensor(targets)
 
-    def _load_multimodal_batch(self, batch_idxs):
+    def _load_image_pc_batch(self, batch_idxs):
         """
         Loads a batch of samples from the dataset using multithreading.
 
@@ -955,8 +1012,8 @@ class MergeSiteDataLoader(DataLoader):
         -------
         batch : Dict[str, torch.Tensor]
             Dictionary that maps modality names to batch features.
-        labels : torch.Tensor
-            Labels corresponding to each patch.
+        targets : torch.Tensor
+            Target labels corresponding to each patch.
         """
         with ThreadPoolExecutor() as executor:
             # Assign threads
@@ -967,12 +1024,12 @@ class MergeSiteDataLoader(DataLoader):
 
             # Store results
             patches = np.zeros((len(batch_idxs),) + self.patches_shape)
-            labels = np.zeros((len(batch_idxs), 1))
+            targets = np.zeros((len(batch_idxs), 1))
             point_clouds = np.zeros((len(batch_idxs), 3, 3600))
             for thread in as_completed(pending.keys()):
                 i = pending.pop(thread)
-                patches[i], subgraph, labels[i] = thread.result()
-                point_clouds[i] = subgraph_to_point_cloud(subgraph) #.T
+                patches[i], subgraph, targets[i] = thread.result()
+                point_clouds[i] = subgraph_to_point_cloud(subgraph)
 
         # Set batch dictionary
         batch = ml_util.TensorDict(
@@ -981,4 +1038,61 @@ class MergeSiteDataLoader(DataLoader):
                 "point_cloud": ml_util.to_tensor(point_clouds),
             }
         )
-        return batch, ml_util.to_tensor(labels)
+        return batch, ml_util.to_tensor(targets)
+
+    def _load_image_graph_batch(self, idxs):
+        """
+        Loads a batch of samples from the dataset using multithreading.
+
+        Parameters
+        ----------
+        idxs : List[int]
+            Indices of the dataset items to include in the batch.
+
+        Returns
+        -------
+        batch : Dict[str, torch.Tensor]
+            Dictionary that maps modality names to batch features.
+        targets : torch.Tensor
+            Target labels corresponding to each patch.
+        """
+        with ThreadPoolExecutor() as executor:
+            # Assign threads
+            threads = list()
+            for idx in idxs:
+                threads.append(executor.submit(self.dataset.__getitem__, idx))
+
+            # Store results
+            targets = np.zeros((len(idxs), 1))
+            patches = np.zeros((len(idxs),) + self.patches_shape)
+            h, x, edge_index, batches = list(), list(), list(), list()
+            node_offset = 0
+            for i, thread in enumerate(as_completed(threads)):
+                patches[i], subgraph, targets[i] = thread.result()
+                h_i, x_i, edge_index_i = subgraph_to_data(subgraph)
+                n_i = h_i.size(0)
+
+                edge_index_i += node_offset
+                h.append(h_i)
+                x.append(x_i)
+                edge_index.append(edge_index_i)
+                batches.append(
+                    torch.full((n_i,), i, dtype=torch.long)
+                )
+
+                node_offset += n_i
+
+        # Combine subgraph batches
+        h = torch.cat(h, dim=0)
+        x = torch.cat(x, dim=0)
+        edge_index = torch.cat(edge_index, dim=1)
+        batches = torch.cat(batches, dim=0)
+
+        # Set batch dictionary
+        batch = ml_util.TensorDict(
+            {
+                "img": ml_util.to_tensor(patches),
+                "graph": (h, x, edge_index, batches)
+            }
+        )
+        return batch, ml_util.to_tensor(targets)
