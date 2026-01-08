@@ -10,8 +10,10 @@ within NeuronProofreader pipelines.
 """
 
 from torch import nn
+from torch_geometric.nn import GATv2Conv
 
 import torch
+import torch.nn.functional as F
 
 from neuron_proofreader.machine_learning.vision_models import CNN3D
 from neuron_proofreader.utils import ml_util
@@ -20,13 +22,13 @@ from neuron_proofreader.utils import ml_util
 # --- Multimodal GNN Architectures ---
 class VisionSkeleton(nn.Module):
 
-    def __init__(self, ggnn_name, patch_shape, output_dim=128):
+    def __init__(self, ggnn_name, patch_shape, output_dim=64):
         # Call parent class
         super().__init__()
         assert ggnn_name in ["egnn"]
 
         # Architecture
-        self.skeleton_model = SkeletonGNN(ggnn_name, output_dim=output_dim)
+        self.skeleton_model = SkeletonGNN(ggnn_name, output_dim=32)
         self.vision_model = CNN3D(
             patch_shape,
             n_conv_layers=6,
@@ -34,7 +36,7 @@ class VisionSkeleton(nn.Module):
             output_dim=output_dim,
             use_double_conv=True,
         )
-        self.output = init_feedforward(2 * output_dim + 3, 1, 3)
+        self.output = ml_util.init_feedforward(output_dim + 35, 1, 3)
 
     def forward(self, x):
         """
@@ -63,34 +65,30 @@ class VisionSkeleton(nn.Module):
 
 class SkeletonGNN(nn.Module):
 
-    def __init__(self, ggnn_name, output_dim=128):
+    def __init__(self, ggnn_name, output_dim=64):
         # Call parent class
         super().__init__()
 
         # Instance attributes
-        self.gnn_h = None
-        self.gnn_x = None
+        self.gnn_h = GAT(output_dim, 2 * output_dim, output_dim)
+        self.gnn_x = GAT(3, 16, 3)
 
         # Set geometric gnn
         if ggnn_name == "egnn":
             self.geometric_gnn = EGNN(
                 in_node_dim=1,
-                hidden_dim=64,
+                hidden_dim=32,
                 out_node_dim=output_dim
             )
 
     # --- Core Routines ---
     def forward(self, h, x, edge_index, batch):
+        # Node-level embeddings
         h, x = self.geometric_gnn(h, x, edge_index)
-        return self.pool(h, x, edge_index, batch)
 
-    def pool(self, h, x, edge_index, batch):
-        # Move to CPU
-        batch = batch.detach().cpu()
-        edge_index = edge_index.detach().cpu()
-
-        # Iterate over graphs
+        # Graph-level embedddings
         h_skels = list()
+        edge_index = edge_index
         num_graphs = int(batch.max().item()) + 1
         for graph_id in range(num_graphs):
             # Extract subgraph
@@ -103,13 +101,11 @@ class SkeletonGNN(nn.Module):
             h_g, x_g, edge_index_g = self.pool_nonbranching_paths(h_g, x_g, edge_index_g)
 
             # Encode pooled graph
-            h_g, x_g, edge_index_g = self.encode_pooled_graph()
-            h_g = h_g.mean(dim=0)
-            x_g = x_g.mean(dim=0)
-            h_skels.append(torch.cat((h_g, x_g), dim=1))
+            h_g = self.encode_pooled_graph(h_g, x_g, edge_index_g)
+            h_skels.append(h_g)
         return torch.cat(h_skels, dim=0)
 
-    def _pool_nonbranching_paths(self, h, x, edge_index):
+    def pool_nonbranching_paths(self, h, x, edge_index):
         # Extract adjacency matrix and degrees
         num_nodes = h.size(0)
         adj, deg = self.get_adj_and_deg(edge_index, num_nodes)
@@ -179,6 +175,16 @@ class SkeletonGNN(nn.Module):
             adj[u].append(v)
             adj[v].append(u)
         return adj, deg
+
+    def encode_pooled_graph(self, h, x, edge_index):
+        # Message passing over pooled graph
+        h = self.gnn_h(h, edge_index)
+        x = self.gnn_x(x, edge_index)
+
+        # Graph-level pooling
+        h = h.mean(dim=0, keepdim=True)
+        x = x.mean(dim=0, keepdim=True)
+        return torch.cat((h, x), dim=1)
 
     # --- Helpers ---
     def extract_subgraph(self, h, x, edge_index, node_mask):
@@ -419,6 +425,98 @@ def unsorted_segment_mean(data, segment_ids, num_segments):
     result.scatter_add_(0, segment_ids, data)
     count.scatter_add_(0, segment_ids, torch.ones_like(data))
     return result / count.clamp(min=1)
+
+
+# --- GNN Architectures ---
+class GAT(nn.Module):
+
+    def __init__(
+        self,
+        in_channels,
+        hidden_channels,
+        out_channels,
+        num_layers=2,
+        heads=4,
+        dropout=0.1,
+    ):
+        # Call parent class
+        super().__init__()
+
+        # Instance attributes
+        self.convs = nn.ModuleList()
+        self.dropout = dropout
+
+        # First layer
+        self.convs.append(
+            GATv2Conv(
+                in_channels,
+                hidden_channels,
+                heads=heads,
+                concat=True,
+                dropout=dropout,
+            )
+        )
+
+        # Hidden layers
+        for _ in range(num_layers - 2):
+            self.convs.append(
+                GATv2Conv(
+                    hidden_channels * heads,
+                    hidden_channels,
+                    heads=heads,
+                    concat=True,
+                    dropout=dropout,
+                )
+            )
+
+        # Output layer
+        self.convs.append(
+            GATv2Conv(
+                hidden_channels * heads,
+                out_channels,
+                heads=1,
+                concat=False,
+                dropout=dropout,
+            )
+        )
+
+    def forward(self, x, edge_index):
+        for conv in self.convs[:-1]:
+            x = conv(x, edge_index)
+            x = F.elu(x)
+        x = self.convs[-1](x, edge_index)
+        return x
+
+
+class GATGraphEncoder(nn.Module):
+
+    def __init__(
+        self,
+        in_channels,
+        hidden_channels,
+        out_channels,
+        heads=4,
+        num_layers=2,
+        dropout=0.2,
+    ):
+        # Call parent class
+        super().__init__()
+
+        # Instance attributes
+        self.gnn = GAT(
+            in_channels=in_channels,
+            hidden_channels=hidden_channels,
+            out_channels=hidden_channels,
+            num_layers=num_layers,
+            heads=heads,
+            dropout=dropout,
+        )
+        self.readout = nn.Linear(hidden_channels, out_channels)
+
+    def forward(self, x, edge_index):
+        x = self.gnn(x, edge_index)
+        x = x.mean(dim=0, keepdim=True)
+        return self.readout(x)
 
 
 # --- Helpers ---

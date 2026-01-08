@@ -149,8 +149,7 @@ class TensorDict(dict):
     def to(self, device):
         return TensorDict({k: self.move(v, device) for k, v in self.items()})
 
-    @staticmethod
-    def move(v, device):
+    def move(self, v, device):
         if torch.is_tensor(v):
             if v.dtype == torch.float64:
                 v = v.float()
@@ -162,9 +161,9 @@ class TensorDict(dict):
                     v.pos = v.pos.float()
             return v
         elif isinstance(v, dict):
-            return {kk: move(vv) for kk, vv in v.items()}
+            return {kk: self.move(vv, device) for kk, vv in v.items()}
         elif isinstance(v, tuple):
-            return tuple([move(vv) for vv in v])
+            return tuple([self.move(vv, device) for vv in v])
         else:
             return v
 
