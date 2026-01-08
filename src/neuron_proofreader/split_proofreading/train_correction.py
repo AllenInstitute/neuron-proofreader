@@ -31,7 +31,7 @@ from neuron_proofreader.split_proofreading.feature_extraction import (
 from neuron_proofreader.utils import ml_util, util
 
 
-class GraphDataset(IterableDataset):
+class SplitFragmentsDataset(IterableDataset):
     """
     Dataset for storing graphs used to train a graph neural network to perform
     split correction. Graphs are stored in the "self.graphs" attribute, which

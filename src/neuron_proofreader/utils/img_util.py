@@ -651,11 +651,14 @@ def resize(img, new_shape, is_segmentation=False):
     numpy.ndarray
         Resized 3D image with shape equal to "new_shape".
     """
-    depth, height, width = img.shape
-    zoom_factors = np.array(new_shape) / np.array([depth, height, width])
+    # Set parameters
     order = 0 if is_segmentation else 3
-    multipler = 4 if is_segmentation else 1
-    return zoom(img, zoom_factors, order=order)
+    multiplier = 4 if is_segmentation else 1
+    zoom_factors = np.array(new_shape) / np.array(img.shape)
+
+    # Resize image
+    img = zoom(multiplier * img, zoom_factors, order=order)
+    return img / multiplier
 
 
 def to_physical(voxel, anisotropy, offset=(0, 0, 0)):
