@@ -55,7 +55,6 @@ class VisionSkeleton(nn.Module):
         # Modality-based embeddings
         x_img = self.vision_model(x["img"])
         x_skel = self.skeleton_model(*x["graph"])
-        print(x_img.size(), x_skel.size())
         x = torch.cat((x_img, x_skel), dim=1)
 
         # Output layer
