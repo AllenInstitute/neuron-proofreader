@@ -18,31 +18,75 @@ import torch.nn as nn
 
 from neuron_proofreader.utils import util
 
-GNN_DEPTH = 2
-
 
 # --- Architectures ---
-def init_feedforward(input_dim, output_dim, n_layers):
+class FeedForwardNet(nn.Module):
     """
-    Initializes a feed forward neural network.
+    A class that implements a feed forward neural network.
+    """
 
-    Parameters
-    ----------
-    input_dim : int
-        Dimension of the input.
-    output_dim : int
-        Dimension of the output of this network.
-    n_layers : int
-        Number of layers in the network.
-    """
-    layers = list()
-    input_dim_i = input_dim
-    output_dim_i = input_dim // 2
-    for i in range(n_layers):
-        layers.append(init_mlp(input_dim_i, input_dim_i * 2, output_dim_i))
-        input_dim_i = input_dim_i // 2
-        output_dim_i = output_dim_i // 2 if i < n_layers - 2 else output_dim
-    return nn.Sequential(*layers)
+    def __init__(self, input_dim, output_dim, n_layers):
+        """
+        Instantiates a FeedFowardNet object.
+
+        Parameters
+        ----------
+        input_dim : int
+            Dimension of the input.
+        output_dim : int
+            Dimension of the output of the network.
+        n_layers : int
+            Number of layers in the network.
+        """
+        # Call parent class
+        super().__init__()
+
+        # Instance attributes
+        self.net = self.build_network(input_dim, output_dim, n_layers)
+
+    def build_network(self, input_dim, output_dim, n_layers):
+        # Set input/output dimensions
+        input_dim_i = input_dim
+        output_dim_i = input_dim // 2
+
+        # Build architecture
+        layers = []
+        for i in range(n_layers):
+            mlp = init_mlp(input_dim_i, input_dim_i * 2, output_dim_i)
+            layers.append(mlp)
+
+            input_dim_i = input_dim_i // 2
+            output_dim_i = (
+                output_dim_i // 2 if i < n_layers - 2 else output_dim
+            )
+
+        # Initialize weights
+        net = nn.Sequential(*layers)
+        net.apply(self._init_weights)
+        return net
+
+    @staticmethod
+    def _init_weights(m):
+        if isinstance(m, nn.Linear):
+            nn.init.kaiming_normal_(m.weight, nonlinearity="leaky_relu")
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+
+    def forward(self, x):
+        """
+        Passes the given input through this neural network.
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input vector of features.
+
+        Returns
+        -------
+        x : torch.Tensor
+            Output of the neural network.
+        """
+        return self.net(x)
 
 
 def init_mlp(input_dim, hidden_dim, output_dim, dropout=0.1):
@@ -52,11 +96,11 @@ def init_mlp(input_dim, hidden_dim, output_dim, dropout=0.1):
     Parameters
     ----------
     input_dim : int
-        Dimension of input feature vector.
+        Dimension of input.
     hidden_dim : int
-        Dimension of embedded feature vector.
+        Dimension of the hidden layer.
     output_dim : int
-        Dimension of output feature vector.
+        Dimension of output.
     dropout : float, optional
         Fraction of values to randomly drop during training. Default is 0.1.
 
@@ -67,80 +111,11 @@ def init_mlp(input_dim, hidden_dim, output_dim, dropout=0.1):
     """
     mlp = nn.Sequential(
         nn.Linear(input_dim, hidden_dim),
-        nn.GELU(),
+        nn.LeakyReLU(),
         nn.Dropout(p=dropout),
         nn.Linear(hidden_dim, output_dim),
     )
     return mlp
-
-
-# --- Batch Generation ---
-def get_batch(graph, proposals, batch_size, flagged_proposals=set()):
-    """
-    Gets a batch for training that consist of a computation graph and list of
-    proposals. Note: queue contains tuples that consist of a node id and
-    distance from proposal.
-
-    Parameters
-    ----------
-    graph : FragmentsGraph
-        Graph that contains proposals to be classified.
-    proposals : list
-        Proposals to be classified as accept or reject.
-    batch_size : int
-        Maximum number of proposals in the computation graph.
-    flagged_proposals : List[frozenset], optional
-        List of proposals that are part of a large connected component in the
-        proposal induced subgraph of "graph". The default is None
-
-    Returns
-    -------
-    dict
-        Batch that consists of set of proposals and the computation graph.
-
-    """
-    # Helpers
-    def visit_proposal(p):
-        batch["graph"].add_edge(i, j)
-        batch["proposals"].add(p)
-        proposals.remove(p)
-        queue.append((j, 0))
-
-    # Main
-    batch = {"graph": nx.Graph(), "proposals": set()}
-    visited = set()
-    while len(proposals) > 0 and len(batch["proposals"]) < batch_size:
-        root = tuple(util.sample_once(proposals))
-        queue = deque([(root[0], 0), (root[1], 0)])
-        while len(queue) > 0:
-            # Visit node's nbhd
-            i, d = queue.pop()
-            for j in graph.neighbors(i):
-                if (i, j) not in batch["graph"].edges:
-                    batch["graph"].add_edge(i, j)
-            visited.add(i)
-
-            # Visit node's proposals
-            for j in graph.nodes[i]["proposals"]:
-                p = frozenset({i, j})
-                if p in proposals and p in flagged_proposals:
-                    for q in graph.extract_proposal_component(p):
-                        q_0, q_1 = tuple(q)
-                        if q_0 not in visited:
-                            queue.append((q_0, 0))
-                        if q_1 not in visited:
-                            queue.append((q_1, 0))
-                        visit_proposal(q)
-                elif p in proposals:
-                    visit_proposal(p)
-
-            # Update queue
-            if len(batch["proposals"]) < batch_size:
-                for j in [j for j in graph.neighbors(i) if j not in visited]:
-                    d_j = min(d + 1, -len(graph.nodes[j]["proposals"]))
-                    if d_j <= GNN_DEPTH:
-                        queue.append((j, d + 1))
-    return batch
 
 
 # --- Data Structures ---
@@ -169,10 +144,9 @@ class TensorDict(dict):
 
 
 # --- Miscellaneous ---
-def get_inputs(data, device="cpu"):
+def get_inputs(data, device="cuda"):
     """
-    Extracts input data for a graph-based model and optionally moves it to a
-    GPU.
+    Extracts input data for a gnn model and optionally moves it to a device.
 
     Parameters
     ----------
@@ -182,16 +156,16 @@ def get_inputs(data, device="cpu"):
             - edge_index_dict: Dictionary of edge indices for edge types.
             - edge_attr_dict: Dictionary of edge attributes for edge types.
     device : str, optional
-        Target device for the data, 'cuda' for GPU and 'cpu' for CPU. The
-        default is "cpu".
+        Device to load the model onto. Default is "cuda".
 
     Returns
     --------
-    tuple:
-        Tuple containing the following:
-            - x (dict): Node features dictionary.
-            - edge_index (dict): Edge indices dictionary.
-            - edge_attr (dict): Edge attributes dictionary.
+    x : dict
+        Node features dictionary.
+    edge_index : dict
+        Edge indices dictionary.
+    edge_attr : dict
+        Edge attributes dictionary.
     """
     data.to(device)
     return data.x_dict, data.edge_index_dict, data.edge_attr_dict

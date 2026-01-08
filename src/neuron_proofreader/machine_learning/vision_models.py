@@ -14,7 +14,7 @@ from einops import rearrange
 import torch
 import torch.nn as nn
 
-from neuron_proofreader.utils import ml_util
+from neuron_proofreader.utils.ml_util import FeedForwardNet
 
 
 # --- CNNs ---
@@ -63,7 +63,7 @@ class CNN3D(nn.Module):
 
         # Output layer
         flat_size = self._get_flattened_size()
-        self.output = ml_util.init_feedforward(flat_size, output_dim, 3)
+        self.output = FeedForwardNet(flat_size, output_dim, 3)
 
         # Initialize weights
         self.apply(self.init_weights)
@@ -187,7 +187,7 @@ class ViT3D(nn.Module):
         self.norm = nn.LayerNorm(emb_dim)
 
         # Output layer
-        self.output = ml_util.init_feedforward(emb_dim, output_dim, 2)
+        self.output = FeedForwardNet(emb_dim, output_dim, 2)
 
         # Initialize weights
         self._init_weights()

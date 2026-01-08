@@ -16,7 +16,7 @@ import torch
 import torch.nn.functional as F
 
 from neuron_proofreader.machine_learning.vision_models import CNN3D
-from neuron_proofreader.utils import ml_util
+from neuron_proofreader.utils.ml_util import FeedForwardNet
 
 
 # --- Multimodal GNN Architectures ---
@@ -36,7 +36,7 @@ class VisionSkeleton(nn.Module):
             output_dim=output_dim,
             use_double_conv=True,
         )
-        self.output = ml_util.init_feedforward(output_dim + 35, 1, 3)
+        self.output = FeedForwardNet(output_dim + 35, 1, 3)
 
     def forward(self, x):
         """
@@ -179,6 +179,11 @@ class SkeletonGNN(nn.Module):
         # Message passing over pooled graph
         h = self.gnn_h(h, edge_index)
         x = self.gnn_x(x, edge_index)
+
+        # temp
+        if h.size(0) == 0 or x.size(0) == 0:
+            print(h.size(0), x.size(0))
+            raise RuntimeError("Empty tensor passed to graph pooling")
 
         # Graph-level pooling
         h = h.mean(dim=0, keepdim=True)
@@ -395,6 +400,7 @@ class E_GCL(nn.Module):
             norm = torch.sqrt(radial).detach() + self.epsilon
             coord_diff = coord_diff / norm
 
+        radial = torch.zeros_like(radial, device="cuda")
         return radial, coord_diff
 
     def forward(self, h, edge_index, coord, edge_attr=None, node_attr=None):
