@@ -15,7 +15,7 @@ import numpy as np
 import torch
 from torch_geometric.data import HeteroData as HeteroGraphData
 
-from neuron_proofreader.split_proofreading.feature_generation import (
+from neuron_proofreader.split_proofreading.feature_extraction import (
     get_matrix,
     get_patches_matrix,
 )
