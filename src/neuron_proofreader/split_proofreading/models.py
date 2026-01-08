@@ -16,7 +16,7 @@ import re
 import torch
 import torch.nn.init as init
 
-from neuron_proofreader.split_proofreading import feature_generation
+from neuron_proofreader.split_proofreading import feature_extraction
 
 
 class HGAT(torch.nn.Module):
@@ -32,8 +32,6 @@ class HGAT(torch.nn.Module):
 
     def __init__(
         self,
-        node_dict,
-        edge_dict,
         hidden_dim=64,
         dropout=0.2,
         heads_1=2,
@@ -49,10 +47,12 @@ class HGAT(torch.nn.Module):
 
         # Initial Embedding
         self.input_nodes = nn.ModuleDict()
+        node_dict = feature_extraction.get_node_dict()
         for key, d in node_dict.items():
             self.input_nodes[key] = nn.Linear(d, hidden_dim)
 
         self.input_edges = dict()
+        edge_dict = feature_extraction.get_edge_dict()
         for key, d in edge_dict.items():
             self.input_edges[key] = nn.Linear(d, hidden_dim)
 
@@ -155,7 +155,7 @@ class HGAT(torch.nn.Module):
         return x_dict
 
 
-class MultiModalHGAT(torch.nn.Module):
+class VisionHGAT(torch.nn.Module):
     """
     Heterogeneous graph attention network that processes multimodal features
     such as image patches and feature vectors.
@@ -167,20 +167,13 @@ class MultiModalHGAT(torch.nn.Module):
         str(("branch", "edge", "branch")),
     ]
 
-    def __init__(
-        self,
-        node_input_dims,
-        edge_input_dims,
-        heads_1=2,
-        heads_2=2,
-        hidden_dim=128,
-    ):
+    def __init__(self, heads_1=2, heads_2=2, hidden_dim=128):
         # Call parent class
         super().__init__()
 
         # Initial embeddings
-        self._init_node_embedding(node_input_dims, hidden_dim)
-        self._init_edge_embedding(edge_input_dims, hidden_dim)
+        self._init_node_embedding(hidden_dim)
+        self._init_edge_embedding(hidden_dim)
         self._init_patch_embedding(hidden_dim // 2)
 
         # Message passing layers
@@ -197,10 +190,6 @@ class MultiModalHGAT(torch.nn.Module):
         """
         Gets a list of relations expected by this architecture.
 
-        Parameters
-        ----------
-        None
-
         Returns
         -------
         List[Tuple[str]]
@@ -209,40 +198,41 @@ class MultiModalHGAT(torch.nn.Module):
         return cls.relations
 
     # --- Constructor Helpers ---
-    def _init_node_embedding(self, node_input_dims, output_dim):
+    def _init_node_embedding(self, output_dim):
         """
         Builds the initial node embedding layer using a Multi-Layer Perceptron
         (MLP) for each type of node.
 
         Parameters
         ----------
-        node_input_dims : dict
-            Dictionary containing the input dimensions for each node type.
         output_dim : int
             Output dimension for the embeddings. Note that the proposal output
             dimension must be divided by 2 to account for the image patch
             features.
         """
+        # Get feature dimensions
+        node_input_dims = feature_extraction.get_node_dict()
         input_dim_b = node_input_dims["branch"]
         input_dim_p = node_input_dims["proposal"]
+
+        # Set node embedding layer
         self.node_embedding = nn.ModuleDict({
             "branch": init_mlp(input_dim_b, output_dim),
             "proposal": init_mlp(input_dim_p, output_dim // 2),
         })
 
-    def _init_edge_embedding(self, edge_input_dims, output_dim):
+    def _init_edge_embedding(self, output_dim):
         """
         Builds the initial edge embedding layer using a Multi-Layer Perceptron
         (MLP) for each type of node.
 
         Parameters
         ----------
-        edge_input_dims : dict
-            Dictionary containing the input dimensions for each edge type.
         output_dim : int
             Output dimension for the embeddings.
         """
         self.edge_embedding = nn.ModuleDict()
+        edge_input_dims = feature_extraction.get_edge_dict()
         for key, input_dim in edge_input_dims.items():
             self.edge_embedding[str(key)] = init_mlp(input_dim, output_dim)
 
@@ -447,10 +437,10 @@ def init_model(is_multimodal, heads_1=2, heads_2=4):
     torch.nn.Module
         An initialized instance of HGAT or MultiModalHGAT.
     """
-    node_dict = feature_generation.get_node_dict()
-    edge_dict = feature_generation.get_edge_dict()
+    node_dict = feature_extraction.get_node_dict()
+    edge_dict = feature_extraction.get_edge_dict()
     if is_multimodal:
-        model = MultiModalHGAT(
+        model = VisionHGAT(
             node_dict, edge_dict, heads_1=heads_1, heads_2=heads_2
         )
     else:

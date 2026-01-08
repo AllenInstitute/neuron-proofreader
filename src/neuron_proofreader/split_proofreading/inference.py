@@ -29,8 +29,6 @@ Note: Steps 2 and 3 of the inference pipeline can be iterated in a loop that
 
 """
 
-
-from collections import deque
 from datetime import datetime
 from time import time
 from torch.nn.functional import sigmoid
@@ -42,6 +40,9 @@ import os
 import torch
 
 from neuron_proofreader.proposal_graph import ProposalGraph
+from neuron_proofreader.machine_learning.subgraph_sampler import (
+    SubgraphSampler, SeededSubgraphSampler
+)
 from neuron_proofreader.split_proofreading import datasets
 from neuron_proofreader.split_proofreading.feature_generation import (
     FeatureGenerator,
@@ -459,9 +460,9 @@ class InferenceEngine:
 
     def init_dataloader(self):
         if len(self.graph.soma_ids) > 0:
-            return SeededGraphDataLoader(self.graph, self.batch_size)
+            return SeededSubgraphSampler(self.graph, self.batch_size)
         else:
-            return GraphDataLoader(self.graph, self.batch_size)
+            return SubgraphSampler(self.graph, self.batch_size)
 
     def run(self, return_preds=False):
         """
@@ -627,224 +628,3 @@ class InferenceEngine:
                 self.graph.merge_proposal(proposal)
                 accepts.append(proposal)
         return accepts
-
-
-# --- Custom Dataloaders ---
-class GraphDataLoader:
-
-    def __init__(self, graph, batch_size=200, gnn_depth=2):
-        # Instance attributes
-        self.batch_size = batch_size
-        self.gnn_depth = gnn_depth
-        self.graph = graph
-        self.proposals = set(graph.list_proposals())
-
-        # Identify clustered proposals
-        self.flagged = set()  # self.find_proposal_clusters(5)
-
-    def find_proposal_clusters(self, k):
-        flagged = set()
-        visited = set()
-        for proposal in self.proposals:
-            if proposal not in visited:
-                cluster = self.extract_cluster(proposal)
-                if len(cluster) >= k:
-                    flagged = flagged.union(cluster)
-                visited = visited.union(cluster)
-        return flagged
-
-    def extract_cluster(self, proposal):
-        """
-        Extracts the connected component that "proposal" belongs to in the
-        proposal induced subgraph.
-
-        Parameters
-        ----------
-        proposal : Frozenset[int]
-            Proposal used as the root to extract its connected component in
-            the proposal induced subgraph.
-
-        Returns
-        -------
-        Set[Frozenset[int]]
-            Connected component that "proposal" belongs to in the proposal
-            induced subgraph.
-        """
-        queue = deque([proposal])
-        visited = set()
-        while len(queue) > 0:
-            # Visit proposal
-            proposal = queue.pop()
-            visited.add(proposal)
-
-            # Update queue
-            for i in proposal:
-                for j in self.graph.node_proposals[i]:
-                    proposal_ij = frozenset({i, j})
-                    if proposal_ij not in visited:
-                        queue.append(proposal_ij)
-        return visited
-
-    # --- Batch Generation ---
-    def __iter__(self):
-        while self.proposals:
-            # Run BFS
-            batch = {"graph": nx.Graph(), "proposals": set()}
-            while not self.is_batch_full(batch) and self.proposals:
-                root = util.sample_once(self.proposals)
-                self.populate_via_bfs(batch, root)
-
-            # Yield batch
-            yield batch
-
-    def populate_via_bfs(self, batch, root):
-        i, j = tuple(root)
-        queue = deque([(i, 0), (j, 0)])
-        visited = set({i, j})
-        while queue:
-            # Visit node
-            i, d_i = queue.popleft()
-            self.visit_nbhd(batch, i)
-            self.visit_proposals(batch, queue, visited, i)
-
-            # Update queue
-            for j in self.graph.neighbors(i):
-                if j not in visited:
-                    n_j = len(self.graph.node_proposals[j])
-                    d_j = min(d_i + 1, -n_j)
-                    if d_j <= self.gnn_depth:
-                        queue.append((j, d_j))
-                        visited.add(j)
-
-    def visit_nbhd(self, batch, i):
-        for j in self.graph.neighbors(i):
-            batch["graph"].add_edge(i, j)
-
-    def visit_proposals(self, batch, queue, visited, i):
-        if not self.is_batch_full(batch):
-            for j in self.graph.node_proposals[i]:
-                # Visit proposal
-                proposal = frozenset({i, j})
-                if proposal in self.proposals:
-                    batch["graph"].add_edge(i, j)
-                    batch["proposals"].add(proposal)
-                    self.proposals.remove(proposal)
-                    if j not in visited:
-                        queue.append((j, 0))
-
-                # Check if proposal is flagged
-                # proposal in self.flagged and proposal in self.proposals:
-                if False:
-                    self.visit_flagged_proposal(batch)
-
-    def visit_flagged_proposal(self, batch, queue, visited, proposal):
-        nodes_added = set()
-        for p in self.extract_cluster(proposal):
-            # Add proposal
-            node_1, node_2 = tuple(p)
-            batch["graph"].add_edge(node_1, node_2)
-            batch["proposals"].add(p)
-
-            # Update queue
-            if not (node_1 in visited and node_1 in nodes_added):
-                queue.append((node_1, 0))
-            if not (node_2 in visited and node_2 in nodes_added):
-                queue.append((node_2, 0))
-
-    def is_batch_full(self, batch):
-        return True if len(batch["proposals"]) >= self.batch_size else False
-
-
-class SeededGraphDataLoader(GraphDataLoader):
-
-    def __init__(self, graph, batch_size=200, gnn_depth=2):
-        # Call parent class
-        super(SeededGraphDataLoader, self).__init__(
-            graph, batch_size, gnn_depth
-        )
-
-    # --- Batch Generation ---
-    def __iter__(self):
-        soma_connected_proposals_exist = True
-        while soma_connected_proposals_exist:
-            # Run BFS
-            batch = {
-                "graph": nx.Graph(),
-                "proposals": set(),
-                "soma_proposals": set()
-            }
-            while not self.is_batch_full(batch) and self.proposals:
-                root = self.find_bfs_root()
-                if root:
-                    self.populate_via_seeded_bfs(batch, root)
-                else:
-                    soma_connected_proposals_exist = False
-                    break
-
-            # Yield batch
-            if batch["proposals"]:
-                yield batch
-
-        # Call parent class dataloader
-        for batch in super().__iter__():
-            yield batch
-
-    def find_bfs_root(self):
-        for proposal in self.proposals:
-            i, j = tuple(proposal)
-            if self.graph.is_soma(i):
-                return i
-            elif self.graph.is_soma(j):
-                return j
-        return False
-
-    def populate_via_seeded_bfs(self, batch, root):
-        queue = self.init_seeded_queue(root)
-        visited = set({root})
-        while queue:
-            # Visit node
-            i, d_i = queue.popleft()
-            self.visit_nbhd(batch, i)
-            self.visit_proposals_seeded(batch, queue, visited, i)
-
-            # Update queue
-            for j in self.graph.neighbors(i):
-                if j not in visited:
-                    n_j = len(self.graph.node_proposals[j])
-                    d_j = min(d_i + 1, -n_j)
-                    if d_j <= self.gnn_depth:
-                        queue.append((j, d_j))
-                        visited.add(j)
-
-    def init_seeded_queue(self, root):
-        seeded_queue = deque([(root, 0)])
-        queue = deque([root])
-        visited = set({root})
-        while queue:
-            # Visit node
-            i = queue.pop()
-            if self.graph.node_proposals[i]:
-                seeded_queue.append((i, 0))
-
-            # Update queue
-            for j in self.graph.neighbors(i):
-                if j not in visited:
-                    queue.append(j)
-                    visited.add(j)
-        return seeded_queue
-
-    def visit_proposals_seeded(self, batch, queue, visited, i):
-        if len(batch["proposals"]) < self.batch_size:
-            for j in self.graph.node_proposals[i]:
-                # Visit proposal
-                proposal = frozenset({i, j})
-                if proposal in self.proposals:
-                    batch["graph"].add_edge(i, j)
-                    batch["proposals"].add(proposal)
-                    self.proposals.remove(proposal)
-                    if j not in visited:
-                        queue.append((j, 0))
-
-                # Check if proposal is connected to soma
-                if self.graph.is_soma(i) or self.graph.is_soma(j):
-                    batch["soma_proposals"].add(proposal)

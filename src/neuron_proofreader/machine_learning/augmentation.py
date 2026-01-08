@@ -24,15 +24,6 @@ class ImageTransforms:
         """
         Initializes an ImageTransforms instance that applies augmentation to
         an image and segmentation patch.
-
-        Parameters
-        ----------
-        use_geometric : bool, optional
-            Indication of whether to use geometric transforms. Default is
-            True.
-        use_intensity : bool, optional
-            Indication of whether to use transforms that alter the image
-            intensity distribution. Default is True.
         """
         # Instance attributes
         self.transforms = [
@@ -55,6 +46,7 @@ class ImageTransforms:
         """
         for transform in self.transforms:
             transform(patches)
+        return patches
 
 
 # --- Geometric Transforms ---
@@ -123,8 +115,37 @@ class RandomRotation3D:
         for axes in self.axes:
             if random.random() < 0.5:
                 angle = random.uniform(*self.angles)
-                patches[0, ...] = rotate3d(patches[0, ...], angle, axes)
-                patches[1, ...] = rotate3d(patches[1, ...], angle, axes, True)
+                self.rotate3d(patches[0, ...], angle, axes, False)
+                self.rotate3d(patches[1, ...], angle, axes, True)
+
+    @staticmethod
+    def rotate3d(img_patch, angle, axes, is_segmentation=False):
+        """
+        Rotates a 3D image patch around the specified axes by a given angle.
+    
+        Parameters
+        ----------
+        img_patch : numpy.ndarray
+            Image to be rotated.
+        angle : float
+            Angle (in degrees) by which to rotate the image patch around the
+            specified axes.
+        axes : Tuple[int]
+            Tuple representing the two axes of rotation.
+        is_segmentation : bool, optional
+            Indication of whether the image is a segmentation. Default is False.
+        """
+        order = 0 if is_segmentation else 3
+        multipler = 4 if is_segmentation else 1
+        img_patch = rotate(
+            multipler * img_patch,
+            angle,
+            axes=axes,
+            mode="grid-mirror",
+            reshape=False,
+            order=order,
+        )
+        img_patch /= multipler
 
 
 class RandomScale3D:
@@ -241,38 +262,3 @@ class RandomNoise3D:
         noise = np.random.uniform(-std, std, img_patch[0, ...].shape)
         img_patch[0, ...] += noise
         img_patch[0, ...] = np.clip(img_patch[0, ...], 0, 1)
-
-
-# --- Helpers ---
-def rotate3d(img_patch, angle, axes, is_segmentation=False):
-    """
-    Rotates a 3D image patch around the specified axes by a given angle.
-
-    Parameters
-    ----------
-    img_patch : numpy.ndarray
-        Image to be rotated.
-    angle : float
-        Angle (in degrees) by which to rotate the image patch around the
-        specified axes.
-    axes : Tuple[int]
-        Tuple representing the two axes of rotation.
-    is_segmentation : bool, optional
-        Indication of whether the image is a segmentation. Default is False.
-
-    Returns
-    -------
-    img_patch : numpy.ndarray
-        Rotated 3D image patch.
-    """
-    order = 0 if is_segmentation else 3
-    multipler = 2 if is_segmentation else 1
-    img_patch = rotate(
-        multipler * img_patch,
-        angle,
-        axes=axes,
-        mode="grid-mirror",
-        reshape=False,
-        order=order,
-    )
-    return img_patch / multipler
