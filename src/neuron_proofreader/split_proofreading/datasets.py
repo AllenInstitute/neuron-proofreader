@@ -8,87 +8,22 @@ Custom datasets for training graph neural networks.
 
 """
 
-from random import sample
-
 import networkx as nx
 import numpy as np
 import torch
-from torch_geometric.data import HeteroData as HeteroGraphData
+from torch_geometric.data import HeteroData
 
-from neuron_proofreader.split_proofreading.feature_extraction import (
-    get_matrix,
-    get_patches_matrix,
-)
 from neuron_proofreader.utils import ml_util
 
 DTYPE = torch.float32
 
 
-# Wrapper
-def init(features, graph, gt_accepts=set()):
-    """
-    Initializes a dataset that can be used to train a graph neural network.
-
-    Parameters
-    ----------
-    features : dict
-        Dictionary that contains different types of feature vectors for nodes,
-        edges, and proposals.
-    graph : networkx.Graph
-        Graph used by gnn to classify proposals.
-    gt_accepts : Set[Frozenset[int]]
-        Ground truth set of proposals are accepts. Default is an empty set.
-
-    Returns
-    -------
-    HeteroGraphDataset
-        Custom dataset.
-    """
-    # Extract features -- rewrite as build_feature_matrix
-    idxs, x_dict = dict(), dict()
-    x_dict["branches"], _, idxs["branches"] = get_matrix(features["branches"])
-    x_dict["proposals"], y_proposals, idxs["proposals"] = get_matrix(
-        features["proposals"], gt_accepts
-    )
-    x_dict["nodes"] = features["nodes"]
-
-    # Build patch matrix
-    if "patches" in features:
-        x_dict["patch"] = get_patches_matrix(
-            features["patches"], idxs["proposals"]["id_to_idx"]
-        )
-
-    # Initialize dataset
-    proposals = list(features["proposals"].keys())
-    if "patches" in features:
-        Dataset = HeteroGraphMultiModalDataset
-    else:
-        Dataset = HeteroGraphDataset
-
-    dataset = Dataset(
-        graph,
-        proposals,
-        x_dict,
-        y_proposals,
-        idxs,
-    )
-    return dataset
-
-
-# Datasets
-class HeteroGraphDataset:
+class HeteroGraphData:
     """
     Custom dataset for heterogenous graphs.
     """
 
-    def __init__(
-        self,
-        graph,
-        proposals,
-        x_dict,
-        y_proposals,
-        idxs,
-    ):
+    def __init__(self, graph, features):
         """
         Constructs a HeteroGraphDataset object.
 
@@ -107,10 +42,10 @@ class HeteroGraphDataset:
             in either x_branches or x_proposals.
         """
         # Conversion idxs
-        self.idxs_branches = idxs["branches"]
-        self.idxs_proposals = idxs["proposals"]
+        self.idxs_branches = features.edge_index_mapping
+        self.idxs_proposals = features.proposal_index_mapping
         self.graph = graph
-        self.proposals = proposals
+        self.proposals = graph.list_proposals()
 
         # Types
         self.node_types = ["branch", "proposal"]
@@ -121,17 +56,17 @@ class HeteroGraphDataset:
         ]
 
         # Features
-        self.init_nodes(x_dict, y_proposals)
+        self.init_nodes(features)
         self.init_edges()
         self.check_missing_edge_types()
-        self.init_edge_attrs(x_dict["nodes"])
-        self.n_edge_attrs = n_edge_features(x_dict["nodes"])
+        self.init_edge_attrs(features.node_features)
+        self.n_edge_attrs = features.node_features.size(1)
 
-    def init_nodes(self, x_dict, y_proposals):
-        self.data = HeteroGraphData()
-        self.data["branch"].x = torch.tensor(x_dict["branches"], dtype=DTYPE)
-        self.data["proposal"].x = torch.tensor(x_dict["proposals"], dtype=DTYPE)
-        self.data["proposal"].y = torch.tensor(y_proposals, dtype=DTYPE)
+    def init_nodes(self, features):
+        self.data = HeteroData()
+        self.data["branch"].x = torch.tensor(features.edge_features, dtype=DTYPE)
+        self.data["proposal"].x = torch.tensor(features.proposal_features, dtype=DTYPE)
+        self.data["proposal"].y = torch.tensor(features.targets, dtype=DTYPE)
 
     def init_edges(self):
         """
@@ -217,18 +152,6 @@ class HeteroGraphDataset:
 
         """
         return self.data["proposal"]["x"].size(1)
-
-    def n_edge_features(self):
-        """
-        Gets the dimension of feature vector for edges.
-
-        Returns
-        -------
-        int
-            Dimension of feature vector for edges.
-        """
-        edge_type = ("proposal", "edge", "proposal")
-        return self.data[edge_type]["x"].size(1)
 
     def n_proposals(self):
         """
@@ -346,7 +269,7 @@ class HeteroGraphDataset:
         self.data[edge_type].edge_attr = arrs
 
 
-class HeteroGraphMultiModalDataset(HeteroGraphDataset):
+class HeteroGraphMultiModalData(HeteroGraphData):
 
     def __init__(
         self,
@@ -366,7 +289,7 @@ class HeteroGraphMultiModalDataset(HeteroGraphDataset):
         )
 
     def init_nodes(self, x_dict, y_proposals):
-        self.data = HeteroGraphData()
+        self.data = HeteroData()
         self.data["branch"].x = torch.tensor(x_dict["branches"], dtype=DTYPE)
         self.data["proposal"].x = torch.tensor(x_dict["proposals"], dtype=DTYPE)
         self.data["proposal"].y = torch.tensor(y_proposals, dtype=DTYPE)
@@ -457,24 +380,6 @@ def hetero_node_intersection(idx_map_1, idx_map_2, e1, e2):
     node = list(hat_e1.intersection(hat_e2))
     assert len(node) == 1, "Node intersection is empty or not unique!"
     return node[0]
-
-
-def n_edge_features(x):
-    """
-    Gets the number of edge features.
-
-    Parameters
-    ----------
-    x : dict
-        Dictionary that maps node (from a neurograph) to feature vectors.
-
-    Returns
-    -------
-    int
-        Number of edge features.
-    """
-    key = sample(list(x.keys()), 1)[0]
-    return x[key].shape[0]
 
 
 def toTensor(arr):

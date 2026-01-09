@@ -122,7 +122,7 @@ class RandomRotation3D:
     def rotate3d(img_patch, angle, axes, is_segmentation=False):
         """
         Rotates a 3D image patch around the specified axes by a given angle.
-    
+
         Parameters
         ----------
         img_patch : numpy.ndarray
@@ -133,7 +133,8 @@ class RandomRotation3D:
         axes : Tuple[int]
             Tuple representing the two axes of rotation.
         is_segmentation : bool, optional
-            Indication of whether the image is a segmentation. Default is False.
+            Indication of whether the image is a segmentation. Default is
+            False.
         """
         order = 0 if is_segmentation else 3
         multipler = 4 if is_segmentation else 1

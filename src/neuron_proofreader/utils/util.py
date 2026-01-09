@@ -653,7 +653,10 @@ def sample_once(my_container):
     -------
     hashable
     """
-    return sample(my_container, 1)[0]
+    if not isinstance(my_container, list):
+        return sample(list(my_container), 1)[0]
+    else:
+        return sample(my_container, 1)[0]
 
 
 def spaced_idxs(arr_length, k):

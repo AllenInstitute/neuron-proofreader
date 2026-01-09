@@ -14,8 +14,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from neuron_proofreader.utils import util
-
 
 # --- Architectures ---
 class FeedForwardNet(nn.Module):

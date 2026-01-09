@@ -143,9 +143,7 @@ class VisionHGAT(torch.nn.Module):
                 else:
                     init.zeros_(param)
 
-    def forward(self, x_dict):
-        # self, x_dict, edge_index_dict, edge_attr_dict
-
+    def forward(self, x_dict, edge_index_dict, edge_attr_dict):
         # Node embeddings
         x_patch = self.patch_embedding(x_dict.pop("patch"))
         for key, f in self.node_embedding.items():

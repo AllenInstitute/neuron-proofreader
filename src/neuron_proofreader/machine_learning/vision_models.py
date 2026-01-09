@@ -14,7 +14,7 @@ from einops import rearrange
 import torch
 import torch.nn as nn
 
-from neuron_proofreader.utils.ml_util import FeedForwardNet
+from neuron_proofreader.utils.ml_util import FeedForwardNet, init_mlp
 
 
 # --- CNNs ---

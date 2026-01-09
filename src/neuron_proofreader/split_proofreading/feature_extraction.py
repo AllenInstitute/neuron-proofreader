@@ -16,6 +16,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 
+from neuron_proofreader.split_correction.datasets import (
+    HeteroGraphData,
+    HeteroGraphMultiModalData
+)
 from neuron_proofreader.utils import geometry_util, img_util, util
 
 
@@ -72,7 +76,7 @@ class FeaturePipeline:
                 ImageProfileExtractor(img_path),
             ]
 
-    def run(self, graph):
+    def __call__(self, graph):
         """
         Runs the feature extraction pipeline.
 
@@ -81,9 +85,9 @@ class FeaturePipeline:
         graph : ProposalGraph
             Graph to extract features from.
         """
-        features = FeatureSet()
+        features = FeatureSet(graph)
         for extractor in self.extractors:
-            extractor.extract(graph, features)
+            extractor(graph, features)
         return features
 
 
@@ -104,7 +108,7 @@ class SkeletonFeatureExtractor:
         # Instance attributes
         self.search_radius = search_radius
 
-    def extract(self, graph, features):
+    def __call__(self, graph, features):
         """
         Extracts skeleton-based features for nodes, edges, and proposals.
 
@@ -115,11 +119,11 @@ class SkeletonFeatureExtractor:
         features : FeatureSet
             Data structure that stores features.
         """
-        features.node_features = self.extract_node_features(graph)
-        features.edge_features = self.extract_edge_features(graph)
-        features.proposal_features = self.extract_proposal_features(graph)
+        self.extract_node_features(graph, features)
+        self.extract_edge_features(graph, features)
+        self.extract_proposal_features(graph, features)
 
-    def extract_node_features(self, graph):
+    def extract_node_features(self, graph, features):
         """
         Extracts skeleton-based features for nodes.
 
@@ -127,24 +131,19 @@ class SkeletonFeatureExtractor:
         ----------
         graph : ProposalGraph
             Graph to generate features for.
-
-        Returns
-        -------
-        features : Dict[int, numpy.ndarray]
-            Dictionary that maps a node to its feature vector.
         """
-        features = dict()
+        node_features = dict()
         for u in graph.nodes:
-            features[u] = np.array(
+            node_features[u] = np.array(
                 [
                     graph.degree[u],
                     graph.node_radius[u],
                     len(graph.node_proposals[u]),
                 ]
             )
-        return features
+        features.set_features(node_features, "node")
 
-    def extract_edge_features(self, graph):
+    def extract_edge_features(self, graph, features):
         """
         Extracts skeleton-based features for edges.
 
@@ -158,17 +157,17 @@ class SkeletonFeatureExtractor:
         features : Dict[Frozenset[int], numpy.ndarray]
             Dictionary that maps an edge to its feature vector.
         """
-        features = dict()
+        edge_features = dict()
         for edge in graph.edges:
-            features[frozenset(edge)] = np.array(
+            edge_features[frozenset(edge)] = np.array(
                 [
                     np.mean(graph.edges[edge]["radius"]),
                     min(graph.edge_length(edge), 5000) / 5000,
                 ],
             )
-        return features
+        features.set_features(edge_features, "edge")
 
-    def extract_proposal_features(self, graph):
+    def extract_proposal_features(self, graph, features):
         """
         Extracts skeleton-based features for proposals.
 
@@ -186,9 +185,9 @@ class SkeletonFeatureExtractor:
         graph.set_kdtree(node_type="leaf")
 
         # Extract features
-        features = dict()
+        proposal_features = dict()
         for p in graph.proposals:
-            features[p] = np.concatenate(
+            proposal_features[p] = np.concatenate(
                 (
                     graph.proposal_length(p) / self.search_radius,
                     graph.n_nearby_leafs(p, self.search_radius),
@@ -200,7 +199,7 @@ class SkeletonFeatureExtractor:
                 ),
                 axis=None,
             )
-        return features
+        features.set_features(proposal_features, "proposal")
 
 
 class ImageFeatureExtractor:
@@ -241,15 +240,13 @@ class ImageFeatureExtractor:
         self.padding = padding
 
         # Image reader
-        self.img_reader = img_util.TensorStoreReader(img_path)
+        self.img = img_util.TensorStoreReader(img_path)
         if segmentation_path:
-            self.segmentation_reader = img_util.TensorStoreReader(
-                segmentation_path
-            )
+            self.segmentation = img_util.TensorStoreReader(segmentation_path)
         else:
-            self.segmentation_reader = None
+            self.segmentation = None
 
-    def extract(self, graph, features):
+    def __call__(self, graph, features):
         """
         Extracts image patches and profiles for each proposal in the graph.
 
@@ -268,11 +265,17 @@ class ImageFeatureExtractor:
                 pending[thread] = p
 
             # Store results
+            proposal_patches = dict()
+            proposal_profiles = dict()
             for thread in as_completed(pending.keys()):
                 p = pending.pop(thread)
                 patches, profile = thread.result()
-                features.proposal_patches[p] = patches
-                features.proposal_profiles[p] = profile
+                proposal_patches[p] = patches
+                proposal_profiles[p] = profile
+
+        # Update features
+        features.set_features(proposal_patches, "proposal_patches")
+        features.integrate_proposal_profiles(proposal_profiles)
 
     def get_patches(self, graph, proposal):
         # Read images
@@ -341,13 +344,13 @@ class ImageFeatureExtractor:
         return voxels
 
     def read_image_patch(self, center, shape):
-        patch = self.img_reader.read(center, shape)
+        patch = self.img.read(center, shape)
         patch = img_util.normalize(np.minimum(patch, self.brightness_clip))
         return patch
 
     def read_segmentation_mask(self, center, shape):
-        if self.segmentation_reader:
-            patch = self.segmentation_reader.read(center, shape)
+        if self.segmentation:
+            patch = self.segmentation.read(center, shape)
             return 0.25 * (patch > 0).astype(float)
         else:
             return np.zeros(shape)
@@ -361,70 +364,98 @@ class ImageProfileExtractor:
     def __init__(self):
         pass
 
-    def extract(self):
+    def __call__(self):
         pass
 
 
 # --- Feature Data Structures ---
 class FeatureSet:
-
-    def __init__(self):
-        # Instance Attributes
-        self.node_features = dict()
-        self.edge_features = dict()
-        self.proposal_features = dict()
-        self.proposal_patches = dict()
-        self.proposal_profiles = dict()
-
-    def to_matrix(self):
-        pass
-
-
-# --- Build feature matrix ---
-def get_matrix(features, gt_accepts=set()):
-    # Initialize matrices
-    key = util.sample_once(list(features.keys()))
-    x = np.zeros((len(features.keys()), len(features[key])))
-    y = np.zeros((len(features.keys())))
-
-    # Populate
-    idx_to_id = dict()
-    for i, id_i in enumerate(features):
-        idx_to_id[i] = id_i
-        x[i, :] = features[id_i]
-        y[i] = 1 if id_i in gt_accepts else 0
-    return x, y, init_idx_mapping(idx_to_id)
-
-
-def get_patches_matrix(patches, id_to_idx):
-    patch = util.sample_once(list(patches.values()))
-    x = np.zeros((len(id_to_idx),) + patch.shape)
-    for key, patch in patches.items():
-        x[id_to_idx[key], ...] = patch
-    return x
-
-
-def init_idx_mapping(idx_to_id):
-    """
-    Adds dictionary item called "edge_to_index" which maps a branch/proposal
-    in a FragmentsGraph to an idx that represents it's position in the feature
-    matrix.
-
-    Parameters
-    ----------
-    idxs : dict
-        Dictionary that maps indices to edges in a FragmentsGraph.
-
-    Returns
-    -------
-    dict
-        Updated dictionary.
-    """
-    idx_mapping = {
-        "idx_to_id": idx_to_id,
-        "id_to_idx": {v: k for k, v in idx_to_id.items()},
+    _FEATURE_TABLE = {
+        "node": ("node_features", "node_index_mapping"),
+        "edge": ("edge_features", "edge_index_mapping"),
+        "proposal": ("proposal_features", "proposal_index_mapping"),
+        "proposal_patches": ("proposal_patches", "proposal_index_mapping"),
     }
-    return idx_mapping
+
+    def __init__(self, graph):
+        # Instance Attributes
+        self.graph = graph
+        self.node_features = None
+        self.edge_features = None
+        self.proposal_features = None
+        self.proposal_patches = None
+        self.targets = self.get_targets()
+
+        self.node_index_mapping = IndexMapping(graph.nodes)
+        self.edge_index_mapping = IndexMapping(graph.edges)
+        self.proposal_index_mapping = IndexMapping(graph.proposals)
+
+    def set_features(self, feature_dict, feature_type):
+        # Determine feature type
+        if feature_type not in self._FEATURE_TABLE:
+            raise ValueError(f"Unknown feature type: {feature_type}")
+        feat_attr, index_mappping_attr = self._FEATURE_TABLE[feature_type]
+
+        # Store features
+        index_mapping = getattr(self, index_mappping_attr)
+        feature_matrix = self.to_matrix(feature_dict, index_mapping)
+        setattr(self, feat_attr, feature_matrix)
+
+    def to_heterograph_data(self, is_multimodal):
+        # Set dataset class
+        if is_multimodal:
+            return HeteroGraphMultiModalData(self.graph, self.features)
+        else:
+            return HeteroGraphData(self.graph, self.features)
+
+    # --- Helpers ---
+    def get_targets(self):
+        y = np.zeros((self.graph.n_proposals(), 1))
+        for idx, object_id in self.proposal_index_mapping.items():
+            if object_id in self.graph.gt_accepts():
+                y[idx] = 1
+        return y
+
+    @staticmethod
+    def init_matrix(feature_dict):
+        key = util.sample_once(feature_dict.keys())
+        shape = (len(feature_dict.keys()),) + feature_dict[key].shape
+        return np.zeros(shape)
+
+    def integrate_proposal_profiles(self, profiles_dict):
+        x = self.init_matrix(profiles_dict)
+        for object_id in profiles_dict:
+            idx = self.proposal_index_mapping.id_to_idx(object_id)
+            x[idx] = profiles_dict[object_id]
+        self.proposal_features = np.concatenate((self.proposal_features), x, dim=1)
+
+    def to_matrix(self, feature_dict, index_mapping):
+        x = self.init_matrix(feature_dict)
+        for object_id in feature_dict:
+            idx = index_mapping.id_to_idx(object_id)
+            x[idx] = feature_dict[object_id]
+        return x
+
+
+class IndexMapping:
+    """
+    A class that stores data structures for mapping between object IDs and
+    indices.
+
+    Attributes
+    ----------
+    id_to_idx : dict
+        Dictionary that maps object IDs to indices.
+    idx_to_id : dict
+        Dictionary that maps indices to object IDs.
+    """
+
+    def __init__(self, object_ids):
+        self.id_to_idx = dict()
+        self.idx_to_id = dict()
+        for idx, object_id in enumerate(object_ids):
+            self.id_to_idx[object_id] = idx
+            self.idx_to_id[idx] = object_id
 
 
 # --- Helpers ---
