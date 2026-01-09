@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
 
-from neuron_proofreader.split_correction.datasets import (
+from neuron_proofreader.split_proofreading.datasets import (
     HeteroGraphData,
     HeteroGraphMultiModalData
 )
@@ -34,7 +34,6 @@ class FeaturePipeline:
         img_path,
         search_radius,
         padding=40,
-        is_multimodal=True,
         patch_shape=(96, 96, 96),
         segmentation_path=None,
     ):
@@ -50,31 +49,21 @@ class FeaturePipeline:
         padding : int, optional
             Number of voxels to be added in each dimension from start and end
             point of proposal for image patch extraction. Default is 40.
-        is_multimodal : bool, optional
-            Indication of whether model inputs are both feature vectors and
-            image patches. Default is True.
         patch_shape : Tuple[int], optional
             Shape of image patch expected by the vision model. Default is (96,
             96, 96).
         segmentation_path : str, optional
             Path to segmentation of whole-brain dataset.
         """
-        # Instance attributes
-        if is_multimodal:
-            self.extractors = [
-                SkeletonFeatureExtractor(search_radius),
-                ImageFeatureExtractor(
-                    img_path,
-                    patch_shape=patch_shape,
-                    padding=padding,
-                    segmentation_path=segmentation_path,
-                ),
-            ]
-        else:
-            self.extractors = [
-                SkeletonFeatureExtractor(search_radius),
-                ImageProfileExtractor(img_path),
-            ]
+        self.extractors = [
+            SkeletonFeatureExtractor(search_radius),
+            ImageFeatureExtractor(
+                img_path,
+                patch_shape=patch_shape,
+                padding=padding,
+                segmentation_path=segmentation_path,
+            ),
+        ]
 
     def __call__(self, graph):
         """
@@ -284,9 +273,9 @@ class ImageFeatureExtractor:
         offset = img_util.get_offset(center, shape)
 
         # Generate image profile
-        profile_line = self.get_profile_line(graph, proposal, offset, 16)
-        profile = [img_patch[tuple(voxel)] for voxel in profile_line]
-        profile.extend([np.mean(profile), np.std(profile)])
+        voxels = self.get_profile_line(graph, proposal, offset, 16)
+        profile = np.array([img_patch[tuple(voxel)] for voxel in voxels])
+        profile = np.append(profile, [profile.mean(), profile.std()])
 
         # Set patches
         proposal_mask = self.get_proposal_mask(graph, proposal, center, shape)
@@ -356,18 +345,6 @@ class ImageFeatureExtractor:
             return np.zeros(shape)
 
 
-class ImageProfileExtractor:
-    """
-    A class for extracting image profiles along proposals.
-    """
-
-    def __init__(self):
-        pass
-
-    def __call__(self):
-        pass
-
-
 # --- Feature Data Structures ---
 class FeatureSet:
     _FEATURE_TABLE = {
@@ -380,15 +357,15 @@ class FeatureSet:
     def __init__(self, graph):
         # Instance Attributes
         self.graph = graph
+        self.node_index_mapping = IndexMapping(graph.nodes)
+        self.edge_index_mapping = IndexMapping(graph.edges)
+        self.proposal_index_mapping = IndexMapping(graph.proposals)
+
         self.node_features = None
         self.edge_features = None
         self.proposal_features = None
         self.proposal_patches = None
         self.targets = self.get_targets()
-
-        self.node_index_mapping = IndexMapping(graph.nodes)
-        self.edge_index_mapping = IndexMapping(graph.edges)
-        self.proposal_index_mapping = IndexMapping(graph.proposals)
 
     def set_features(self, feature_dict, feature_type):
         # Determine feature type
@@ -411,8 +388,9 @@ class FeatureSet:
     # --- Helpers ---
     def get_targets(self):
         y = np.zeros((self.graph.n_proposals(), 1))
-        for idx, object_id in self.proposal_index_mapping.items():
-            if object_id in self.graph.gt_accepts():
+        idx_to_id = self.proposal_index_mapping.idx_to_id
+        for idx, object_id in idx_to_id.items():
+            if object_id in self.graph.gt_accepts:
                 y[idx] = 1
         return y
 
@@ -425,14 +403,16 @@ class FeatureSet:
     def integrate_proposal_profiles(self, profiles_dict):
         x = self.init_matrix(profiles_dict)
         for object_id in profiles_dict:
-            idx = self.proposal_index_mapping.id_to_idx(object_id)
+            idx = self.proposal_index_mapping.id_to_idx[object_id]
             x[idx] = profiles_dict[object_id]
-        self.proposal_features = np.concatenate((self.proposal_features), x, dim=1)
+        self.proposal_features = np.concatenate(
+            (self.proposal_features, x), axis=1
+        )
 
     def to_matrix(self, feature_dict, index_mapping):
         x = self.init_matrix(feature_dict)
         for object_id in feature_dict:
-            idx = index_mapping.id_to_idx(object_id)
+            idx = index_mapping.id_to_idx[object_id]
             x[idx] = feature_dict[object_id]
         return x
 
@@ -451,9 +431,22 @@ class IndexMapping:
     """
 
     def __init__(self, object_ids):
+        """
+        Instantiates an IndexMapper object.
+
+        Parameters
+        ----------
+        object_ids : List[hashable]
+            Object IDs to create index mapping from.
+        """
         self.id_to_idx = dict()
         self.idx_to_id = dict()
         for idx, object_id in enumerate(object_ids):
+            # Check object ID datatype
+            if isinstance(object_id, tuple):
+                object_id = frozenset(object_id)
+
+            # Populate dictionary
             self.id_to_idx[object_id] = idx
             self.idx_to_id[idx] = object_id
 

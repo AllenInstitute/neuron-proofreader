@@ -24,23 +24,6 @@ class HeteroGraphData:
     """
 
     def __init__(self, graph, features):
-        """
-        Constructs a HeteroGraphDataset object.
-
-        Parameters
-        ----------
-        graph : networkx.Graph
-            Graph used by gnn to classify proposals.
-        proposals : List[Frozenset[int]]
-            Proposals to be classified.
-        x_dict : dict
-            ...
-        y_proposals : numpy.ndarray
-            Ground truth of proposals.
-        idx_to_id : dict
-            Dictionary that maps an edge id in "graph" to its index
-            in either x_branches or x_proposals.
-        """
         # Conversion idxs
         self.idxs_branches = features.edge_index_mapping
         self.idxs_proposals = features.proposal_index_mapping

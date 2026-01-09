@@ -102,7 +102,7 @@ def tangent(pts):
         tangent_vec = VT[0]
         if np.dot(tangent_vec, tangent([pts[0], pts[-1]])) < 0:
             tangent_vec *= -1
-    return tangent_vec / np.linalg.norm(tangent_vec)
+    return tangent_vec / (np.linalg.norm(tangent_vec) + 1e-5)
 
 
 def midpoint(xyz_1, xyz_2):
