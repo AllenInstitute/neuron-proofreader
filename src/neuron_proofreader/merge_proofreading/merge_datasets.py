@@ -328,7 +328,7 @@ class MergeSiteDataset(Dataset):
         except ValueError:
             img_patch = img_util.pad_to_shape(img_patch, self.patch_shape)
             patches = np.stack([img_patch, segment_mask], axis=0)
-        
+
         if subgraph.number_of_nodes() == 0:
             print("Empty subgraph! -->", brain_id, voxel, label)
         return patches, subgraph, label

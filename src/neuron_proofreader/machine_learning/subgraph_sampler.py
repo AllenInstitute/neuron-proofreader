@@ -11,8 +11,6 @@ batches suitable for GNN input.
 
 from collections import deque
 
-import networkx as nx
-
 from neuron_proofreader.proposal_graph import ProposalGraph
 from neuron_proofreader.utils import util
 
@@ -31,10 +29,10 @@ class SubgraphSampler:
         ----------
         graph : ProposalGraph
             Graph to be sampled from.
-        max_proposals : int, optional
-            Maximum number of proposals in subgraph. Default is 64.
         gnn_depth : int, optional
             Depth of graph neural network. Default is 2.
+        max_proposals : int, optional
+            Maximum number of proposals in subgraph. Default is 64.
         """
         # Instance attributes
         self.max_proposals = max_proposals
@@ -80,7 +78,6 @@ class SubgraphSampler:
         while len(queue) > 0:
             # Visit proposal
             proposal = queue.pop()
-            visited.add(proposal)
 
             # Update queue
             for i in proposal:
@@ -88,14 +85,24 @@ class SubgraphSampler:
                     proposal_ij = frozenset({i, j})
                     if proposal_ij not in visited:
                         queue.append(proposal_ij)
+                        visited.add(proposal_ij)
         return visited
 
     # --- Core Routines---
     def sample(self):
+        """
+        Samples a subgraph by running a BFS using proposals as roots until
+        every proposal has been visited.
+
+        Returns
+        -------
+        subgraph : ProposalGraph
+            Sampled subgraph with a bounded number of proposals.
+        """
         while self.proposals:
             # Run BFS
             subgraph = self.init_subgraph()
-            while not self.is_subgraph_full(subgraph) and self.proposals:
+            while subgraph.n_proposals() and self.proposals:
                 root = util.sample_once(self.proposals)
                 self.populate_via_bfs(subgraph, root)
 
@@ -104,38 +111,53 @@ class SubgraphSampler:
             yield subgraph
 
     def populate_via_bfs(self, subgraph, root):
-        u, v = tuple(root)
-        queue = deque([(u, 0), (v, 0)])
-        visited = set([u, v])
+        i, j = tuple(root)
+        queue = deque([(i, 0), (j, 0)])
+        visited = set([i, j])
         while queue:
             # Visit node
-            u, d_u = queue.popleft()
-            self.visit_nbhd(subgraph, u)
-            self.visit_proposals(subgraph, queue, visited, u)
+            i, d_i = queue.popleft()
+            self.add_nbhd(subgraph, i)
+            self.add_proposals(subgraph, queue, visited, i)
 
             # Update queue
-            for v in self.graph.neighbors(u):
-                if v not in visited:
-                    n_v = len(self.graph.node_proposals[v])
-                    d_v = min(d_u + 1, -n_v)
-                    if d_v <= self.gnn_depth:
-                        queue.append((v, d_v))
-                        visited.add(v)
+            for j in self.graph.neighbors(i):
+                if j not in visited:
+                    n_j = len(self.graph.node_proposals[j])
+                    d_j = min(d_i + 1, -n_j)
+                    if d_j <= self.gnn_depth:
+                        queue.append((j, d_j))
+                        visited.add(j)
 
-    def visit_nbhd(self, subgraph, u):
-        for v in self.graph.neighbors(u):
-            subgraph.add_edge(u, v)
+    def add_nbhd(self, subgraph, i):
+        """
+        Adds the neighborhood of node "i" to the given sugraph.
 
-    def visit_proposals(self, subgraph, queue, visited, u):
-        if not self.is_subgraph_full(subgraph):
-            for v in self.graph.node_proposals[u]:
+        Parameters
+        ----------
+        subgraph : ProposalGraph
+            Graph to be updated.
+        i : int
+            Node id.
+        """
+        for j in self.graph.neighbors(i):
+            subgraph.add_edge(i, j)
+
+    def add_proposals(self, subgraph, queue, visited, i):
+        if subgraph.n_proposals() < self.max_proposals:
+            for j in self.graph.node_proposals[i]:
                 # Visit proposal
-                pair = frozenset({u, v})
+                pair = frozenset({i, j})
                 if pair in self.proposals:
+                    # Add proposal to subgraph
                     subgraph.add_proposal(pair)
+                    if pair in self.graph.gt_accepts:
+                        subgraph.gt_accepts.add(pair)
+
+                    # Update instance state
                     self.proposals.remove(pair)
-                    if v not in visited:
-                        queue.append((v, 0))
+                    if j not in visited:
+                        queue.append((j, 0))
 
                 # Check if proposal is flagged
                 # proposal in self.flagged and proposal in self.proposals:
@@ -162,14 +184,19 @@ class SubgraphSampler:
 
     # --- Helpers ---
     def init_subgraph(self):
+        """
+        Instantiates an empty instance of ProposalGraph.
+
+        Returns
+        -------
+        subgraph : ProposalGraph
+            Empty graph.
+        """
         subgraph = ProposalGraph(
             anisotropy=self.graph.anisotropy,
             node_spacing=self.graph.node_spacing,
         )
         return subgraph
-
-    def is_subgraph_full(self, batch):
-        return len(batch["proposals"]) >= self.max_proposals
 
 
 class SeededSubgraphSampler(SubgraphSampler):
@@ -181,26 +208,22 @@ class SeededSubgraphSampler(SubgraphSampler):
         )
 
     # --- Batch Generation ---
-    def __iter__(self):
+    def sample(self):
         soma_connected_proposals_exist = True
         while soma_connected_proposals_exist:
             # Run BFS
-            batch = {
-                "graph": nx.Graph(),
-                "proposals": set(),
-                "soma_proposals": set()
-            }
-            while not self.is_subgraph_full(batch) and self.proposals:
+            subgraph = self.init_subgraph()
+            while subgraph.n_proposals() < self.max_proposals and self.proposals:
                 root = self.find_bfs_root()
                 if root:
-                    self.populate_via_seeded_bfs(batch, root)
+                    self.populate_via_seeded_bfs(subgraph, root)
                 else:
                     soma_connected_proposals_exist = False
                     break
 
             # Yield batch
-            if batch["proposals"]:
-                yield batch
+            if subgraph.n_proposals():
+                yield subgraph
 
         # Call parent class dataloader
         for batch in super().__iter__():
@@ -215,14 +238,14 @@ class SeededSubgraphSampler(SubgraphSampler):
                 return j
         return False
 
-    def populate_via_seeded_bfs(self, batch, root):
+    def populate_via_seeded_bfs(self, subgraph, root):
         queue = self.init_seeded_queue(root)
         visited = set({root})
         while queue:
             # Visit node
             i, d_i = queue.popleft()
-            self.visit_nbhd(batch, i)
-            self.visit_proposals_seeded(batch, queue, visited, i)
+            self.visit_nbhd(subgraph, i)
+            self.visit_proposals_seeded(subgraph, queue, visited, i)
 
             # Update queue
             for j in self.graph.neighbors(i):

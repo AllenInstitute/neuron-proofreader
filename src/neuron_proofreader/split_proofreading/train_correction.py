@@ -13,25 +13,21 @@ To do: explain how the train pipeline is organized. how is the data organized?
 REMINDER: YOU NEED TO ADD PROPOSAL EDGES TO COMPUTATION GRAPH
 """
 
-from collections import defaultdict
-from concurrent.futures import as_completed, ProcessPoolExecutor
-from copy import deepcopy
 from torch.utils.data import IterableDataset
 
 import numpy as np
 import os
-import random
 
 from neuron_proofreader.proposal_graph import ProposalGraph
 from neuron_proofreader.machine_learning.augmentation import ImageTransforms
-from neuron_proofreader.split_proofreading import datasets
+from neuron_proofreader.machine_learning.subgraph_sampler import SubgraphSampler
 from neuron_proofreader.split_proofreading.feature_extraction import (
     FeaturePipeline
 )
-from neuron_proofreader.utils import ml_util, util
+from neuron_proofreader.utils import util
 
 
-class SplitFragmentsDataset(IterableDataset):
+class FragmentsDataset(IterableDataset):
     """
     Dataset for storing graphs used to train a graph neural network to perform
     split correction. Graphs are stored in the "self.graphs" attribute, which
@@ -51,7 +47,7 @@ class SplitFragmentsDataset(IterableDataset):
 
     def __init__(self, config, patch_shape=(128, 128, 128), transform=False):
         # Instance attributes
-        self.features = dict()
+        self.feature_extractors = dict()
         self.graphs = dict()
         self.keys = set()
         self.patch_shape = patch_shape
@@ -129,12 +125,11 @@ class SplitFragmentsDataset(IterableDataset):
         self.keys.add(key)
 
         # Generate features -- add segmentation path
-        feature_pipeline = FeaturePipeline(
+        self.feature_extractors[key] = FeaturePipeline(
             img_path,
             self.graph_config.search_radius,
             patch_shape=self.patch_shape
         )
-        self.features[key] = feature_pipeline.run(self.graphs[key])
 
     def load_graph(self, swc_pointer):
         """
@@ -152,6 +147,7 @@ class SplitFragmentsDataset(IterableDataset):
             Graph constructed from SWC files.
         """
         graph = ProposalGraph(
+            anisotropy=self.graph_config.anisotropy,
             min_size=self.graph_config.min_size,
             node_spacing=self.graph_config.node_spacing,
         )
@@ -160,90 +156,20 @@ class SplitFragmentsDataset(IterableDataset):
 
     # --- Get Data ---
     def __iter__(self):
+        # Initialize subgraph samplers
+        samplers = dict()
         for key, graph in self.graphs.items():
-            pass
+            samplers[key] = SubgraphSampler(graph, max_proposals=32)
 
-    def __getitem__(self, key):
-        features = deepcopy(self.features[key])
-        if self.transform:
-            with ProcessPoolExecutor() as executor:
-                # Assign processes
-                pending = dict()
-                for proposal, patches in features.proposal_patches.items():
-                    process = executor.submit(self.transform, patches)
-                    pending[process] = proposal
-
-                # Store results
-                for process in as_completed(pending.keys()):
-                    proposal = pending.pop(process)
-                    features.proposal_patches = process.result()
-        return self.graphs[key], features
-
-
-# --- Custom Dataloader ---
-class GraphDataLoader:
-
-    def __init__(self, graph_dataset, batch_size=32, shuffle=True):
-        # Instance attributes
-        self.batch_size = batch_size
-        self.graph_dataset = graph_dataset
-        self.shuffle = shuffle
-
-    def __iter__(self):
-        """
-        Generates a list of batches for training a graph neural network. Each
-        batch is a tuple that contains the following:
-            - key (str): Unique identifier of a graph in self.graphs.
-            - graph (networkx.Graph): GNN computation graph.
-            - proposals (List[frozenset[int]]): List of proposals in graph.
-
-        Parameters
-        ----------
-        batch_size : int
-            Maximum number of proposals in each batch.
-
-        Returns
-        -------
-        ...
-        """
-        # Initializations
-        if self.shuffle:
-            keys = list(self.graph_dataset.keys)
-            random.shuffle(keys)
-
-        # Main
-        for key in keys:
-            graph, features = self.graph_dataset[key]
-            proposals = set(graph.list_proposals())
-            while len(proposals) > 0:
-                # Get batch
-                batch = ml_util.get_batch(graph, proposals, self.batch_size)
-                proposals -= batch["proposals"]
-
-                # Extract features
-                accepts = graph.gt_accepts
-                batch_features = self.get_batch_features(batch, features)
-                data = datasets.init(batch_features, batch["graph"], accepts)
-                yield data
-
-    def get_batch_features(self, batch, features):
-        # Node features
-        batch_features = defaultdict(lambda: defaultdict(dict))
-        for i in batch["graph"].nodes:
-            batch_features["nodes"][i] = features["nodes"][i]
-
-        # Edge features
-        for e in map(frozenset, batch["graph"].edges):
-            if e in batch["proposals"]:
-                batch_features["proposals"][e] = features["proposals"][e]
-            else:
-                batch_features["branches"][e] = features["branches"][e]
-
-        # Image patches
-        if "patches" in features:
-            for p in batch["proposals"]:
-                batch_features["patches"][p] = features["patches"][p]
-        return batch_features
+        # Iterate over dataset
+        while len(samplers) > 0:
+            key = util.sample_once(list(samplers.keys))
+            try:
+                subgraph = next(samplers[key])
+                features = self.feature_extractors[key](subgraph)
+                yield features.to_heterograph_data()
+            except StopIteration:
+                del samplers[key]
 
 
 # -- Helpers --
