@@ -27,9 +27,6 @@ class GraphConfig:
     complex_bool : bool
         Indication of whether to generate complex proposals, meaning proposals
         between leaf and non-leaf nodes. Default is False.
-    img_bbox : dict, optional
-        Dictionary with the keys "min" and "max" which specify a bounding box
-        in an image. Default is None.
     long_range_bool : bool, optional
         Indication of whether to generate simple proposals within a scaled
         distance of "search_radius" from leaves without any proposals. Default
@@ -40,7 +37,7 @@ class GraphConfig:
     min_size_with_proposals : float, optional
         Minimum fragment path length required for proposals. Default is 0.
     node_spacing : int, optional
-        Spacing (in microns) between nodes. Default is 2.
+        Spacing (in microns) between nodes. Default is 5.
     proposals_per_leaf : int
         Maximum number of proposals generated for each leaf. Default is 3.
     prune_depth : int, optional
@@ -61,11 +58,10 @@ class GraphConfig:
 
     anisotropy: Tuple[float] = field(default_factory=tuple)
     complex_bool: bool = False
-    img_bbox: dict = None
     long_range_bool: bool = True
     min_size: float = 30.0
     min_size_with_proposals: float = 0
-    node_spacing: int = 2
+    node_spacing: int = 5
     proposals_per_leaf: int = 3
     prune_depth: float = 24.0
     remove_doubles: bool = False
@@ -82,28 +78,19 @@ class MLConfig:
 
     Attributes
     ----------
-    anisotropy : Tuple[float], optional
-        Scaling factors applied to xyz coordinates to account for anisotropy
-        of microscope. Note this instance of "anisotropy" is only used to read
-        image while generating features. Default is (1.0, 1.0, 1.0).
     batch_size : int
         The number of samples processed in one batch during training or
-        inference. Default is 1000.
+        inference. Default is 64.
     multiscale : int
         Level in the image pyramid that voxel coordinates must index into.
-    high_threshold : float
-        A threshold value used for classification, above which predictions are
-        considered to be high-confidence. Default is 0.9.
     threshold : float
         A general threshold value used for classification. Default is 0.6.
     model_type : str
         Type of machine learning model to use. Default is "GraphNeuralNet".
     """
-    anisotropy: Tuple[float] = field(default_factory=tuple)
-    batch_size: int = 160
+    batch_size: int = 64
     device: str = "cpu"
-    is_multimodal: bool = False
-    lr: float = 1e-3
+    lr: float = 1e-4
     multiscale: int = 1
     n_epochs: int = 1000
     threshold: float = 0.6

@@ -59,52 +59,6 @@ class FragmentsDataset(IterableDataset):
         # Data augmentation (if applicable)
         self.transform = ImageTransforms() if transform else False
 
-    # --- Dataset Properties ---
-    def __len__(self):
-        """
-        Counts the number of graphs in the dataset.
-
-        Returns
-        -------
-        int
-            Number of graphs.
-        """
-        return len(self.graphs)
-
-    def n_proposals(self):
-        """
-        Counts the number of proposals in the dataset.
-
-        Returns
-        -------
-        int
-            Number of proposals.
-        """
-        return np.sum([graph.n_proposals() for graph in self.graphs.values()])
-
-    def n_accepts(self):
-        """
-        Counts the number of ground truth accepted proposals in the dataset.
-
-        Returns
-        -------
-        int
-            Number of ground truth accepted proposals in the dataset.
-        """
-        cnts = [len(graph.gt_accepts) for graph in self.graphs.values()]
-        return np.sum(cnts)
-
-    def p_accepts(self):
-        """
-        Computes the percentage of accepted proposals in ground truth.
-
-        Returns
-        -------
-        float
-            Percentage of accepted proposals in ground truth.
-        """
-        return self.n_accepts() / self.n_proposals()
-
     # --- Load Data ---
     def add_graph(
         self,
@@ -170,6 +124,30 @@ class FragmentsDataset(IterableDataset):
                 yield features.to_heterograph_data()
             except StopIteration:
                 del samplers[key]
+
+    # --- Helpers ---
+    def n_proposals(self):
+        """
+        Counts the number of proposals in the dataset.
+
+        Returns
+        -------
+        int
+            Number of proposals.
+        """
+        return np.sum([graph.n_proposals() for graph in self.graphs.values()])
+
+    def p_accepts(self):
+        """
+        Computes the percentage of accepted proposals in ground truth.
+
+        Returns
+        -------
+        float
+            Percentage of accepted proposals in ground truth.
+        """
+        cnts = [len(graph.gt_accepts) for graph in self.graphs.values()]
+        return np.sum(cnts) / self.n_proposals()
 
 
 # -- Helpers --
