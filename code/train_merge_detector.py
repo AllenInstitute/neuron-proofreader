@@ -72,11 +72,13 @@ def main():
         train_dataset,
         batch_size=batch_size,
         is_multimodal=is_multimodal,
+        modality="pointcloud"
     )
     val_dataloader = MergeSiteDataLoader(
         val_dataset,
         batch_size=2*batch_size,
         is_multimodal=is_multimodal,
+        modality="pointcloud",
         use_shuffle=False
     )
 
@@ -115,6 +117,7 @@ def init_trainer():
         model_name,
         output_dir,
         lr=lr,
+        min_recall=min_recall,
         save_mistake_mips=save_mistake_mips
     )
     if model_path:
@@ -125,11 +128,14 @@ def init_trainer():
 def save_experiment_parameters():
     parameters = {
         "batch_size": batch_size,
+        "brightness_clip": brightness_clip,
         "lr": lr,
         "is_finetuned": model_path != None,
         "is_multimodal": is_multimodal,
+        "min_recall": min_recall,
         "model_class": model_class,
         "model_path": model_path,
+        "negative_bias": negative_bias,
         "patch_shape": patch_shape,
         "use_new_mask": use_new_mask,
     }
@@ -142,13 +148,14 @@ if __name__ == "__main__":
     anisotropy = (0.748, 0.748, 1.0)
     batch_size = 16
     brightness_clip = 300
-    is_multimodal = False
-    is_test = True
+    is_test = False
     lr = 1e-4
+    min_recall = 0
+    model_class = "CNN3D"
     negative_bias = 0
     patch_shape = (128, 128, 128)
     save_mistake_mips = True
-    use_new_mask = False
+    use_new_mask = True
 
     # Paths
     dataset_path = "/root/capsule/data/V4"
@@ -158,16 +165,21 @@ if __name__ == "__main__":
     output_dir = "/root/capsule/results"
 
     # Model
-    model_class = "MergeDetectorCNN3D"
-    model_name = f"{model_class}-v4-run1-newmask={use_new_mask}-negativebias={negative_bias}"
-    if "MergeDetectorCNN3D" == model_class:
+    model_name = f"MergeDetector{model_class}-v4-run2-newmask={use_new_mask}-negativebias={negative_bias}"
+    if model_class == "CNN3D":
+        print("Model Class: CNN3D")
+        is_multimodal = False
         model = CNN3D(
             patch_shape,
             n_conv_layers=6,
             n_feat_channels=24,
         )
-    else:
+    elif model_class == "DGCNN":
+        print("Model Class: VisionDGCNN")
+        is_multimodal = True
         model = VisionDGCNN(patch_shape)
+    else:
+        raise ValueError(f"model_class={model_class} is not valid!")
 
     # Main
     main()

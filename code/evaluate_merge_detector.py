@@ -214,8 +214,8 @@ def save_points(zip_path, pts, color, prefix):
 
 if __name__ == "__main__":
     # Parameters
-    model_name = "MergeDetectorCNN3D-v3-run1-randomsites=80-clip=300-newmask=True-lr=0.0001-20251219-120-0.8656"
-    exp_name = "V3"
+    model_name = "MergeDetectorCNN3D-v4-run1-newmask=False-negativebias=0-20260109-130-0.8304"
+    exp_name = "V4"
 
     accept_threshold = 0.4
     anisotropy = (0.748, 0.748, 1.0)
@@ -228,7 +228,7 @@ if __name__ == "__main__":
     node_spacing = 5
     patch_shape = (128, 128, 128)
     step_size = 20
-    use_new_mask = True
+    use_new_mask = False
 
     # Paths
     bucket_name = "allen-nd-goog"

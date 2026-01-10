@@ -2,6 +2,6 @@
 	"version": 1,
 	"resource_class": "dedicated",
 	"machine_config": {
-		"instance_type": "g5.8xlarge"
+		"instance_type": "gr6.8xlarge"
 	}
 }
