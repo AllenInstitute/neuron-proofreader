@@ -424,9 +424,9 @@ class IndexMapping:
 
     Attributes
     ----------
-    id_to_idx : dict
+    id_to_idx : Dict[hashable, int]
         Dictionary that maps object IDs to indices.
-    idx_to_id : dict
+    idx_to_id : Dict[hashable, int]
         Dictionary that maps indices to object IDs.
     """
 
