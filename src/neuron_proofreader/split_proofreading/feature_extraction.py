@@ -103,7 +103,7 @@ class SkeletonFeatureExtractor:
         Parameters
         ----------
         graph : ProposalGraph
-            Graph to extract features for.
+            Graph to extract features from.
         features : FeatureSet
             Data structure that stores features.
         """
@@ -241,7 +241,7 @@ class ImageFeatureExtractor:
         Parameters
         ----------
         graph : ProposalGraph
-            Graph to extract features for.
+            Graph to extract features from.
         features : FeatureSet
             Data structure that stores features.
         """
@@ -346,6 +346,10 @@ class ImageFeatureExtractor:
 
 # --- Feature Data Structures ---
 class FeatureSet:
+    """
+    A class for storing features and reformatting them into a form suitable
+    for GNN input.
+    """
     _FEATURE_TABLE = {
         "node": ("node_features", "node_index_mapping"),
         "edge": ("edge_features", "edge_index_mapping"),
@@ -354,6 +358,14 @@ class FeatureSet:
     }
 
     def __init__(self, graph):
+        """
+        Instantiates a FeatureSet object.
+
+        Parameters
+        ----------
+        graph : ProposalGraph
+            Graph to extract features from.
+        """
         # Instance Attributes
         self.graph = graph
         self.node_index_mapping = IndexMapping(graph.nodes)
