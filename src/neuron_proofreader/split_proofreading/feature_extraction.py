@@ -13,14 +13,13 @@ Note: We assume that a segmentation mask corresponds to multiscale 0. Thus,
 """
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from torch_geometric.data import HeteroData
+from torch_geometric.utils import to_undirected
 
 import numpy as np
+import torch
 
-from neuron_proofreader.split_proofreading.datasets import (
-    HeteroGraphData,
-    HeteroGraphMultiModalData
-)
-from neuron_proofreader.utils import geometry_util, img_util, util
+from neuron_proofreader.utils import geometry_util, graph_util, img_util, util
 
 
 # --- Feature Extractors ---
@@ -104,7 +103,7 @@ class SkeletonFeatureExtractor:
         Parameters
         ----------
         graph : ProposalGraph
-            Graph to extract features for.
+            Graph to extract features from.
         features : FeatureSet
             Data structure that stores features.
         """
@@ -242,7 +241,7 @@ class ImageFeatureExtractor:
         Parameters
         ----------
         graph : ProposalGraph
-            Graph to extract features for.
+            Graph to extract features from.
         features : FeatureSet
             Data structure that stores features.
         """
@@ -347,6 +346,10 @@ class ImageFeatureExtractor:
 
 # --- Feature Data Structures ---
 class FeatureSet:
+    """
+    A class for storing features and reformatting them into a form suitable
+    for GNN input.
+    """
     _FEATURE_TABLE = {
         "node": ("node_features", "node_index_mapping"),
         "edge": ("edge_features", "edge_index_mapping"),
@@ -355,6 +358,14 @@ class FeatureSet:
     }
 
     def __init__(self, graph):
+        """
+        Instantiates a FeatureSet object.
+
+        Parameters
+        ----------
+        graph : ProposalGraph
+            Graph to extract features from.
+        """
         # Instance Attributes
         self.graph = graph
         self.node_index_mapping = IndexMapping(graph.nodes)
@@ -378,12 +389,8 @@ class FeatureSet:
         feature_matrix = self.to_matrix(feature_dict, index_mapping)
         setattr(self, feat_attr, feature_matrix)
 
-    def to_heterograph_data(self, is_multimodal):
-        # Set dataset class
-        if is_multimodal:
-            return HeteroGraphMultiModalData(self.graph, self.features)
-        else:
-            return HeteroGraphData(self.graph, self.features)
+    def to_heterograph_data(self):
+        return HeteroGraphData(self.graph, self.features)
 
     # --- Helpers ---
     def get_targets(self):
@@ -415,6 +422,101 @@ class FeatureSet:
             idx = index_mapping.id_to_idx[object_id]
             x[idx] = feature_dict[object_id]
         return x
+
+
+class HeteroGraphData(HeteroData):
+    """
+    A custom data class for heterogenous graphs. The graph is internally
+    represented as a line graph to facilitate edge-based message passing in
+    a GNN.
+    """
+
+    def __init__(self, graph, features):
+        # Call parent class
+        super().__init__()
+
+        # Index mappings
+        self.idxs_branches = features.edge_index_mapping
+        self.idxs_proposals = features.proposal_index_mapping
+
+        # Node features
+        self["branch"].x = torch.tensor(features.edge_features)
+        self["proposal"].x = torch.tensor(features.proposal_features)
+        self["proposal"].y = torch.tensor(features.targets)
+        self["patch"].x = torch.tensor(features.proposal_features)
+
+        # Edge indices
+        self.build_proposal_adjacency(graph)
+        self.build_branch_adjacency(graph)
+        self.build_proposal_branch_adjacency(graph)
+
+    # --- Core Routines ---
+    def build_proposal_adjacency(self, graph):
+        """
+        Builds proposal–proposal adjacency based on shared node incidence.
+
+        Parameters
+        ----------
+        graph : ProposalGraph
+            Graph containing proposals.
+        """
+        edges = graph.proposals
+        edge_index = self._build_adjacency(edges, self.idxs_proposals)
+        self.set_edge_index(edge_index, ("proposal", "to", "proposal"))
+
+    def build_branch_adjacency(self, graph):
+        """
+        Builds branch–branch adjacency based on shared node incidence.
+
+        Parameters
+        ----------
+        graph : ProposalGraph
+            Graph containing branches.
+        """
+        edge_index = self._build_adjacency(graph.edges, self.idxs_branches)
+        self.set_edge_index(edge_index, ("branch", "to", "branch"))
+
+    def build_branch_proposal_adjacency(self, graph):
+        """
+        Builds branch–proposal adjacency based on shared node incidence.
+
+        Parameters
+        ----------
+        graph : ProposalGraph
+            Graph containing branches and proposals.
+        """
+        edge_index = []
+        for proposal in graph.proposals:
+            idx_proposal = self.idxs_proposals["id_to_idx"][proposal]
+            for i in proposal:
+                for j in graph.neighbors(i):
+                    branch = frozenset((i, j))
+                    idx_branch = self.idxs_branches["id_to_idx"][branch]
+                    edge_index.append([idx_proposal, idx_branch])
+        self.set_edge_index(edge_index, ("branch", "to", "proposal"))
+
+    # --- Helpers ---
+    @staticmethod
+    def _build_adjacency(self, edges, index_mapping):
+        # Build edge index
+        edge_index = []
+        line_graph = graph_util.edges_to_line_graph(edges)
+        for e1, e2 in line_graph.edges:
+            v1 = index_mapping["id_to_idx"][frozenset(e1)]
+            v2 = index_mapping["id_to_idx"][frozenset(e2)]
+            edge_index.append([v1, v2])
+        return edge_index
+
+    def set_edge_index(self, edge_index, edge_type):
+        # Check if edge index is empty
+        if len(edge_index) == 0:
+            self[edge_type].edge_index = torch.empty((2, 0), dtype=torch.long)
+
+        # Reformat edge index
+        edge_index = to_undirected(edge_index)
+        edge_index = torch.Tensor(edge_index).t().contiguous().long()
+        self[edge_type].edge_index = edge_index
+        self[edge_type[::-1]].edge_index = edge_index
 
 
 class IndexMapping:
