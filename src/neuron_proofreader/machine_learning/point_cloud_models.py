@@ -253,6 +253,44 @@ class VisionDGCNN(nn.Module):
 
 
 # --- Point Cloud Generation ---
+def farthest_point_sample(xyz, n_points):
+    """
+    Farthest Point Sampling (FPS)
+    xyz: [B, N, 3]
+    return: [B, n_points] indices
+    """
+    B, N, _ = xyz.shape
+    centroids = torch.zeros(B, n_points, dtype=torch.long, device=xyz.device)
+    distance = torch.ones(B, N, device=xyz.device) * 1e10
+    farthest = torch.randint(0, N, (B,), dtype=torch.long, device=xyz.device)
+    batch_indices = torch.arange(B, dtype=torch.long, device=xyz.device)
+    for i in range(n_points):
+        centroids[:, i] = farthest
+        centroid = xyz[batch_indices, farthest, :].view(B, 1, 3)
+        dist = torch.sum((xyz - centroid) ** 2, -1)
+        mask = dist < distance
+        distance[mask] = dist[mask]
+        farthest = torch.max(distance, -1)[1]
+    return centroids
+
+
+def index_points(points, idx):
+    """
+    Index points from xyz/features
+    points: [B, N, C]
+    idx: [B, S]
+    return: [B, S, C]
+    """
+    B = points.shape[0]
+    S = idx.shape[1]
+    batch_indices = (
+        torch.arange(B, dtype=torch.long, device=points.device)
+        .view(B, 1)
+        .repeat(1, S)
+    )
+    return points[batch_indices, idx, :]
+
+
 def subgraph_to_point_cloud(graph, n_points=3600):
     point_cloud = list()
     for n1, n2 in graph.edges:
