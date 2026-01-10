@@ -622,6 +622,25 @@ def dist(graph, i, j):
     return geometry.dist(graph.graph["xyz"][i], graph.graph["xyz"][j])
 
 
+def edges_to_line_graph(edges):
+    """
+    Initializes a line graph from a list of edges.
+
+    Parameters
+    ----------
+    edges : List[Tuple[int]]
+        List of edges.
+
+    Returns
+    -------
+    graph: networkx.Graph
+        Line graph generated from a list of edges.
+    """
+    graph = nx.Graph()
+    graph.add_edges_from(edges)
+    return nx.line_graph(graph)
+
+
 def find_closest_node(graph, xyz):
     """
     Finds the node in the graph that is closest to the given coordinates.

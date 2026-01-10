@@ -174,9 +174,7 @@ def generate_dataset_example_ids(bucket_name, dataset_prefix):
 
 def truncate(hat_y, y):
     """
-    Truncates "hat_y" so that this tensor has the same shape as "y". Note this
-    operation removes the predictions corresponding to branches so that loss
-    is computed over proposals.
+    Truncates "hat_y" so that this tensor has the same shape as "y".
 
     Parameters
     ----------

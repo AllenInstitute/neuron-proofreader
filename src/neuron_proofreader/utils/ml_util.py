@@ -9,7 +9,6 @@ models.
 
 """
 
-import networkx as nx
 import numpy as np
 import torch
 import torch.nn as nn
@@ -165,25 +164,6 @@ def get_inputs(data, device="cuda"):
     """
     data.to(device)
     return data.x_dict, data.edge_index_dict, data.edge_attr_dict
-
-
-def line_graph(edges):
-    """
-    Initializes a line graph from a list of edges.
-
-    Parameters
-    ----------
-    edges : list
-        List of edges.
-
-    Returns
-    -------
-    networkx.Graph
-        Line graph generated from a list of edges.
-    """
-    graph = nx.Graph()
-    graph.add_edges_from(edges)
-    return nx.line_graph(graph)
 
 
 def load_model(model, model_path, device="cuda"):
