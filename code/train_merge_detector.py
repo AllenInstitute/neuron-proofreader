@@ -117,6 +117,7 @@ def init_trainer():
         model_name,
         output_dir,
         lr=lr,
+        max_epochs=max_epochs,
         min_recall=min_recall,
         save_mistake_mips=save_mistake_mips
     )
@@ -150,22 +151,23 @@ if __name__ == "__main__":
     brightness_clip = 300
     is_test = False
     lr = 1e-4
-    min_recall = 0
+    max_epochs = 160
+    min_recall = 0.83
     model_class = "CNN3D"
     negative_bias = 0
     patch_shape = (128, 128, 128)
     save_mistake_mips = True
-    use_new_mask = True
+    use_new_mask = False
 
     # Paths
-    dataset_path = "/root/capsule/data/V4"
+    dataset_path = "/root/capsule/data/V5"
     image_prefixes_path = "/root/capsule/data/exaspim_image_prefixes.json"
     segmentation_prefixes_path = "/root/capsule/data/exaspim_segmentation_prefixes.json"
     model_path = None
     output_dir = "/root/capsule/results"
 
     # Model
-    model_name = f"MergeDetector{model_class}-v4-run2-newmask={use_new_mask}-negativebias={negative_bias}"
+    model_name = f"MergeDetector{model_class}-v5-run2-newmask={use_new_mask}-negativebias={negative_bias}"
     if model_class == "CNN3D":
         print("Model Class: CNN3D")
         is_multimodal = False
