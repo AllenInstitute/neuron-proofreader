@@ -214,7 +214,7 @@ def save_points(zip_path, pts, color, prefix):
 
 if __name__ == "__main__":
     # Parameters
-    model_name = "MergeDetectorCNN3D-v4-run1-newmask=False-negativebias=0-20260109-130-0.8304"
+    model_name = "MergeDetectorVisionDGCNN-v4-run1-newmask=False-negativebias=0-20260110-121-0.8361"
     exp_name = "V4"
 
     accept_threshold = 0.4
@@ -223,7 +223,6 @@ if __name__ == "__main__":
     brightness_clip = 300
     d_tp = 32
     device = "cuda"
-    is_multimodal = False
     is_test = False
     node_spacing = 5
     patch_shape = (128, 128, 128)
@@ -243,9 +242,11 @@ if __name__ == "__main__":
     util.mkdir(output_dir)
 
     # Model
-    if "DGCNN" in model_name:
+    if "VisionDGCNN" in model_name:
+        is_multimodal = True
         model = VisionDGCNN(patch_shape)
-    else:
+    elif "CNN3D" in model_name:
+        is_multimodal = False
         model = CNN3D(
             patch_shape,
             n_conv_layers=6,
