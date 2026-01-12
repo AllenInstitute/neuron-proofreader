@@ -22,7 +22,8 @@ from neuron_proofreader.proposal_graph import ProposalGraph
 from neuron_proofreader.machine_learning.augmentation import ImageTransforms
 from neuron_proofreader.machine_learning.subgraph_sampler import SubgraphSampler
 from neuron_proofreader.split_proofreading.feature_extraction import (
-    FeaturePipeline
+    FeaturePipeline,
+    HeteroGraphData
 )
 from neuron_proofreader.utils import util
 
@@ -49,7 +50,6 @@ class FragmentsDataset(IterableDataset):
         # Instance attributes
         self.feature_extractors = dict()
         self.graphs = dict()
-        self.keys = set()
         self.patch_shape = patch_shape
 
         # Configs
@@ -76,10 +76,10 @@ class FragmentsDataset(IterableDataset):
             long_range_bool=self.graph_config.long_range_bool,
             proposals_per_leaf=self.graph_config.proposals_per_leaf,
         )
-        self.keys.add(key)
 
         # Generate features -- add segmentation path
         self.feature_extractors[key] = FeaturePipeline(
+            self.graphs[key],
             img_path,
             self.graph_config.search_radius,
             patch_shape=self.patch_shape
@@ -113,15 +113,15 @@ class FragmentsDataset(IterableDataset):
         # Initialize subgraph samplers
         samplers = dict()
         for key, graph in self.graphs.items():
-            samplers[key] = SubgraphSampler(graph, max_proposals=32)
+            samplers[key] = iter(SubgraphSampler(graph, max_proposals=32))
 
         # Iterate over dataset
         while len(samplers) > 0:
-            key = util.sample_once(list(samplers.keys))
+            key = util.sample_once(samplers.keys())
             try:
                 subgraph = next(samplers[key])
                 features = self.feature_extractors[key](subgraph)
-                yield features.to_heterograph_data()
+                yield HeteroGraphData(features)
             except StopIteration:
                 del samplers[key]
 

@@ -30,6 +30,7 @@ class FeaturePipeline:
 
     def __init__(
         self,
+        graph,
         img_path,
         search_radius,
         padding=40,
@@ -41,6 +42,8 @@ class FeaturePipeline:
 
         Parameters
         ----------
+        graph : ProposalGraph
+            Graph to extract features from.
         img_path : str
             Path to image of whole-brain dataset.
         search_radius : float
@@ -55,8 +58,9 @@ class FeaturePipeline:
             Path to segmentation of whole-brain dataset.
         """
         self.extractors = [
-            SkeletonFeatureExtractor(search_radius),
+            SkeletonFeatureExtractor(graph, search_radius),
             ImageFeatureExtractor(
+                graph,
                 img_path,
                 patch_shape=patch_shape,
                 padding=padding,
@@ -64,18 +68,18 @@ class FeaturePipeline:
             ),
         ]
 
-    def __call__(self, graph):
+    def __call__(self, subgraph):
         """
         Runs the feature extraction pipeline.
 
         Parameters
         ----------
-        graph : ProposalGraph
-            Graph to extract features from.
+        subgraph : ProposalGraph
+            Subgraph of "graph" attribute to extract features for.
         """
-        features = FeatureSet(graph)
+        features = FeatureSet(subgraph)
         for extractor in self.extractors:
-            extractor(graph, features)
+            extractor(subgraph, features)
         return features
 
 
@@ -84,61 +88,67 @@ class SkeletonFeatureExtractor:
     A class for extracting skeleton-based features.
     """
 
-    def __init__(self, search_radius):
+    def __init__(self, graph, search_radius):
         """
         Instantiates a SkeletonFeatureExtractor object.
 
         Parameters
         ----------
+        graph : ProposalGraph
+            Graph to extract features from.
         search_radius : float
             Search radius used to generate edge proposals.
         """
         # Instance attributes
+        self.graph = graph
         self.search_radius = search_radius
 
-    def __call__(self, graph, features):
+        # Build KD-tree from leaf nodes
+        self.graph.set_kdtree(node_type="leaf")
+
+    def __call__(self, subgraph, features):
         """
         Extracts skeleton-based features for nodes, edges, and proposals.
 
         Parameters
         ----------
-        graph : ProposalGraph
-            Graph to extract features from.
+        subgraph : ProposalGraph
+            Subgraph of "graph" attribute to extract features for.
         features : FeatureSet
             Data structure that stores features.
         """
-        self.extract_node_features(graph, features)
-        self.extract_edge_features(graph, features)
-        self.extract_proposal_features(graph, features)
+        self.extract_node_features(subgraph, features)
+        self.extract_edge_features(subgraph, features)
+        self.extract_proposal_features(subgraph, features)
 
-    def extract_node_features(self, graph, features):
+    def extract_node_features(self, subgraph, features):
         """
         Extracts skeleton-based features for nodes.
 
         Parameters
         ----------
-        graph : ProposalGraph
-            Graph to generate features for.
+        subgraph : ProposalGraph
+            Subgraph of "graph" attribute to extract features for.
         """
         node_features = dict()
-        for u in graph.nodes:
+        for u in subgraph.nodes:
             node_features[u] = np.array(
                 [
-                    graph.degree[u],
-                    graph.node_radius[u],
-                    len(graph.node_proposals[u]),
+                    self.graph.degree[u],
+                    self.graph.node_radius[u],
+                    len(self.graph.node_proposals[u]),
                 ]
             )
         features.set_features(node_features, "node")
 
-    def extract_edge_features(self, graph, features):
+    def extract_edge_features(self, subgraph, features):
         """
         Extracts skeleton-based features for edges.
 
         Parameters
         ----------
-        graph : ProposalGraph
-            Graph to generate features for.
+        subgraph : ProposalGraph
+            Subgraph of "graph" attribute to extract features for.
 
         Returns
         -------
@@ -146,44 +156,40 @@ class SkeletonFeatureExtractor:
             Dictionary that maps an edge to its feature vector.
         """
         edge_features = dict()
-        for edge in graph.edges:
+        for edge in subgraph.edges:
             edge_features[frozenset(edge)] = np.array(
                 [
-                    np.mean(graph.edges[edge]["radius"]),
-                    min(graph.edge_length(edge), 5000) / 5000,
+                    np.mean(self.graph.edges[edge]["radius"]),
+                    min(self.graph.edge_length(edge), 5000) / 5000,
                 ],
             )
         features.set_features(edge_features, "edge")
 
-    def extract_proposal_features(self, graph, features):
+    def extract_proposal_features(self, subgraph, features):
         """
         Extracts skeleton-based features for proposals.
 
         Parameters
         ----------
-        graph : ProposalGraph
-            Graph to generate features for.
+        subgraph : ProposalGraph
+            Subgraph of "graph" attribute to extract features for.
 
         Returns
         -------
         features : Dict[Frozenset[int], numpy.ndarray]
             Dictionary that maps a proposal to its feature vector.
         """
-        # Build KD-Tree from leaf node coordinates
-        graph.set_kdtree(node_type="leaf")
-
-        # Extract features
         proposal_features = dict()
-        for p in graph.proposals:
+        for p in subgraph.proposals:
             proposal_features[p] = np.concatenate(
                 (
-                    graph.proposal_length(p) / self.search_radius,
-                    graph.n_nearby_leafs(p, self.search_radius),
-                    graph.proposal_attr(p, "radius"),
-                    graph.proposal_directionals(p, 16),
-                    graph.proposal_directionals(p, 32),
-                    graph.proposal_directionals(p, 64),
-                    graph.proposal_directionals(p, 128),
+                    self.graph.proposal_length(p) / self.search_radius,
+                    self.graph.n_nearby_leafs(p, self.search_radius),
+                    self.graph.proposal_attr(p, "radius"),
+                    self.graph.proposal_directionals(p, 16),
+                    self.graph.proposal_directionals(p, 32),
+                    self.graph.proposal_directionals(p, 64),
+                    self.graph.proposal_directionals(p, 128),
                 ),
                 axis=None,
             )
@@ -198,6 +204,7 @@ class ImageFeatureExtractor:
 
     def __init__(
         self,
+        graph,
         img_path,
         brightness_clip=400,
         patch_shape=(96, 96, 96),
@@ -209,6 +216,8 @@ class ImageFeatureExtractor:
 
         Parameters
         ----------
+        graph : ProposalGraph
+            Graph to extract features from.
         img_path : str
             Path to image of whole-brain dataset.
         brightness_clip : int, optional
@@ -224,6 +233,7 @@ class ImageFeatureExtractor:
         """
         # Instance attributes
         self.brightness_clip = brightness_clip
+        self.graph = graph
         self.patch_shape = patch_shape
         self.padding = padding
 
@@ -234,22 +244,22 @@ class ImageFeatureExtractor:
         else:
             self.segmentation = None
 
-    def __call__(self, graph, features):
+    def __call__(self, subgraph, features):
         """
         Extracts image patches and profiles for each proposal in the graph.
 
         Parameters
         ----------
-        graph : ProposalGraph
-            Graph to extract features from.
+        subgraph : ProposalGraph
+            Subgraph of "graph" attribute to extract features for.
         features : FeatureSet
             Data structure that stores features.
         """
         with ThreadPoolExecutor() as executor:
             # Assign threads
             pending = dict()
-            for p in graph.proposals:
-                thread = executor.submit(self.get_patches, graph, p)
+            for p in subgraph.proposals:
+                thread = executor.submit(self.get_patches, p)
                 pending[thread] = p
 
             # Store results
@@ -265,50 +275,67 @@ class ImageFeatureExtractor:
         features.set_features(proposal_patches, "proposal_patches")
         features.integrate_proposal_profiles(proposal_profiles)
 
-    def get_patches(self, graph, proposal):
+    def get_patches(self, proposal):
+        """
+        Extracts image patches and brightness profile for the given proposal.
+
+        Parameters
+        ----------
+        proposal : FrozenSet[int]
+            Edge proposal to extract image features for.
+
+        Returns
+        -------
+        patches : numpy.ndarray
+            Image with shape (2, H, W, D) containing a raw image and proposal
+            mask channels.
+        profile : numpy.ndarray
+            1D array containing brightness values sampled along the proposal
+            line, with the mean and standard deviation appended at the end.
+        """
         # Read images
-        center, shape = self.compute_proposal_crop(graph, proposal)
+        center, shape = self.compute_proposal_crop(proposal)
         img_patch = self.read_image_patch(center, shape)
         offset = img_util.get_offset(center, shape)
 
         # Generate image profile
-        voxels = self.get_profile_line(graph, proposal, offset, 16)
+        voxels = self.get_profile_line(proposal, offset, 16)
         profile = np.array([img_patch[tuple(voxel)] for voxel in voxels])
         profile = np.append(profile, [profile.mean(), profile.std()])
 
         # Set patches
-        proposal_mask = self.get_proposal_mask(graph, proposal, center, shape)
+        proposal_mask = self.get_proposal_mask(proposal, center, shape)
         img_path = img_util.resize(img_patch, self.patch_shape)
         patches = np.stack([img_path, proposal_mask], axis=0)
         return patches, profile
 
-    def get_proposal_mask(self, graph, proposal, center, shape):
+    def get_proposal_mask(self, proposal, center, shape):
         # Read segmentation
         segmentation_mask = self.read_segmentation_mask(center, shape)
 
         # Annotate label patch
-        u, v = tuple(proposal)
+        node1, node2 = tuple(proposal)
         offset = img_util.get_offset(center, shape)
-        self.annotate_edge(graph, u, segmentation_mask, offset)
-        self.annotate_edge(graph, v, segmentation_mask, offset)
-        self.annotate_proposal(graph, proposal, segmentation_mask, offset)
+        self.annotate_edge(node1, segmentation_mask, offset)
+        self.annotate_edge(node2, segmentation_mask, offset)
+        self.annotate_proposal(proposal, segmentation_mask, offset)
         return img_util.resize(segmentation_mask, self.patch_shape, True)
 
-    def annotate_edge(self, graph, node, patch, offset):
-        voxels = self.get_local_coordinates(graph, node, offset)
+    def annotate_edge(self, node, patch, offset):
+        voxels = self.get_local_coordinates(node, offset)
         voxels = geometry_util.make_voxels_connected(voxels)
         img_util.annotate_voxels(patch, voxels, val=0.5)
 
-    def annotate_proposal(self, graph, proposal, patch, offset):
-        profile_line = self.get_profile_line(graph, proposal, offset)
+    def annotate_proposal(self, proposal, patch, offset):
+        profile_line = self.get_profile_line(proposal, offset)
         img_util.annotate_voxels(patch, profile_line, val=1)
 
     # --- Helpers ---
-    def compute_proposal_crop(self, graph, proposal):
+    def compute_proposal_crop(self, proposal):
         # Compute bounds
-        u1, u2 = proposal
-        voxel1 = graph.get_voxel(u1)
-        voxel2 = graph.get_voxel(u2)
+        node1, node2 = proposal
+        voxel1 = self.graph.get_voxel(node1)
+        voxel2 = self.graph.get_voxel(node2)
         bounds = img_util.get_minimal_bbox([voxel1, voxel2], self.padding)
 
         # Transform into square
@@ -316,18 +343,18 @@ class ImageFeatureExtractor:
         length = np.max([u - l for u, l in zip(bounds["max"], bounds["min"])])
         return center, (length, length, length)
 
-    def get_profile_line(self, graph, proposal, offset, n_pts=None):
+    def get_profile_line(self, proposal, offset, n_pts=None):
         node1, node2 = proposal
-        voxel1 = graph.get_local_voxel(node1, offset)
-        voxel2 = graph.get_local_voxel(node2, offset)
+        voxel1 = self.graph.get_local_voxel(node1, offset)
+        voxel2 = self.graph.get_local_voxel(node2, offset)
         if n_pts:
             return geometry_util.make_line(voxel1, voxel2, n_pts)
         else:
             return geometry_util.make_digital_line(voxel1, voxel2)
 
-    def get_local_coordinates(self, graph, node, offset):
-        pts = np.vstack(graph.edge_attr(node, "xyz"))
-        voxels = [img_util.to_voxels(xyz, graph.anisotropy) for xyz in pts]
+    def get_local_coordinates(self, node, offset):
+        pts = np.vstack(self.graph.edge_attr(node, "xyz"))
+        voxels = [img_util.to_voxels(xyz, self.graph.anisotropy) for xyz in pts]
         voxels = geometry_util.shift_path(voxels, offset)
         return voxels
 
@@ -379,6 +406,18 @@ class FeatureSet:
         self.targets = self.get_targets()
 
     def set_features(self, feature_dict, feature_type):
+        """
+        Sets and stores a feature matrix for a given feature type.
+
+        Parameters
+        ----------
+        feature_dict : Dict[hashable, numpy.ndarray]
+            Mapping from entity identifiers (e.g., node IDs) to feature
+            vectors.
+        feature_type : str
+            Key identifying the feature category to set. Note: must exist in
+            "self._FEATURE_TABLE".
+        """
         # Determine feature type
         if feature_type not in self._FEATURE_TABLE:
             raise ValueError(f"Unknown feature type: {feature_type}")
@@ -389,17 +428,22 @@ class FeatureSet:
         feature_matrix = self.to_matrix(feature_dict, index_mapping)
         setattr(self, feat_attr, feature_matrix)
 
-    def to_heterograph_data(self):
-        return HeteroGraphData(self.graph, self.features)
-
     # --- Helpers ---
     def get_targets(self):
-        y = np.zeros((self.graph.n_proposals(), 1))
+        """
+        Generates a binary target vector for proposals.
+
+        Returns
+        -------
+        targets : numpy.ndarray
+            Binary target vector for proposals.
+        """
+        targets = np.zeros((self.graph.n_proposals(), 1))
         idx_to_id = self.proposal_index_mapping.idx_to_id
         for idx, object_id in idx_to_id.items():
             if object_id in self.graph.gt_accepts:
-                y[idx] = 1
-        return y
+                targets[idx] = 1
+        return targets
 
     @staticmethod
     def init_matrix(feature_dict):
@@ -426,16 +470,17 @@ class FeatureSet:
 
 class HeteroGraphData(HeteroData):
     """
-    A custom data class for heterogenous graphs. The graph is internally
-    represented as a line graph to facilitate edge-based message passing in
-    a GNN.
+    A class for storing heterogenous graphs and reformatting them into a form
+    suitable for GNN input. The graph is internally represented as a line
+    graph to facilitate edge-based message passing in a GNN.
     """
 
-    def __init__(self, graph, features):
+    def __init__(self, features=None):
         # Call parent class
         super().__init__()
 
         # Index mappings
+        print("features inside HeteroGraphData constuctor:", features)
         self.idxs_branches = features.edge_index_mapping
         self.idxs_proposals = features.proposal_index_mapping
 
@@ -446,9 +491,9 @@ class HeteroGraphData(HeteroData):
         self["patch"].x = torch.tensor(features.proposal_features)
 
         # Edge indices
-        self.build_proposal_adjacency(graph)
-        self.build_branch_adjacency(graph)
-        self.build_proposal_branch_adjacency(graph)
+        self.build_proposal_adjacency(features.graph)
+        self.build_branch_adjacency(features.graph)
+        self.build_branch_proposal_adjacency(features.graph)
 
     # --- Core Routines ---
     def build_proposal_adjacency(self, graph):
@@ -487,24 +532,43 @@ class HeteroGraphData(HeteroData):
         """
         edge_index = []
         for proposal in graph.proposals:
-            idx_proposal = self.idxs_proposals["id_to_idx"][proposal]
+            idx_proposal = self.idxs_proposals.id_to_idx[proposal]
             for i in proposal:
                 for j in graph.neighbors(i):
                     branch = frozenset((i, j))
-                    idx_branch = self.idxs_branches["id_to_idx"][branch]
+                    idx_branch = self.idxs_branches.id_to_idx[branch]
                     edge_index.append([idx_proposal, idx_branch])
+                    edge_index.append([idx_branch, idx_proposal])
         self.set_edge_index(edge_index, ("branch", "to", "proposal"))
 
     # --- Helpers ---
     @staticmethod
-    def _build_adjacency(self, edges, index_mapping):
+    def _build_adjacency(edges, index_mapping):
+        """
+        Constructs an adjacency list for the line graph induced by the given
+        set of edges. Note that this adjacency list is between edges and
+        specifies whether two edges share a common vertex.
+
+        Parameters
+        ----------
+        edges : List[Tuple[int]]
+            Edges to determine adjacency of.
+        index_mapping : IndexMapping
+            Data structure for mapping between object IDs and indices.
+    
+        Returns
+        -------
+        edge_index : List[List[int]]
+            Adjacency list for the line graph induced by the given set of
+            edges.
+        """
         # Build edge index
         edge_index = []
         line_graph = graph_util.edges_to_line_graph(edges)
         for e1, e2 in line_graph.edges:
-            v1 = index_mapping["id_to_idx"][frozenset(e1)]
-            v2 = index_mapping["id_to_idx"][frozenset(e2)]
-            edge_index.append([v1, v2])
+            v1 = index_mapping.id_to_idx[frozenset(e1)]
+            v2 = index_mapping.id_to_idx[frozenset(e2)]
+            edge_index.extend([[v1, v2], [v2, v1]])
         return edge_index
 
     def set_edge_index(self, edge_index, edge_type):
@@ -512,10 +576,8 @@ class HeteroGraphData(HeteroData):
         if len(edge_index) == 0:
             self[edge_type].edge_index = torch.empty((2, 0), dtype=torch.long)
 
-        # Reformat edge index
-        edge_index = to_undirected(edge_index)
-        edge_index = torch.Tensor(edge_index).t().contiguous().long()
-        self[edge_type].edge_index = edge_index
+        # Store edge index
+        self[edge_type].edge_index = torch.Tensor(edge_index).t().contiguous().long()
         self[edge_type[::-1]].edge_index = edge_index
 
 
