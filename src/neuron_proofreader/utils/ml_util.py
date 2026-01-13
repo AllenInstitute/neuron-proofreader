@@ -139,33 +139,6 @@ class TensorDict(dict):
 
 
 # --- Miscellaneous ---
-def get_inputs(data, device="cuda"):
-    """
-    Extracts input data for a gnn model and optionally moves it to a device.
-
-    Parameters
-    ----------
-    data : torch_geometric.data.HeteroData
-        A data object with the following attributes:
-            - x_dict: Dictionary of node features for different node types.
-            - edge_index_dict: Dictionary of edge indices for edge types.
-            - edge_attr_dict: Dictionary of edge attributes for edge types.
-    device : str, optional
-        Device to load the model onto. Default is "cuda".
-
-    Returns
-    --------
-    x : dict
-        Node features dictionary.
-    edge_index : dict
-        Edge indices dictionary.
-    edge_attr : dict
-        Edge attributes dictionary.
-    """
-    data.to(device)
-    return data.x_dict, data.edge_index_dict, data.edge_attr_dict
-
-
 def load_model(model, model_path, device="cuda"):
     """
     Loads a PyTorch model checkpoint, moves the model to the speficied device,

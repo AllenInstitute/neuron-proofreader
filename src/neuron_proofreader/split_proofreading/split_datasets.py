@@ -6,11 +6,6 @@ Created on Sat April 12 11:00:00 2024
 
 Routines for training machine learning models that classify proposals.
 
-
-To do: explain how the train pipeline is organized. how is the data organized?
-
-
-REMINDER: YOU NEED TO ADD PROPOSAL EDGES TO COMPUTATION GRAPH
 """
 
 from torch.utils.data import IterableDataset

@@ -102,10 +102,12 @@ class ProposalGraph(SkeletonGraph):
         self.xyz_to_edge = dict()
 
         # Instance attributes - Proposals
+        self.gt_accepts = set()
         self.merged_ids = set()
         self.min_size_with_proposals = min_size_with_proposals
         self.n_merges_blocked = 0
         self.n_proposals_blocked = 0
+        self.node_proposals = defaultdict(set)
         self.proposals = set()
 
         # Graph Loader
