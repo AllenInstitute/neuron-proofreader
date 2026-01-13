@@ -119,9 +119,15 @@ class FragmentsDataset(IterableDataset):
         while len(samplers) > 0:
             key = util.sample_once(samplers.keys())
             try:
+                # Feature extraction
                 subgraph = next(samplers[key])
                 features = self.feature_extractors[key](subgraph)
-                yield HeteroGraphData(features)
+
+                # Get model inputs
+                data = HeteroGraphData(features)
+                inputs = data.get_inputs()
+                targets = data.get_targets()
+                yield inputs, targets
             except StopIteration:
                 del samplers[key]
 

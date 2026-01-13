@@ -20,6 +20,7 @@ import numpy as np
 import torch
 
 from neuron_proofreader.utils import geometry_util, graph_util, img_util, util
+from neuron_proofreader.utils.ml_util import TensorDict
 
 
 # --- Feature Extractors ---
@@ -412,8 +413,7 @@ class FeatureSet:
         Parameters
         ----------
         feature_dict : Dict[hashable, numpy.ndarray]
-            Mapping from entity identifiers (e.g., node IDs) to feature
-            vectors.
+            Mapping from object IDs to feature arrays.
         feature_type : str
             Key identifying the feature category to set. Note: must exist in
             "self._FEATURE_TABLE".
@@ -447,6 +447,21 @@ class FeatureSet:
 
     @staticmethod
     def init_matrix(feature_dict):
+        """
+        Initializes a  from a feature dictionary.
+
+        Parameters
+        ----------
+        feature_dict : Dict[hashable, numpy.ndarray]
+            Mapping from object IDs to feature arrays.
+
+        Returns
+        -------
+        numpy.ndarray
+            Zero-valued feature matrix with shape
+                (num_objects, *feature_shape),
+            where `feature_shape` is inferred from the feature dictionary.
+        """
         key = util.sample_once(feature_dict.keys())
         shape = (len(feature_dict.keys()),) + feature_dict[key].shape
         return np.zeros(shape)
@@ -461,6 +476,21 @@ class FeatureSet:
         )
 
     def to_matrix(self, feature_dict, index_mapping):
+        """
+        Converts a dictionary of features into a dense feature matrix.
+    
+        Parameters
+        ----------
+        feature_dict : dict
+            Mapping from object IDs to feature arrays.
+        index_mapping : IndexMapping
+            Data structure for mapping between object IDs and indices.
+    
+        Returns
+        -------
+        x : numpy.ndarray
+            Dense feature matrix with shape (num_objects, feature_dim).
+        """
         x = self.init_matrix(feature_dict)
         for object_id in feature_dict:
             idx = index_mapping.id_to_idx[object_id]
@@ -571,7 +601,45 @@ class HeteroGraphData(HeteroData):
             edge_index.extend([[v1, v2], [v2, v1]])
         return edge_index
 
+    def get_inputs(self):
+        """
+        Gets inputs in a format that can passed through a GNN.
+
+        Returns
+        -------
+        inputs_dict : TensorDict
+            Inputs in a format that can passed through a GNN.
+        """
+        inputs_dict = TensorDict(
+            {
+                "x_dict": self.x_dict, "edge_index_dict": self.edge_index_dict
+            }
+        )
+        return inputs_dict
+
+    def get_targets(self):
+        """
+        Gets targets in a format that can passed through a GNN.
+
+        Returns
+        -------
+        TensorDict
+            Targets in a format that can passed through a GNN.
+        """
+        return TensorDict({"y_dict": self.y_dict})
+
     def set_edge_index(self, edge_index, edge_type):
+        """
+        Sets the edge index for a given heterogeneous edge type.
+    
+        Parameters
+        ----------
+        edge_index : List[Tuple[int]]
+            Edge list specifying source and target node indices.
+        edge_type : Tuple[str]
+            Heterogeneous edge type of the form:
+                (src_node_type, relation, dst_node_type).
+        """
         # Check if edge index is empty
         if len(edge_index) == 0:
             self[edge_type].edge_index = torch.empty((2, 0), dtype=torch.long)
