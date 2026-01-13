@@ -89,7 +89,7 @@ class SubgraphSampler:
         return visited
 
     # --- Core Routines---
-    def sample(self):
+    def __iter__(self):
         """
         Samples a subgraph by running a BFS using proposals as roots until
         every proposal has been visited.
@@ -102,7 +102,7 @@ class SubgraphSampler:
         while self.proposals:
             # Run BFS
             subgraph = self.init_subgraph()
-            while subgraph.n_proposals() and self.proposals:
+            while self.is_subgraph_full(subgraph) and self.proposals:
                 root = util.sample_once(self.proposals)
                 self.populate_via_bfs(subgraph, root)
 
@@ -150,7 +150,7 @@ class SubgraphSampler:
                 pair = frozenset({i, j})
                 if pair in self.proposals:
                     # Add proposal to subgraph
-                    subgraph.add_proposal(pair)
+                    subgraph.add_proposal(i, j)
                     if pair in self.graph.gt_accepts:
                         subgraph.gt_accepts.add(pair)
 
@@ -198,6 +198,9 @@ class SubgraphSampler:
         )
         return subgraph
 
+    def is_subgraph_full(self, subgraph):
+        return subgraph.n_proposals() < self.max_proposals
+
 
 class SeededSubgraphSampler(SubgraphSampler):
 
@@ -213,7 +216,7 @@ class SeededSubgraphSampler(SubgraphSampler):
         while soma_connected_proposals_exist:
             # Run BFS
             subgraph = self.init_subgraph()
-            while subgraph.n_proposals() < self.max_proposals and self.proposals:
+            while self.is_subgraph_full(subgraph) and self.proposals:
                 root = self.find_bfs_root()
                 if root:
                     self.populate_via_seeded_bfs(subgraph, root)

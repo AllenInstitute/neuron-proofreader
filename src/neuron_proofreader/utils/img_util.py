@@ -604,12 +604,8 @@ def normalize(img):
     img : numpy.ndarray
         Normalized image.
     """
-    try:
-        mn, mx = np.percentile(img, [1, 99.9])
-        return np.clip((img - mn) / (mx - mn + 1e-5), 0, 1)
-    except Exception as e:
-        print("Image Normalization Failed:", e)
-        return np.zeros(img.shape)
+    mn, mx = np.percentile(img, [1, 99.9])
+    return np.clip((img - mn) / (mx - mn + 1e-5), 0, 1)
 
 
 def pad_to_shape(img, target_shape, pad_value=0):

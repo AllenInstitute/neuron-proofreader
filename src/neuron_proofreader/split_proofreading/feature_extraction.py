@@ -1,15 +1,12 @@
 """
-Created on Sat July 15 9:00:00 2023
+Created on Tue Jan 13 15:00:00 2026
 
 @author: Anna Grim
 @email: anna.grim@alleninstitute.org
 
-Generates features for training a machine learning model and performing
-inference.
+Code for generating features used by machine learning models to perform split
+correction.
 
-Note: We assume that a segmentation mask corresponds to multiscale 0. Thus,
-      the instance attribute "self.multiscale" corresponds to the multiscale
-      of the input image.
 """
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -310,6 +307,24 @@ class ImageFeatureExtractor:
         return patches, profile
 
     def get_proposal_mask(self, proposal, center, shape):
+        """
+        Generates a segmentation mask for a proposal-centered image patch.
+
+        Parameters
+        ----------
+        proposal : FrozenSet[int]
+            Edge proposal to extract image features for.
+        center : Tuple[int]
+            Center of image patch to be read.
+        shape : Tuple[int]
+            Shape of the patch to to be read.
+
+        Returns
+        -------
+        segmentation_mask : numpy.ndarray
+            Segmentation mask containing annotations for the proposal and its
+            incident edges, suitable for use as a model input.
+        """
         # Read segmentation
         segmentation_mask = self.read_segmentation_mask(center, shape)
 
@@ -321,17 +336,57 @@ class ImageFeatureExtractor:
         self.annotate_proposal(proposal, segmentation_mask, offset)
         return img_util.resize(segmentation_mask, self.patch_shape, True)
 
-    def annotate_edge(self, node, patch, offset):
+    def annotate_edge(self, node, mask, offset):
+        """
+        Annotates the neuron branch containing the specified node within the
+        given mask.
+
+        Parameters
+        ----------
+        node : int
+            Node ID used to get branch to be annotated.
+        mask : numpy.ndarray
+            Segmentation mask to be annotated in place.
+        offset : numpy.ndarray
+            Offset used to map global coordinates into the local mask.
+        """
         voxels = self.get_local_coordinates(node, offset)
         voxels = geometry_util.make_voxels_connected(voxels)
-        img_util.annotate_voxels(patch, voxels, val=0.5)
+        img_util.annotate_voxels(mask, voxels, val=0.5)
 
-    def annotate_proposal(self, proposal, patch, offset):
+    def annotate_proposal(self, proposal, mask, offset):
+        """
+        Annotates the proposal within the given mask.
+
+        Parameters
+        ----------
+        proposal : FrozenSet[int]
+            Proposal to be annotated.
+        mask : numpy.ndarray
+            Segmentation mask to be annotated in place.
+        offset : numpy.ndarray
+            Offset used to map global coordinates into the local mask.
+        """
         profile_line = self.get_profile_line(proposal, offset)
-        img_util.annotate_voxels(patch, profile_line, val=1)
+        img_util.annotate_voxels(mask, profile_line, val=1)
 
     # --- Helpers ---
     def compute_proposal_crop(self, proposal):
+        """
+        Compute a cubic image crop centered on a proposal.
+
+        Parameters
+        ----------
+        proposal : FrozenSet[int]
+            Proposal to compute crop of.
+
+        Returns
+        -------
+        center : Tuple[int]
+            Center of image crop.
+        shape : Tuple[int]
+            Shape of image crop.
+        """
         # Compute bounds
         node1, node2 = proposal
         voxel1 = self.graph.get_voxel(node1)
@@ -339,11 +394,29 @@ class ImageFeatureExtractor:
         bounds = img_util.get_minimal_bbox([voxel1, voxel2], self.padding)
 
         # Transform into square
-        center = [int((v1 + v2) / 2) for v1, v2 in zip(voxel1, voxel2)]
+        center = tuple([int((v1 + v2) / 2) for v1, v2 in zip(voxel1, voxel2)])
         length = np.max([u - l for u, l in zip(bounds["max"], bounds["min"])])
         return center, (length, length, length)
 
     def get_profile_line(self, proposal, offset, n_pts=None):
+        """
+        Generates a voxel line between the two nodes of a proposal.
+
+        Parameters
+        ----------
+        proposal : FrozenSet[int]
+            Proposal to generate voxel line from.
+        offset : numpy.ndarray
+            Offset used to map global coordinates into the local mask.
+        n_pts : int, optional
+            Number of points to sample along the line. If not provided, a
+            dense voxel line is returned.
+
+        Returns
+        -------
+        numpy.ndarray
+            Voxel line between the two nodes of a proposal.
+        """
         node1, node2 = proposal
         voxel1 = self.graph.get_local_voxel(node1, offset)
         voxel2 = self.graph.get_local_voxel(node2, offset)
@@ -353,6 +426,24 @@ class ImageFeatureExtractor:
             return geometry_util.make_digital_line(voxel1, voxel2)
 
     def get_local_coordinates(self, node, offset):
+        """
+        Convert edge coordinates associated with a node into local voxel
+        coordinates.
+
+        Parameters
+        ----------
+        node : int
+            Identifier of the node whose incident edge coordinates are
+            queried.
+        offset : numpy.ndarray
+            Offset used to map global voxel coordinates into the local patch.
+
+        Returns
+        -------
+        List[Tuple[int]]
+            Voxel coordinates representing the edge path in local patch
+            coordinates.
+        """
         pts = np.vstack(self.graph.edge_attr(node, "xyz"))
         anisotropy = self.graph.anisotropy
         voxels = [img_util.to_voxels(xyz, anisotropy) for xyz in pts]
@@ -360,11 +451,31 @@ class ImageFeatureExtractor:
         return voxels
 
     def read_image_patch(self, center, shape):
+        """
+        Reads the image patch specified by the given center and shape.
+
+        Parameters
+        ----------
+        center : Tuple[int]
+            Center of image patch to be read.
+        shape : Tuple[int]
+            Center of image patch to be read.
+        """
         patch = self.img.read(center, shape)
         patch = img_util.normalize(np.minimum(patch, self.brightness_clip))
         return patch
 
     def read_segmentation_mask(self, center, shape):
+        """
+        Reads the segmentation patch specified by the given center and shape.
+
+        Parameters
+        ----------
+        center : Tuple[int]
+            Center of segmentation patch to be read.
+        shape : Tuple[int]
+            Center of segmentation patch to be read.
+        """
         if self.segmentation:
             patch = self.segmentation.read(center, shape)
             return 0.25 * (patch > 0).astype(float)
@@ -533,7 +644,7 @@ class HeteroGraphData(HeteroData):
         self["branch"].x = torch.tensor(features.edge_features)
         self["proposal"].x = torch.tensor(features.proposal_features)
         self["proposal"].y = torch.tensor(features.targets)
-        self["patch"].x = torch.tensor(features.proposal_patches)
+        self["img"].x = torch.tensor(features.proposal_patches)
 
         # Edge indices
         self.build_proposal_adjacency(features.graph)
@@ -575,24 +686,25 @@ class HeteroGraphData(HeteroData):
         graph : ProposalGraph
             Graph containing branches and proposals.
         """
-        edge_index = []
+        edge_index_b2p, edge_index_p2b = list(), list()
         for proposal in graph.proposals:
             idx_proposal = self.idxs_proposals.id_to_idx[proposal]
             for i in proposal:
                 for j in graph.neighbors(i):
                     branch = frozenset((i, j))
                     idx_branch = self.idxs_branches.id_to_idx[branch]
-                    edge_index.append([idx_proposal, idx_branch])
-                    edge_index.append([idx_branch, idx_proposal])
-        self.set_edge_index(edge_index, ("branch", "to", "proposal"))
+                    edge_index_b2p.append([idx_branch, idx_proposal])
+                    edge_index_p2b.append([idx_proposal, idx_branch])
+        self.set_edge_index(edge_index_b2p, ("branch", "to", "proposal"))
+        self.set_edge_index(edge_index_p2b, ("proposal", "to", "branch"))
 
     # --- Helpers ---
     @staticmethod
     def _build_adjacency(edges, index_mapping):
         """
         Constructs an adjacency list for the line graph induced by the given
-        set of edges. Note that this adjacency list is between edges and
-        specifies whether two edges share a common vertex.
+        set of edges. Note: the adjacency list is between edges and specifies
+        whether two edges share a common vertex.
 
         Parameters
         ----------
@@ -623,7 +735,7 @@ class HeteroGraphData(HeteroData):
         Returns
         -------
         inputs_dict : TensorDict
-            Inputs in a format that can passed through a GNN.
+            Inputs in a format that can pass through a GNN.
         """
         inputs_dict = TensorDict(
             {
@@ -639,9 +751,9 @@ class HeteroGraphData(HeteroData):
         Returns
         -------
         TensorDict
-            Targets in a format that can passed through a GNN.
+            Targets in a format that can pass through a GNN.
         """
-        return TensorDict({"y_dict": self.y_dict})
+        return self.y_dict["proposal"]
 
     def set_edge_index(self, edge_index, edge_type):
         """
@@ -657,12 +769,11 @@ class HeteroGraphData(HeteroData):
         """
         # Check if edge index is empty
         if len(edge_index) == 0:
-            self[edge_type].edge_index = torch.empty((2, 0), dtype=torch.long)
+            edge_index = torch.empty((0, 2), dtype=torch.long)
 
         # Store edge index
         edge_index = torch.Tensor(edge_index).t().contiguous().long()
         self[edge_type].edge_index = edge_index
-        self[edge_type[::-1]].edge_index = edge_index
 
 
 class IndexMapping:
