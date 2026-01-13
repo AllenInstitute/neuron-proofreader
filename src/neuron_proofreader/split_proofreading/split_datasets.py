@@ -1,5 +1,5 @@
 """
-Created on Sat April 12 11:00:00 2024
+Created on Fri April 11 11:00:00 2024
 
 @author: Anna Grim
 @email: anna.grim@alleninstitute.org
@@ -25,9 +25,9 @@ from neuron_proofreader.utils import util
 
 class FragmentsDataset(IterableDataset):
     """
-    Dataset for storing graphs used to train a graph neural network to perform
-    split correction. Graphs are stored in the "self.graphs" attribute, which
-    is a dictionary containing the followin items:
+    A dataset class for storing graphs used to train models to perform split
+    correction. Graphs are stored in the "self.graphs" attribute, which is a
+    dictionary containing the followin items:
         - Key: (brain_id, segmentation_id, example_id)
         - Value: graph that is an instance of ProposalGraph
 
@@ -42,16 +42,25 @@ class FragmentsDataset(IterableDataset):
     """
 
     def __init__(self, config, patch_shape=(128, 128, 128), transform=False):
+        """
+        Instantiates a FragmentsDataset object.
+
+        Parameters
+        ----------
+        config : GraphConfig
+            Config object that stores parameters used to build graphs.
+        patch_shape : Tuple[int], optional
+            Shape of image patch input to a vision model. Default is (128, 128,
+            128).
+        transform : bool, optional
+            Indication of whether to apply augmentation to input images.
+            Default is False.
+        """
         # Instance attributes
+        self.config = config
         self.feature_extractors = dict()
         self.graphs = dict()
         self.patch_shape = patch_shape
-
-        # Configs
-        self.graph_config = config.graph_config
-        self.ml_config = config.ml_config
-
-        # Data augmentation (if applicable)
         self.transform = ImageTransforms() if transform else False
 
     # --- Load Data ---
@@ -61,23 +70,43 @@ class FragmentsDataset(IterableDataset):
         gt_pointer,
         pred_pointer,
         img_path,
+        segmentation_path=None
     ):
+        """
+        Loads a fragments graph, generates proposals, and initializes feature
+        extraction.
+    
+        Parameters
+        ----------
+        key : Tuple[str]
+            Unique identifier used to register the graph and its feature
+            pipeline.
+        gt_pointer : str
+            Path to ground-truth SWC files to be loaded.
+        pred_pointer : str
+            Path to predicted SWC files to be loaded.
+        img_path : str
+            Path to the raw image associated with the graph.
+        segmentation_path : str
+            Path to the segmentation mask associated with the graph.
+        """
         # Add graph
         self.graphs[key] = self.load_graph(pred_pointer)
         self.graphs[key].generate_proposals(
-            self.graph_config.search_radius,
-            complex_bool=self.graph_config.complex_bool,
+            self.config.search_radius,
+            complex_bool=self.config.complex_bool,
             groundtruth_graph=self.load_graph(gt_pointer),
-            long_range_bool=self.graph_config.long_range_bool,
-            proposals_per_leaf=self.graph_config.proposals_per_leaf,
+            long_range_bool=self.config.long_range_bool,
+            proposals_per_leaf=self.config.proposals_per_leaf,
         )
 
         # Generate features -- add segmentation path
         self.feature_extractors[key] = FeaturePipeline(
             self.graphs[key],
             img_path,
-            self.graph_config.search_radius,
-            patch_shape=self.patch_shape
+            self.config.search_radius,
+            patch_shape=self.patch_shape,
+            segmentation_path=segmentation_path
         )
 
     def load_graph(self, swc_pointer):
@@ -96,15 +125,25 @@ class FragmentsDataset(IterableDataset):
             Graph constructed from SWC files.
         """
         graph = ProposalGraph(
-            anisotropy=self.graph_config.anisotropy,
-            min_size=self.graph_config.min_size,
-            node_spacing=self.graph_config.node_spacing,
+            anisotropy=self.config.anisotropy,
+            min_size=self.config.min_size,
+            node_spacing=self.config.node_spacing,
         )
         graph.load(swc_pointer)
         return graph
 
     # --- Get Data ---
     def __iter__(self):
+        """
+        Iterates over the dataset and yields model-ready inputs and targets.
+    
+        Yields
+        ------
+        inputs : HeteroGraphData
+            Heterogeneous graph data.
+        targets : torch.Tensor
+            Ground truth labels.
+        """
         # Initialize subgraph samplers
         samplers = dict()
         for key, graph in self.graphs.items():
@@ -153,6 +192,21 @@ class FragmentsDataset(IterableDataset):
 
 # -- Helpers --
 def generate_dataset_example_ids(bucket_name, dataset_prefix):
+    """
+    Generates dataset example identifiers.
+
+    Parameters
+    ----------
+    bucket_name : str
+        Name of the Google Cloud Storage bucket.
+    dataset_prefix : str
+        Root prefix under which dataset contents are organized.
+
+    Yields
+    -------
+    Tuple[str]
+        Dataset example ID formatted as (brain_id, segmentation_id, block_id).
+    """
     brain_prefixes = util.list_gcs_subdirectories(bucket_name, dataset_prefix)
     for brain_prefix in brain_prefixes:
         # Extract brain id
@@ -173,22 +227,3 @@ def generate_dataset_example_ids(bucket_name, dataset_prefix):
                 # Extract block id
                 block_id = block_prefix.split("/")[-2]
                 yield brain_id, segmentation_id, block_id
-
-
-def truncate(hat_y, y):
-    """
-    Truncates "hat_y" so that this tensor has the same shape as "y".
-
-    Parameters
-    ----------
-    hat_y : torch.Tensor
-        Tensor to be truncated.
-    y : torch.Tensor
-        Tensor used as a reference.
-
-    Returns
-    -------
-    torch.Tensor
-        Truncated "hat_y".
-    """
-    return hat_y[: y.size(0), 0]
