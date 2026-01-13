@@ -171,7 +171,9 @@ def generate_dataset_example_ids(bucket_name, dataset_prefix):
             segmentation_id = brain_segmentation_prefix.split("/")[-2]
 
             # Iterate over blocks
-            block_prefixes = util.list_gcs_subdirectories(bucket_name, brain_segmentation_prefix)
+            block_prefixes = util.list_gcs_subdirectories(
+                bucket_name, brain_segmentation_prefix
+            )
             for block_prefix in block_prefixes:
                 # Extract block id
                 block_id = block_prefix.split("/")[-2]
