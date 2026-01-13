@@ -14,7 +14,6 @@ Note: We assume that a segmentation mask corresponds to multiscale 0. Thus,
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from torch_geometric.data import HeteroData
-from torch_geometric.utils import to_undirected
 
 import numpy as np
 import torch
@@ -207,7 +206,7 @@ class ImageFeatureExtractor:
         self,
         graph,
         img_path,
-        brightness_clip=400,
+        brightness_clip=1000,
         patch_shape=(96, 96, 96),
         padding=40,
         segmentation_path=None,
@@ -355,7 +354,8 @@ class ImageFeatureExtractor:
 
     def get_local_coordinates(self, node, offset):
         pts = np.vstack(self.graph.edge_attr(node, "xyz"))
-        voxels = [img_util.to_voxels(xyz, self.graph.anisotropy) for xyz in pts]
+        anisotropy = self.graph.anisotropy
+        voxels = [img_util.to_voxels(xyz, anisotropy) for xyz in pts]
         voxels = geometry_util.shift_path(voxels, offset)
         return voxels
 
@@ -467,6 +467,14 @@ class FeatureSet:
         return np.zeros(shape)
 
     def integrate_proposal_profiles(self, profiles_dict):
+        """
+        Integrates proposal profiles into the proposal feature matrix.
+
+        Parameters
+        ----------
+        profiles_dict : dict
+            Mapping from proposal IDs to profile feature arrays.
+        """
         x = self.init_matrix(profiles_dict)
         for object_id in profiles_dict:
             idx = self.proposal_index_mapping.id_to_idx[object_id]
@@ -478,14 +486,14 @@ class FeatureSet:
     def to_matrix(self, feature_dict, index_mapping):
         """
         Converts a dictionary of features into a dense feature matrix.
-    
+
         Parameters
         ----------
         feature_dict : dict
             Mapping from object IDs to feature arrays.
         index_mapping : IndexMapping
             Data structure for mapping between object IDs and indices.
-    
+
         Returns
         -------
         x : numpy.ndarray
@@ -505,12 +513,19 @@ class HeteroGraphData(HeteroData):
     graph to facilitate edge-based message passing in a GNN.
     """
 
-    def __init__(self, features=None):
+    def __init__(self, features):
+        """
+        Instantiates a HeteroGraphData object.
+
+        Parameters
+        ----------
+        features : FeatureSet
+            Data structure that stores features.
+        """
         # Call parent class
         super().__init__()
 
         # Index mappings
-        print("features inside HeteroGraphData constuctor:", features)
         self.idxs_branches = features.edge_index_mapping
         self.idxs_proposals = features.proposal_index_mapping
 
@@ -518,7 +533,7 @@ class HeteroGraphData(HeteroData):
         self["branch"].x = torch.tensor(features.edge_features)
         self["proposal"].x = torch.tensor(features.proposal_features)
         self["proposal"].y = torch.tensor(features.targets)
-        self["patch"].x = torch.tensor(features.proposal_features)
+        self["patch"].x = torch.tensor(features.proposal_patches)
 
         # Edge indices
         self.build_proposal_adjacency(features.graph)
@@ -585,7 +600,7 @@ class HeteroGraphData(HeteroData):
             Edges to determine adjacency of.
         index_mapping : IndexMapping
             Data structure for mapping between object IDs and indices.
-    
+
         Returns
         -------
         edge_index : List[List[int]]
@@ -631,7 +646,7 @@ class HeteroGraphData(HeteroData):
     def set_edge_index(self, edge_index, edge_type):
         """
         Sets the edge index for a given heterogeneous edge type.
-    
+
         Parameters
         ----------
         edge_index : List[Tuple[int]]
@@ -645,7 +660,8 @@ class HeteroGraphData(HeteroData):
             self[edge_type].edge_index = torch.empty((2, 0), dtype=torch.long)
 
         # Store edge index
-        self[edge_type].edge_index = torch.Tensor(edge_index).t().contiguous().long()
+        edge_index = torch.Tensor(edge_index).t().contiguous().long()
+        self[edge_type].edge_index = edge_index
         self[edge_type[::-1]].edge_index = edge_index
 
 
