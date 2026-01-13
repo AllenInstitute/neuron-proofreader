@@ -25,7 +25,7 @@ from neuron_proofreader.utils import util
 
 class FragmentsDataset(IterableDataset):
     """
-    Dataset for storing graphs used to train models to perform split
+    A dataset class for storing graphs used to train models to perform split
     correction. Graphs are stored in the "self.graphs" attribute, which is a
     dictionary containing the followin items:
         - Key: (brain_id, segmentation_id, example_id)
