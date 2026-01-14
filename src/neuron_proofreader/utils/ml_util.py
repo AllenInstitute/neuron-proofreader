@@ -153,7 +153,13 @@ def load_model(model, model_path, device="cuda"):
     device : str, optional
         Device to load the model onto. Default is "cuda".
     """
-    model.load_state_dict(torch.load(model_path, map_location=device))
+    state_dict = torch.load(model_path, map_location=device)
+    new_state_dict = dict()
+    for k, v in state_dict.items():
+        new_key = k.replace("output.", "output.net.")
+        new_state_dict[new_key] = v
+    
+    model.load_state_dict(new_state_dict)
     model.to(device)
     model.eval()
 
