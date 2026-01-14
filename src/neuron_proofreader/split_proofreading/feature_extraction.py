@@ -641,10 +641,10 @@ class HeteroGraphData(HeteroData):
         self.idxs_proposals = features.proposal_index_mapping
 
         # Node features
+        self.x_img = torch.tensor(features.proposal_patches)
         self["branch"].x = torch.tensor(features.edge_features)
         self["proposal"].x = torch.tensor(features.proposal_features)
         self["proposal"].y = torch.tensor(features.targets)
-        self["img"].x = torch.tensor(features.proposal_patches)
 
         # Edge indices
         self.build_proposal_adjacency(features.graph)
@@ -739,7 +739,9 @@ class HeteroGraphData(HeteroData):
         """
         inputs_dict = TensorDict(
             {
-                "x_dict": self.x_dict, "edge_index_dict": self.edge_index_dict
+                "x_dict": self.x_dict,
+                "img": self.x_img,
+                "edge_index_dict": self.edge_index_dict
             }
         )
         return inputs_dict
@@ -821,20 +823,3 @@ def get_node_dict():
         Dictionary containing the number of features for each node type
     """
     return {"branch": 2, "proposal": 34}
-
-
-def get_edge_dict():
-    """
-    Returns the number of features for different edge types.
-
-    Returns
-    -------
-    dict
-        A dictionary containing the number of features for each edge type
-    """
-    edge_dict = {
-        ("proposal", "edge", "proposal"): 3,
-        ("branch", "edge", "branch"): 3,
-        ("branch", "edge", "proposal"): 3,
-    }
-    return edge_dict

@@ -293,6 +293,7 @@ class GraphDataset(IterableDataset, ABC):
         if self.use_new_mask:
             center = [o + s // 2 for o, s in zip(offset, img_shape)]
             segment_mask = self.segmentation_reader.read(center, img_shape)
+            segment_mask = img_util.remove_small_segments(segment_mask, 1000)
             segment_mask = 0.5 * (segment_mask > 0).astype(int)
         else:
             segment_mask = np.zeros(img_shape)
