@@ -75,7 +75,7 @@ class FragmentsDataset(IterableDataset):
         """
         Loads a fragments graph, generates proposals, and initializes feature
         extraction.
-    
+
         Parameters
         ----------
         key : Tuple[str]
@@ -136,7 +136,7 @@ class FragmentsDataset(IterableDataset):
     def __iter__(self):
         """
         Iterates over the dataset and yields model-ready inputs and targets.
-    
+
         Yields
         ------
         inputs : HeteroGraphData
