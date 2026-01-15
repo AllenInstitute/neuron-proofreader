@@ -52,7 +52,6 @@ class ProposalGraph(SkeletonGraph):
         segmentation_path=None,
         smooth_bool=True,
         soma_centroids=None,
-        use_anisotropy=True,
         verbose=False,
     ):
         """
@@ -82,10 +81,6 @@ class ProposalGraph(SkeletonGraph):
             Default is True.
         soma_centroids : List[Tuple[float]] or None, optional
             Phyiscal coordinates of soma centroids. Default is None.
-        use_anisotropy : bool, optional
-            Indication of whether to apply anisotropy to SWC files. Note: Set
-            to False when SWC files are in physical coordinates. Default is
-            True.
         verbose : bool, optional
             Indication of whether to display a progress bar while building
             graph. Default is True.
@@ -111,7 +106,6 @@ class ProposalGraph(SkeletonGraph):
         self.proposals = set()
 
         # Graph Loader
-        anisotropy = anisotropy if use_anisotropy else (1.0, 1.0, 1.0)
         self.graph_loader = gutil.GraphLoader(
             anisotropy=anisotropy,
             min_size=min_size,
