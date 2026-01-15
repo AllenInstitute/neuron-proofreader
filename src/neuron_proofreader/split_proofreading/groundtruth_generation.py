@@ -26,11 +26,12 @@ Note: We use the convention that a fragment refers to a connected component in
 """
 
 from collections import defaultdict
+from copy import deepcopy
 
 import networkx as nx
 import numpy as np
 
-from neuron_proofreader.utils import geometry_util, util
+from neuron_proofreader.utils import geometry_util, graph_util as gutil, util
 
 
 def run(gt_graph, pred_graph):
@@ -39,7 +40,7 @@ def run(gt_graph, pred_graph):
 
     Parameters
     ----------
-    gt_graph : FragmentsGraph
+    gt_graph : ProposalGraph
         Graph built from ground truth SWC files.
     pred_graph : ProposalGraph
         Graph build from predicted SWC files.
@@ -51,12 +52,13 @@ def run(gt_graph, pred_graph):
         Note: a model will learn to accept these proposals.
     """
     # Initializations
-    gt_kdtree = gt_graph.get_kdtree()
-    pred_to_gt = get_pred_to_gt_mapping(gt_graph, pred_graph, gt_kdtree)
+    accepts_graph = deepcopy(pred_graph)
+    gt_graph.set_kdtree()
+    pred_to_gt = get_pred_to_gt_mapping(gt_graph, pred_graph)
 
     # Main
     gt_accepts = list()
-    for proposal in pred_graph.proposals:
+    for proposal in get_sorted_proposals(pred_graph):
         # Extract proposal info
         i, j = tuple(proposal)
         id1 = pred_graph.node_component_id[i]
@@ -66,16 +68,22 @@ def run(gt_graph, pred_graph):
         if pred_to_gt[id1] != pred_to_gt[id2] or pred_to_gt[id1] is None:
             continue
 
+        # Check proposal projection distance
+        dist = compute_proposal_proj_dist(gt_graph, pred_graph, proposal)
+        if dist > 5:
+            continue
+
         # Check if proposal is structurally consistent
-        consistent = is_structurally_consistent(
-            gt_graph, pred_graph, gt_kdtree, pred_to_gt[id1], proposal
+        gt_id = pred_to_gt[id1]
+        is_consistent = is_structure_consistent(
+            gt_graph, pred_graph, accepts_graph, gt_id, proposal
         )
-        if consistent:
+        if is_consistent:
             gt_accepts.append(proposal)
     return gt_accepts
 
 
-def get_pred_to_gt_mapping(gt_graph, pred_graph, gt_kdtree):
+def get_pred_to_gt_mapping(gt_graph, pred_graph):
     """
     Gets fragments aligned to a single ground truth skeleton and builds a
     dictionary that maps these fragment IDs to the corresponding ground truth
@@ -83,44 +91,40 @@ def get_pred_to_gt_mapping(gt_graph, pred_graph, gt_kdtree):
 
     Parameters
     ----------
-    gt_graph : FragmentsGraph
+    gt_graph : ProposalGraph
         Graph built from ground truth SWC files.
-    pred_graph : FragmentsGraph
+    pred_graph : ProposalGraph
         Graph build from predicted SWC files.
-    gt_kdtree : scipy.spatial.KDTree
-        KD-Tree built from xyz coordinates in ground truth graph.
 
     Returns
     -------
-    pred_to_gt : dict
+    pred_to_gt : Dict[int, int]
         Dictionary that maps fragment IDs to the corresponding ground truth
         ID.
     """
     pred_to_gt = defaultdict(lambda: None)
     for nodes in nx.connected_components(pred_graph):
-        gt_id = find_aligned_component(gt_graph, pred_graph, gt_kdtree, nodes)
+        gt_id = find_aligned_component(gt_graph, pred_graph, nodes)
         if gt_id:
             node = util.sample_once(nodes)
             pred_to_gt[pred_graph.node_component_id[node]] = gt_id
     return pred_to_gt
 
 
-def find_aligned_component(gt_graph, pred_graph, gt_kdtree, nodes):
+def find_aligned_component(gt_graph, pred_graph, nodes):
     """
-    Determines whether a fragment is spatially aligned to a single connected
-    component in the ground truth graph. The given nodes are projected onto
-    "gt_graph", and the average projection distance is computed. If this
-    distance is less than 4.5 µm and all projections fall within the same
+    Determines if the given nodes are spatially aligned to a single connected
+    component in the ground truth graph. The node coordinates are projected
+    onto "gt_graph", and the average projection distance is computed. If this
+    avg distance is less than 4 µm and most projections fall within the same
     connected component of gt_graph, the fragment is considered aligned.
 
     Parameters
     ----------
-    gt_graph : FragmentsGraph
+    gt_graph : ProposalGraph
         Graph built from ground truth SWC files.
-    pred_graph : FragmentsGraph
+    pred_graph : ProposalGraph
         Graph build from predicted SWC files.
-    gt_kdtree : scipy.spatial.KDTree
-        KD-Tree built from node xyz coordinates in ground truth graph.
     nodes : Set[int]
         Nodes from a connected component in "pred_graph".
 
@@ -130,66 +134,68 @@ def find_aligned_component(gt_graph, pred_graph, gt_kdtree, nodes):
         Indication of whether connected component "nodes" is aligned to a
         connected component in "gt_graph".
     """
-    # Compute distances
+    # Compute projection distances
     dists = defaultdict(list)
-    point_cnt = 0
+    n_pts = 0
     for edge in pred_graph.subgraph(nodes).edges:
         for xyz in pred_graph.edges[edge]["xyz"]:
-            hat_xyz = geometry_util.kdtree_query(gt_kdtree, xyz)
-            hat_id = gt_graph.xyz_to_component_id(hat_xyz)
+            hat_xyz = geometry_util.kdtree_query(gt_graph.kdtree, xyz)
+            gt_id = gt_graph.xyz_to_component_id(hat_xyz)
             d = geometry_util.dist(hat_xyz, xyz)
-            dists[hat_id].append(d)
-            point_cnt += 1
+            dists[gt_id].append(d)
+            n_pts += 1
 
     # Compute alignment score
-    hat_id = util.find_best(dists)
-    dists = np.array(dists[hat_id])
-    percent_aligned = len(dists) / point_cnt
-
-    intersects = True if percent_aligned > 0.5 else False
+    gt_id = util.find_best(dists)
+    dists = np.array(dists[gt_id])
+    percent_aligned = len(dists) / n_pts
     aligned_score = np.mean(dists[dists < np.percentile(dists, 80)])
 
     # Deterine whether aligned
-    if (aligned_score < 4 and hat_id) and intersects:
-        return hat_id
+    if (aligned_score < 4 and gt_id) and percent_aligned > 0.6:
+        return gt_id
     else:
         return None
 
 
-def is_structurally_consistent(gt_graph, pred_graph, gt_kdtree, gt_id, proposal):
+def is_structure_consistent(
+    gt_graph, pred_graph, accepts_graph, gt_id, proposal
+):
     """
-    Determines whether the proposal connects two branches that correspond to
-    either the same or adjacent branches on the ground truth. If either
-    condition holds, then the proposal is said to be consistent.
+    Determines if the proposal connects two branches corresponding to either
+    the same or adjacent branches on the ground truth. If either condition
+    holds, then a subroutine is called to do additional check.
 
     Parameters
     ----------
-    gt_graph : FragmentsGraph
+    gt_graph : ProposalGraph
         Graph built from ground truth SWC files.
-    pred_graph : FragmentsGraph
+    pred_graph : ProposalGraph
         Graph build from predicted SWC files.
-    proposal : frozenset
+    proposal : Frozenset[int]
         Proposal to be checked.
 
     Returns
     -------
     bool
-        Indication of whether proposal is structurally consistent.
+        Indication of whether proposal is structurally consistent with ground
+        truth.
     """
     # Find irreducible edges in gt_graph closest to edges connected to proposal
     i, j = tuple(proposal)
-    hat_edge_i = find_closest_gt_edge(gt_graph, pred_graph, gt_kdtree, gt_id, i)
-    hat_edge_j = find_closest_gt_edge(gt_graph, pred_graph, gt_kdtree, gt_id, j)
+    hat_edge_i = find_closest_gt_edge(gt_graph, pred_graph, gt_id, i)
+    hat_edge_j = find_closest_gt_edge(gt_graph, pred_graph, gt_id, j)
     if hat_edge_i is None or hat_edge_j is None:
         return False
 
-    # Check if closest edges are identical
+    # Case 1: Proposal is at non-branching point
     if hat_edge_i == hat_edge_j:
-        return True
+        return check_nonbranching_proposal(accepts_graph, proposal)
 
-    # Check if edges are adjacent
+    # Case 2: Proposal is at branching point
     if set(hat_edge_i).intersection(set(hat_edge_j)):
         # Orient ground truth edges
+        i, j = tuple(proposal)
         hat_edge_xyz_i, hat_edge_xyz_j = orient_edges(
             gt_graph.edges[hat_edge_i]["xyz"],
             gt_graph.edges[hat_edge_j]["xyz"]
@@ -206,15 +212,43 @@ def is_structurally_consistent(gt_graph, pred_graph, gt_kdtree, gt_id, proposal)
         gt_dist = len_1 + len_2
         proposal_dist = pred_graph.proposal_length(proposal)
         return abs(proposal_dist - gt_dist) < 40
+
+    # Fail: Proposal is between non-adjacent branches
     return False
 
 
-def find_closest_gt_edge(gt_graph, pred_graph, gt_kdtree, gt_id, i):
+def check_nonbranching_proposal(accepts_graph, proposal):
+    i, j = tuple(proposal)
+    accepts_graph.add_edge(i, j)
+    if gutil.cycle_exists(accepts_graph):
+        accepts_graph.remove_edge(i, j)
+        return False
+    else:
+        return True
+
+
+def compute_proposal_proj_dist(gt_graph, pred_graph, proposal):
+    # Extract proposal info
+    i, j = proposal
+    xyz_i = pred_graph.node_xyz[i]
+    xyz_j = pred_graph.node_xyz[j]
+    n_pts = max(int(pred_graph.proposal_length(proposal)), 1)
+
+    # Compute projection distances
+    proj_dists = list()
+    for pt in geometry_util.make_line(xyz_i, xyz_j, n_pts):
+        d, _ = gt_graph.kdtree.query(pt)
+        proj_dists.append(d)
+    return np.mean(proj_dists)
+
+
+# --- Helpers ---
+def find_closest_gt_edge(gt_graph, pred_graph, gt_id, i):
     depth = 16
     while depth <= 64:
         # Search for edge
         hat_edge_i = project_region(
-            gt_graph, pred_graph, gt_kdtree, gt_id, i, depth
+            gt_graph, pred_graph, gt_id, i, depth
         )
 
         # Check result
@@ -225,27 +259,6 @@ def find_closest_gt_edge(gt_graph, pred_graph, gt_kdtree, gt_id, i):
     return hat_edge_i
 
 
-def project_region(gt_graph, pred_graph, gt_kdtree, gt_id, i, depth=16):
-    """
-    Projects the edges (up to a certain depth) connected to node i onto
-    target graph.
-
-    Parameters
-    ----------
-    ...
-
-    """
-    hits = defaultdict(list)
-    for edge_xyz_list in pred_graph.truncated_edge_attr_xyz(i, 24):
-        for xyz in edge_xyz_list:
-            hat_xyz = geometry_util.kdtree_query(gt_kdtree, xyz)
-            hat_edge = gt_graph.xyz_to_edge[hat_xyz]
-            if gt_graph.node_component_id[hat_edge[0]] == gt_id:
-                hits[hat_edge].append(hat_xyz)
-    return util.find_best(hits)
-
-
-# --- Helpers ---
 def find_closest_point(xyz_list, query_xyz):
     best_dist = np.inf
     best_idx = np.inf
@@ -255,6 +268,12 @@ def find_closest_point(xyz_list, query_xyz):
             best_dist = dist
             best_idx = idx
     return best_idx
+
+
+def get_sorted_proposals(pred_graph):
+    proposals = pred_graph.list_proposals()
+    lengths = [pred_graph.proposal_length(p) for p in proposals]
+    return [proposals[i] for i in np.argsort(lengths)]
 
 
 def length_up_to(path_pts, idx):
@@ -281,6 +300,16 @@ def length_up_to(path_pts, idx):
 
 
 def orient_edges(xyz_edge_i, xyz_edge_j):
+    """
+    Orients two edges so that their closest endpoints are aligned at index 0.
+
+    Parameters
+    ----------
+    xyz_edge_i : numpy.ndarray
+        Ordered 3D coordinates defining the first branch.
+    xyz_edge_j : numpy.ndarray
+        Ordered 3D coordinates defining the second branch.
+    """
     # Compute distances
     dist_1 = geometry_util.dist(xyz_edge_i[0], xyz_edge_j[0])
     dist_2 = geometry_util.dist(xyz_edge_i[0], xyz_edge_j[-1])
@@ -294,3 +323,23 @@ def orient_edges(xyz_edge_i, xyz_edge_j):
     if dist_3 == min_dist or dist_4 == min_dist:
         xyz_edge_i = np.flip(xyz_edge_i, axis=0)
     return xyz_edge_i, xyz_edge_j
+
+
+def project_region(gt_graph, pred_graph, gt_id, i, depth=16):
+    """
+    Projects the edges (up to a certain depth) connected to node i onto
+    target graph.
+
+    Parameters
+    ----------
+    ...
+
+    """
+    hits = defaultdict(list)
+    for edge_xyz_list in pred_graph.truncated_edge_attr_xyz(i, 24):
+        for xyz in edge_xyz_list:
+            hat_xyz = geometry_util.kdtree_query(gt_graph.kdtree, xyz)
+            hat_edge = gt_graph.xyz_to_edge[hat_xyz]
+            if gt_graph.node_component_id[hat_edge[0]] == gt_id:
+                hits[hat_edge].append(hat_xyz)
+    return util.find_best(hits)
