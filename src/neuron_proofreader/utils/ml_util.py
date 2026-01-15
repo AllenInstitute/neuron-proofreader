@@ -106,7 +106,7 @@ def init_mlp(input_dim, hidden_dim, output_dim, dropout=0.1):
     """
     mlp = nn.Sequential(
         nn.Linear(input_dim, hidden_dim),
-        nn.GELU(),  #nn.LeakyReLU(),
+        nn.LeakyReLU(),
         nn.Dropout(p=dropout),
         nn.Linear(hidden_dim, output_dim),
     )
@@ -148,18 +148,12 @@ def load_model(model, model_path, device="cuda"):
     ----------
     model : torch.nn.Module
         Instantiated model architecture into which the weights will be loaded.
-    model_path : str or Path
+    model_path : str
         Path to the saved PyTorch checkpoint.
     device : str, optional
         Device to load the model onto. Default is "cuda".
     """
-    state_dict = torch.load(model_path, map_location=device)
-    new_state_dict = dict()
-    for k, v in state_dict.items():
-        new_key = k.replace("output.", "output.net.")
-        new_state_dict[new_key] = v
-    
-    model.load_state_dict(new_state_dict)
+    model.load_state_dict(torch.load(model_path, map_location=device))
     model.to(device)
     model.eval()
 
@@ -175,7 +169,7 @@ def tensor_to_list(tensor):
 
     Returns
     -------
-    List[float]
+   tensor : List[float]
         Tensor converted to a list.
     """
     return to_cpu(tensor).flatten().tolist()
@@ -201,20 +195,3 @@ def to_cpu(tensor, to_numpy=False):
         return np.array(tensor.detach().cpu())
     else:
         return tensor.detach().cpu()
-
-
-def to_tensor(arr):
-    """
-    Converts a numpy array to a tensor.
-
-    Parameters
-    ----------
-    arr : numpy.ndarray
-        Array to be converted.
-
-    Returns
-    -------
-    torch.Tensor
-        Array converted to tensor.
-    """
-    return torch.tensor(arr, dtype=torch.float32)
