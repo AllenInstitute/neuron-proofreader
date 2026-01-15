@@ -163,7 +163,6 @@ class Trainer:
             # Forward pass
             self.optimizer.zero_grad()
             hat_y_i, loss_i = self.forward_pass(x_i, y_i)
-            print(loss_i)
 
             # Backward pass
             self.scaler.scale(loss_i).backward()

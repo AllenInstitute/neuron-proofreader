@@ -46,7 +46,6 @@ class SkeletonGraph(nx.Graph):
         min_size=0,
         node_spacing=1,
         prune_depth=20,
-        use_anisotropy=True,
         verbose=False,
     ):
         """
@@ -64,10 +63,6 @@ class SkeletonGraph(nx.Graph):
         prune_depth : float, optional
             Branches with length less than "prune_depth" microns are removed.
             Default is 20μm.
-        use_anisotropy : bool, optional
-            Indication of whether to apply anisotropy to SWC files. Note: Set
-            to False when SWC files are in physical coordinates. Default is
-            True.
         verbose : bool, optional
             Indication of whether to display a progress bar while building
             graph. Default is True.
@@ -82,7 +77,6 @@ class SkeletonGraph(nx.Graph):
         self.node_spacing = node_spacing
 
         # Graph Loader
-        anisotropy = anisotropy if use_anisotropy else (1.0, 1.0, 1.0)
         self.graph_loader = gutil.GraphLoader(
             anisotropy=anisotropy,
             min_size=min_size,
