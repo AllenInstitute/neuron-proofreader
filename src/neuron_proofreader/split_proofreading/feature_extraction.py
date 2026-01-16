@@ -30,6 +30,7 @@ class FeaturePipeline:
         graph,
         img_path,
         search_radius,
+        brightness_clip=400,
         padding=40,
         patch_shape=(96, 96, 96),
         segmentation_path=None,
@@ -45,6 +46,8 @@ class FeaturePipeline:
             Path to image of whole-brain dataset.
         search_radius : float
             Search radius used to generate proposals.
+        brightness_clip : int, optional
+            ...
         padding : int, optional
             Number of voxels to be added in each dimension from start and end
             point of proposal for image patch extraction. Default is 40.
@@ -59,6 +62,7 @@ class FeaturePipeline:
             ImageFeatureExtractor(
                 graph,
                 img_path,
+                brightness_clip=brightness_clip,
                 patch_shape=patch_shape,
                 padding=padding,
                 segmentation_path=segmentation_path,
@@ -203,7 +207,7 @@ class ImageFeatureExtractor:
         self,
         graph,
         img_path,
-        brightness_clip=1000,
+        brightness_clip=400,
         patch_shape=(96, 96, 96),
         padding=40,
         segmentation_path=None,
