@@ -31,7 +31,7 @@ from copy import deepcopy
 import networkx as nx
 import numpy as np
 
-from neuron_proofreader.utils import geometry_util, util
+from neuron_proofreader.utils import geometry_util, graph_util as gutil, util
 
 
 def run(gt_graph, pred_graph):
@@ -191,7 +191,7 @@ def is_structure_consistent(
 
     # Case 1: Proposal is at non-branching point
     if hat_edge_i == hat_edge_j:
-        return True
+        return check_nonbranching_proposal(accepts_graph, proposal)
 
     # Case 2: Proposal is at branching point
     if set(hat_edge_i).intersection(set(hat_edge_j)):
