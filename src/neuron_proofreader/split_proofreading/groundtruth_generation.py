@@ -70,7 +70,8 @@ def run(gt_graph, pred_graph):
 
         # Check proposal projection distance
         dist = compute_proposal_proj_dist(gt_graph, pred_graph, proposal)
-        if dist > 5:
+        if dist > 10:
+            print("Fail at compute_proposal_proj_dist():", proposal, dist)
             continue
 
         # Check if proposal is structurally consistent
@@ -217,17 +218,25 @@ def is_structure_consistent(
     return False
 
 
-def check_nonbranching_proposal(accepts_graph, proposal):
-    i, j = tuple(proposal)
-    accepts_graph.add_edge(i, j)
-    if gutil.cycle_exists(accepts_graph):
-        accepts_graph.remove_edge(i, j)
-        return False
-    else:
-        return True
-
-
 def compute_proposal_proj_dist(gt_graph, pred_graph, proposal):
+    """
+    Computes the average projection distance of a proposed edge to the ground
+    truth graph.
+
+    Parameters
+    ----------
+    gt_graph : ProposalGraph
+        Graph built from ground truth SWC files.
+    pred_graph : ProposalGraph
+        Graph build from predicted SWC files.
+    proposal : FrozenSet[int]
+        Propoal to compute projection distance of.
+
+    Returns
+    -------
+    float
+        Average projection distance.
+    """
     # Extract proposal info
     i, j = proposal
     xyz_i = pred_graph.node_xyz[i]
@@ -244,14 +253,30 @@ def compute_proposal_proj_dist(gt_graph, pred_graph, proposal):
 
 # --- Helpers ---
 def find_closest_gt_edge(gt_graph, pred_graph, gt_id, i):
+    """
+    Finds the closest ground truth edge corresponding to a rooted subgraph
+    at the given node from "pred_graph".
+
+    Parameters
+    ----------
+    gt_graph : ProposalGraph
+        Ground truth graph to be searched.
+    pred_graph : ProposalGraph
+        Graph to extract rooted subgraph from.
+    gt_id : int
+        Connected component ID of component in ground truth graph.
+    i : int
+        Node ID of the root of the subgraph to be extracted and projected.
+
+    Returns
+    -------
+    hat_edge_i : Tuple[int] or None
+        Closest ground-truth edge to the rooted subgraph at the given node, or
+        None if no edge could be found.
+    """
     depth = 16
     while depth <= 64:
-        # Search for edge
-        hat_edge_i = project_region(
-            gt_graph, pred_graph, gt_id, i, depth
-        )
-
-        # Check result
+        hat_edge_i = project_region(gt_graph, pred_graph, gt_id, i, depth)
         if hat_edge_i is None:
             depth += 16
         else:
@@ -260,6 +285,21 @@ def find_closest_gt_edge(gt_graph, pred_graph, gt_id, i):
 
 
 def find_closest_point(xyz_list, query_xyz):
+    """
+    Finds the index of the point closest to the given query coordinate.
+
+    Parameters
+    ----------
+    xyz_list : List[Tuple[float]]
+        List of coordinates to be searched.
+    query_xyz : Tuple[float]
+        Query 3D coordinate.
+
+    Returns
+    -------
+    best_idx : int
+        Index of the closest point in "xyz_list".
+    """
     best_dist = np.inf
     best_idx = np.inf
     for idx, xyz in enumerate(xyz_list):
@@ -271,6 +311,19 @@ def find_closest_point(xyz_list, query_xyz):
 
 
 def get_sorted_proposals(pred_graph):
+    """
+    Return proposals sorted by physical length.
+
+    Parameters
+    ----------
+    pred_graph : ProposalGraph
+        Graph containing proposals to be sorted.
+
+    Returns
+    -------
+    List[Frozenset[int]]
+        List of proposals sorted by increasing proposal length.
+    """
     proposals = pred_graph.list_proposals()
     lengths = [pred_graph.proposal_length(p) for p in proposals]
     return [proposals[i] for i in np.argsort(lengths)]
@@ -327,13 +380,20 @@ def orient_edges(xyz_edge_i, xyz_edge_j):
 
 def project_region(gt_graph, pred_graph, gt_id, i, depth=16):
     """
-    Projects the edges (up to a certain depth) connected to node i onto
-    target graph.
+    Projects a rooted subgraph onto the given ground truth graph.
 
     Parameters
     ----------
-    ...
-
+    gt_graph : ProposalGraph
+        Graph to be projected onto.
+    pred_graph : ProposalGraph
+        Graph to extract rooted subgraph from.
+    gt_id : int
+        Connected component ID of component in ground truth graph.
+    i : int
+        Node ID of the root of the subgraph to be extracted and projected.
+    depth : int, optional
+        Depth (in microns) of rooted subgraph to extract.
     """
     hits = defaultdict(list)
     for edge_xyz_list in pred_graph.truncated_edge_attr_xyz(i, 24):

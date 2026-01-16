@@ -12,6 +12,7 @@ from torch.utils.data import IterableDataset
 
 import numpy as np
 import os
+import pandas as pd
 
 from neuron_proofreader.proposal_graph import ProposalGraph
 from neuron_proofreader.machine_learning.augmentation import ImageTransforms
@@ -41,7 +42,14 @@ class FragmentsDataset(IterableDataset):
     Note: This dataset supports graphs from multiple whole-brain datasets.
     """
 
-    def __init__(self, config, patch_shape=(128, 128, 128), transform=False):
+    def __init__(
+        self,
+        config,
+        brightness_clip=500,
+        patch_shape=(128, 128, 128),
+        shuffle=True,
+        transform=False
+    ):
         """
         Instantiates a FragmentsDataset object.
 
@@ -57,10 +65,12 @@ class FragmentsDataset(IterableDataset):
             Default is False.
         """
         # Instance attributes
+        self.brightness_clip = brightness_clip
         self.config = config
         self.feature_extractors = dict()
         self.graphs = dict()
         self.patch_shape = patch_shape
+        self.shuffle = shuffle
         self.transform = ImageTransforms() if transform else False
 
     # --- Load Data ---
@@ -95,7 +105,7 @@ class FragmentsDataset(IterableDataset):
         self.graphs[key].generate_proposals(
             self.config.search_radius,
             complex_bool=self.config.complex_bool,
-            groundtruth_graph=self.load_graph(gt_pointer),
+            groundtruth_graph=self.load_graph(gt_pointer, is_gt=True),
             long_range_bool=self.config.long_range_bool,
             proposals_per_leaf=self.config.proposals_per_leaf,
         )
@@ -105,11 +115,12 @@ class FragmentsDataset(IterableDataset):
             self.graphs[key],
             img_path,
             self.config.search_radius,
+            brightness_clip=self.brightness_clip,
             patch_shape=self.patch_shape,
             segmentation_path=segmentation_path
         )
 
-    def load_graph(self, swc_pointer):
+    def load_graph(self, swc_pointer, is_gt=False):
         """
         Loads a graph by reading and processing SWC files specified by
         "swc_pointer".
@@ -124,10 +135,11 @@ class FragmentsDataset(IterableDataset):
         graph : ProposalGraph
             Graph constructed from SWC files.
         """
+        node_spacing = 1 if is_gt else self.config.node_spacing
         graph = ProposalGraph(
             anisotropy=self.config.anisotropy,
             min_size=self.config.min_size,
-            node_spacing=self.config.node_spacing,
+            node_spacing=node_spacing,
         )
         graph.load(swc_pointer)
         return graph
@@ -151,7 +163,7 @@ class FragmentsDataset(IterableDataset):
 
         # Iterate over dataset
         while len(samplers) > 0:
-            key = util.sample_once(samplers.keys())
+            key = self.get_next_key(samplers)
             try:
                 # Feature extraction
                 subgraph = next(samplers[key])
@@ -164,6 +176,26 @@ class FragmentsDataset(IterableDataset):
                 yield inputs, targets
             except StopIteration:
                 del samplers[key]
+
+    def get_next_key(self, samplers):
+        """
+        Gets the next key to sample from a dictionary of samplers.
+
+        Parameters
+        ----------
+        samplers : Dict[Tuple[str], SubgraphSampler]
+            Mapping from keys to sampler objects.
+
+        Returns
+        -------
+        key : Tuple[str]
+            Selected key from "samplers".
+        """
+        if self.shuffle:
+            return util.sample_once(samplers.keys())
+        else:
+            keys = sorted(samplers.keys())
+            return keys[0]
 
     # --- Helpers ---
     def n_proposals(self):
@@ -188,6 +220,20 @@ class FragmentsDataset(IterableDataset):
         """
         cnts = [len(graph.gt_accepts) for graph in self.graphs.values()]
         return np.sum(cnts) / self.n_proposals()
+
+    def save_examples_summary(self, path):
+        """
+        Saves a summary of examples in the dataset to the given path.
+
+        Parameters
+        ----------
+        path : str
+            Output path for the CSV file.
+        """
+        examples_summary = list()
+        for key in sorted(self.graphs.keys()):
+            examples_summary.extend([key] * self.graphs[key].n_proposals())
+        pd.DataFrame(examples_summary).to_csv(path)
 
 
 # -- Helpers --
