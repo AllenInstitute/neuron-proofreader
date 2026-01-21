@@ -54,7 +54,6 @@ def run(gt_graph, pred_graph):
     # Initializations
     gt_graph.set_kdtree()
     gt_graph.set_kdtree(node_type="branching")
-    pred_graph.num_node_accepts = np.zeros((pred_graph.number_of_nodes()))
     pred_to_gt = get_pred_to_gt_mapping(gt_graph, pred_graph)
 
     # Main
@@ -85,11 +84,8 @@ def run(gt_graph, pred_graph):
             gt_graph, pred_graph, accepts_graph, gt_id, proposal
         )
         if is_consistent:
-            pred_graph.num_node_accepts[i] += 1
-            pred_graph.num_node_accepts[j] += 1
             accepts_graph.add_edge(i, j)
             gt_accepts.append(proposal)
-    del pred_graph.num_node_accepts
     return gt_accepts
 
 
@@ -167,13 +163,6 @@ def find_aligned_component(gt_graph, pred_graph, nodes):
     else:
         return None
 
-
-def check_nonbranching_consistent(gt_graph, pred_graph, i):
-    if pred_graph.num_node_accepts[i] > 0:
-        dist, _ = gt_graph.branching_kdtree.query(pred_graph.node_xyz[i])
-        return dist < 10
-    else:
-        return True
 
 def check_connectedness(pred_graph, proposal):
     # Get path between nodes
@@ -254,9 +243,7 @@ def is_structure_consistent(
 
     # Case 1
     if hat_edge_i == hat_edge_j:
-        #consistent_i = check_nonbranching_consistent(gt_graph, pred_graph, i)
-        #consistent_j = check_nonbranching_consistent(gt_graph, pred_graph, j)
-        return True  #consistent_i and consistent_j
+        return True
 
     # Case 2
     if set(hat_edge_i).intersection(set(hat_edge_j)):
