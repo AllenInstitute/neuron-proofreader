@@ -221,6 +221,8 @@ class ProposalGraph(SkeletonGraph):
         """
         if node_type == "leaf":
             self.leaf_kdtree = self.get_kdtree(node_type=node_type)
+        elif node_type == "branching":
+            self.branching_kdtree = self.get_kdtree(node_type=node_type)
         elif node_type == "proposal":
             self.proposal_kdtree = self.get_kdtree(node_type=node_type)
         else:
@@ -244,6 +246,9 @@ class ProposalGraph(SkeletonGraph):
         if node_type == "leaf":
             leafs = np.array(self.get_leafs(), dtype=int)
             return KDTree(self.node_xyz[leafs])
+        elif node_type == "branching":
+            branchings = np.array(self.get_branchings(), dtype=int)
+            return KDTree(self.node_xyz[branchings])
         elif node_type == "proposal":
             xyz_set = set()
             for p in self.proposals:

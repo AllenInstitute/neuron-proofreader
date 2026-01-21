@@ -15,7 +15,7 @@ from tqdm import tqdm
 
 from neuron_proofreader.utils import geometry_util
 
-DOT_THRESHOLD = -0.3
+DOT_THRESHOLD = -0.35
 SEARCH_SCALING_FACTOR = 1.5
 
 
