@@ -21,7 +21,7 @@ from neuron_proofreader.split_proofreading.feature_extraction import (
     FeaturePipeline,
     HeteroGraphData
 )
-from neuron_proofreader.utils import util
+from neuron_proofreader.utils import geometry_util, util
 
 
 class FragmentsDataset(IterableDataset):
@@ -135,6 +135,7 @@ class FragmentsDataset(IterableDataset):
         graph : ProposalGraph
             Graph constructed from SWC files.
         """
+        # Build graph
         node_spacing = 1 if is_gt else self.config.node_spacing
         graph = ProposalGraph(
             anisotropy=self.config.anisotropy,
@@ -142,6 +143,10 @@ class FragmentsDataset(IterableDataset):
             node_spacing=node_spacing,
         )
         graph.load(swc_pointer)
+
+        # Filter doubles (if applicable)
+        if not is_gt:
+            geometry_util.remove_doubles(graph, 160)
         return graph
 
     # --- Get Data ---

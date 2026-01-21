@@ -30,7 +30,7 @@ class ImageTransforms:
             RandomFlip3D(),
             RandomRotation3D(),
             RandomNoise3D(),
-            RandomContrast3D()
+            #RandomContrast3D()
         ]
 
     def __call__(self, patches):
@@ -247,7 +247,7 @@ class RandomNoise3D:
             Maximum standard deviation of the Gaussian noise distribution.
             Default is 0.3.
         """
-        self.max_std = max_std
+        self.max_std = 0.2  # max_std
 
     def __call__(self, img_patch):
         """

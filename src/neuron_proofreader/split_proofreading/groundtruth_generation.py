@@ -31,7 +31,7 @@ from copy import deepcopy
 import networkx as nx
 import numpy as np
 
-from neuron_proofreader.utils import geometry_util, util
+from neuron_proofreader.utils import geometry_util, graph_util as gutil, util
 
 
 def run(gt_graph, pred_graph):
@@ -52,11 +52,13 @@ def run(gt_graph, pred_graph):
         Note: a model will learn to accept these proposals.
     """
     # Initializations
-    accepts_graph = deepcopy(pred_graph)
     gt_graph.set_kdtree()
+    gt_graph.set_kdtree(node_type="branching")
+    pred_graph.num_node_accepts = np.zeros((pred_graph.number_of_nodes()))
     pred_to_gt = get_pred_to_gt_mapping(gt_graph, pred_graph)
 
     # Main
+    accepts_graph = deepcopy(pred_graph)
     gt_accepts = list()
     for proposal in get_sorted_proposals(pred_graph):
         # Extract proposal info
@@ -71,7 +73,10 @@ def run(gt_graph, pred_graph):
         # Check proposal projection distance
         dist = compute_proposal_proj_dist(gt_graph, pred_graph, proposal)
         if dist > 10:
-            print("Fail at compute_proposal_proj_dist():", proposal, dist)
+            continue
+
+        # Check if nodes are connected
+        if check_connectedness(accepts_graph, proposal):
             continue
 
         # Check if proposal is structurally consistent
@@ -80,7 +85,11 @@ def run(gt_graph, pred_graph):
             gt_graph, pred_graph, accepts_graph, gt_id, proposal
         )
         if is_consistent:
+            pred_graph.num_node_accepts[i] += 1
+            pred_graph.num_node_accepts[j] += 1
+            accepts_graph.add_edge(i, j)
             gt_accepts.append(proposal)
+    del pred_graph.num_node_accepts
     return gt_accepts
 
 
@@ -159,6 +168,60 @@ def find_aligned_component(gt_graph, pred_graph, nodes):
         return None
 
 
+def check_nonbranching_consistent(gt_graph, pred_graph, i):
+    if pred_graph.num_node_accepts[i] > 0:
+        dist, _ = gt_graph.branching_kdtree.query(pred_graph.node_xyz[i])
+        return dist < 10
+    else:
+        return True
+
+def check_connectedness(pred_graph, proposal):
+    # Get path between nodes
+    i, j = proposal
+    try:
+        path = nx.shortest_path(pred_graph, source=i, target=j)
+    except nx.NetworkXNoPath:
+        return False
+
+    # Search path
+    for node1, node2 in zip(path[0:-1], path[1:]):
+        if frozenset((node1, node2)) not in pred_graph.proposals:
+            return True
+    return False
+
+def compute_proposal_proj_dist(gt_graph, pred_graph, proposal):
+    """
+    Computes the average projection distance of a proposed edge to the ground
+    truth graph.
+
+    Parameters
+    ----------
+    gt_graph : ProposalGraph
+        Graph built from ground truth SWC files.
+    pred_graph : ProposalGraph
+        Graph build from predicted SWC files.
+    proposal : FrozenSet[int]
+        Propoal to compute projection distance of.
+
+    Returns
+    -------
+    float
+        Average projection distance.
+    """
+    # Extract proposal info
+    i, j = proposal
+    xyz_i = pred_graph.node_xyz[i]
+    xyz_j = pred_graph.node_xyz[j]
+    n_pts = max(int(pred_graph.proposal_length(proposal)) + 1, 1)
+
+    # Compute projection distances
+    proj_dists = list()
+    for pt in geometry_util.make_line(xyz_i, xyz_j, n_pts):
+        dist, _ = gt_graph.kdtree.query(pt)
+        proj_dists.append(dist)
+    return np.max(proj_dists)
+
+
 def is_structure_consistent(
     gt_graph, pred_graph, accepts_graph, gt_id, proposal
 ):
@@ -189,11 +252,13 @@ def is_structure_consistent(
     if hat_edge_i is None or hat_edge_j is None:
         return False
 
-    # Case 1: Proposal is at non-branching point
+    # Case 1
     if hat_edge_i == hat_edge_j:
-        return True
+        #consistent_i = check_nonbranching_consistent(gt_graph, pred_graph, i)
+        #consistent_j = check_nonbranching_consistent(gt_graph, pred_graph, j)
+        return True  #consistent_i and consistent_j
 
-    # Case 2: Proposal is at branching point
+    # Case 2
     if set(hat_edge_i).intersection(set(hat_edge_j)):
         # Orient ground truth edges
         i, j = tuple(proposal)
@@ -216,39 +281,6 @@ def is_structure_consistent(
 
     # Fail: Proposal is between non-adjacent branches
     return False
-
-
-def compute_proposal_proj_dist(gt_graph, pred_graph, proposal):
-    """
-    Computes the average projection distance of a proposed edge to the ground
-    truth graph.
-
-    Parameters
-    ----------
-    gt_graph : ProposalGraph
-        Graph built from ground truth SWC files.
-    pred_graph : ProposalGraph
-        Graph build from predicted SWC files.
-    proposal : FrozenSet[int]
-        Propoal to compute projection distance of.
-
-    Returns
-    -------
-    float
-        Average projection distance.
-    """
-    # Extract proposal info
-    i, j = proposal
-    xyz_i = pred_graph.node_xyz[i]
-    xyz_j = pred_graph.node_xyz[j]
-    n_pts = max(int(pred_graph.proposal_length(proposal)), 1)
-
-    # Compute projection distances
-    proj_dists = list()
-    for pt in geometry_util.make_line(xyz_i, xyz_j, n_pts):
-        d, _ = gt_graph.kdtree.query(pt)
-        proj_dists.append(d)
-    return np.mean(proj_dists)
 
 
 # --- Helpers ---
