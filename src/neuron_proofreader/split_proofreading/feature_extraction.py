@@ -31,7 +31,7 @@ class FeaturePipeline:
         img_path,
         search_radius,
         brightness_clip=400,
-        padding=40,
+        padding=50,
         patch_shape=(96, 96, 96),
         segmentation_path=None,
     ):
@@ -295,7 +295,7 @@ class ImageFeatureExtractor:
             mask, spatial offset, and patch shape.
         """
         # Read images
-        center, shape = self.compute_crop(subgraph, proposal)
+        center, shape = self.compute_crop(proposal)
         offset = img_util.get_offset(center, shape)
 
         img = self.read_image(center, shape)
@@ -303,7 +303,12 @@ class ImageFeatureExtractor:
 
         # Create patch feature extractor
         extractor = PatchFeatureExtractor(
-            subgraph, img, mask, proposal, offset, self.patch_shape
+            self.graph,
+            img,
+            mask,
+            proposal,
+            offset,
+            self.patch_shape
         )
         return extractor
 
@@ -340,7 +345,7 @@ class ImageFeatureExtractor:
         else:
             return np.zeros(shape)
 
-    def compute_crop(self, graph, proposal):
+    def compute_crop(self, proposal):
         """
         Compute a cubic image crop centered on a proposal.
 
@@ -353,8 +358,8 @@ class ImageFeatureExtractor:
         """
         # Compute bounds
         node1, node2 = proposal
-        voxel1 = graph.get_voxel(node1)
-        voxel2 = graph.get_voxel(node2)
+        voxel1 = self.graph.get_voxel(node1)
+        voxel2 = self.graph.get_voxel(node2)
         bounds = img_util.get_minimal_bbox([voxel1, voxel2], self.padding)
 
         # Transform into square
