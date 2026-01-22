@@ -337,6 +337,30 @@ def plot_segmentation_mips(segmentation):
 
 
 # --- Helpers ---
+def annotate_voxels(img, voxels, kernel_size=3, val=1):
+    """
+    Annotates a set of voxel coordinates in a 3D image by filling a patch
+    around each voxel with a given value.
+
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Image to modify in-place.
+    voxels : Iterable[Tuple[int]]
+        Voxel coordinates to annotate.
+    kernel_size : int, optional
+        Size of kernel used to fill around each voxel. Default is 3.
+    val : int, optional
+        Value to write into each patch. Default is 1.
+    """
+    buffer = (kernel_size - 1) // 2
+    shape = (kernel_size, kernel_size, kernel_size)
+    for voxel in voxels:
+        if is_contained(voxel, img.shape, buffer=buffer):
+            s = get_slices(voxel, shape)
+            img[s] = val
+
+
 def compute_iou3d(c1, c2, s1, s2):
     """
     Computes IoU between two 3D axis-aligned boxes.
@@ -371,30 +395,6 @@ def compute_iou3d(c1, c2, s1, s2):
     return inter / union if union > 0 else 0
 
 
-def annotate_voxels(img, voxels, kernel_size=3, val=1):
-    """
-    Annotates a set of voxel coordinates in a 3D image by filling a patch
-    around each voxel with a given value.
-
-    Parameters
-    ----------
-    img : numpy.ndarray
-        Image to modify in-place.
-    voxels : Iterable[Tuple[int]]
-        Voxel coordinates to annotate.
-    kernel_size : int, optional
-        Size of kernel used to fill around each voxel. Default is 3.
-    val : int, optional
-        Value to write into each patch. Default is 1.
-    """
-    buffer = (kernel_size - 1) // 2
-    shape = (kernel_size, kernel_size, kernel_size)
-    for voxel in voxels:
-        if is_contained(voxel, img.shape, buffer=buffer):
-            s = get_slices(voxel, shape)
-            img[s] = val
-
-
 def find_img_path(bucket_name, root_dir, brain_id):
     """
     Finds the path to a whole-brain dataset stored in a GCS bucket.
@@ -421,26 +421,28 @@ def find_img_path(bucket_name, root_dir, brain_id):
     raise f"Dataset not found in {bucket_name} - {root_dir}"
 
 
-def get_storage_driver(img_path):
+def get_contained_voxels(voxels, shape, buffer=0):
     """
-    Gets the storage driver needed to read the image.
+    Gets voxels from the given list contained in an image specifed by "shape"
+    and "buffer".
 
     Parameters
     ----------
-    img_path : str
-        Image path to be checked.
+    voxels : numpy.ndarray
+        Array containing voxel coordinates.
+    shape : Tuple[int]
+        Shape of image patch.
+    buffer : int, optional
+        Constant value added/subtracted from the max/min coordinates of the
+        bounding box. Default is 0.
 
     Returns
     -------
-    str
-        Storage driver needed to read the image.
+    List[Tuple[int]]
+        Voxels from the given list contained in an image specifed by "shape"
+        and "buffer".
     """
-    if util.is_s3_path(img_path):
-        return "s3"
-    elif util.is_gcs_path(img_path):
-        return "gcs"
-    else:
-        raise ValueError(f"Unsupported path type: {img_path}")
+    return [v for v in voxels if is_contained(v, shape, buffer)]
 
 
 def get_minimal_bbox(voxels, buffer=0):
@@ -506,7 +508,22 @@ def get_neighbors(voxel, shape):
 
 
 def get_offset(center, shape):
-    return [c - s // 2 for c, s in zip(center, shape)]
+    """
+    Computes the spatial offset of a crop given its center and shape.
+
+    Parameters
+    ----------
+    center : Tuple[int]
+        Center voxel coordinate of the crop.
+    shape : Tuple[int]
+        Shape of the crop.
+
+    Returns
+    -------
+    Tuple[int]
+        Offset of the crop.
+    """
+    return tuple([c - s // 2 for c, s in zip(center, shape)])
 
 
 def get_slices(center, shape):
@@ -527,6 +544,28 @@ def get_slices(center, shape):
     """
     start = [int(c - d // 2) for c, d in zip(center, shape)]
     return tuple(slice(s, s + d) for s, d in zip(start, shape))
+
+
+def get_storage_driver(img_path):
+    """
+    Gets the storage driver needed to read the image.
+
+    Parameters
+    ----------
+    img_path : str
+        Image path to be checked.
+
+    Returns
+    -------
+    str
+        Storage driver needed to read the image.
+    """
+    if util.is_s3_path(img_path):
+        return "s3"
+    elif util.is_gcs_path(img_path):
+        return "gcs"
+    else:
+        raise ValueError(f"Unsupported path type: {img_path}")
 
 
 def is_contained(voxel, shape, buffer=0):

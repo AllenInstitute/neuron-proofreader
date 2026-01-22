@@ -259,202 +259,56 @@ class ImageFeatureExtractor:
         with ThreadPoolExecutor() as executor:
             # Assign threads
             pending = dict()
-            for p in subgraph.proposals:
-                thread = executor.submit(self.get_patches, p)
-                pending[thread] = p
+            for proposal in subgraph.proposals:
+                thread = executor.submit(
+                    self.init_extractor, subgraph, proposal
+                )
+                pending[thread] = proposal
 
             # Store results
-            proposal_patches = dict()
-            proposal_profiles = dict()
+            patches, profiles = dict(), dict()
             for thread in as_completed(pending.keys()):
-                p = pending.pop(thread)
-                patches, profile = thread.result()
-                proposal_patches[p] = patches
-                proposal_profiles[p] = profile
+                proposal = pending.pop(thread)
+                extractor = thread.result()
+                profiles[proposal] = extractor.get_intensity_profile()
+                patches[proposal] = extractor.get_input_patch()                
 
         # Update features
-        features.set_features(proposal_patches, "proposal_patches")
-        features.integrate_proposal_profiles(proposal_profiles)
+        features.set_features(patches, "proposal_patches")
+        features.integrate_proposal_profiles(profiles)
 
-    def get_patches(self, proposal):
+    def init_extractor(self, subgraph, proposal):
         """
-        Extracts image patches and brightness profile for the given proposal.
-
+        Initializes a PatchFeatureExtractor for a given subgraph and proposal.
+    
         Parameters
         ----------
-        proposal : FrozenSet[int]
-            Edge proposal to extract image features for.
-
+        subgraph : nx.Graph or similar
+            Subgraph containing the given proposal.
+        proposal : Any
+            Proposal that image patches are centered about.
+    
         Returns
         -------
-        patches : numpy.ndarray
-            Image with shape (2, H, W, D) containing a raw image and proposal
-            mask channels.
-        profile : numpy.ndarray
-            1D array containing brightness values sampled along the proposal
-            line, with the mean and standard deviation appended at the end.
+        extractor : PatchFeatureExtractor
+            Feature extractor configured with the cropped image, segmentation
+            mask, spatial offset, and patch shape.
         """
         # Read images
-        center, shape = self.compute_proposal_crop(proposal)
-        img_patch = self.read_image_patch(center, shape)
+        center, shape = self.compute_crop(subgraph, proposal)
         offset = img_util.get_offset(center, shape)
 
-        # Generate image profile
-        voxels = self.get_profile_line(proposal, offset, 16)
-        profile = np.array([img_patch[tuple(voxel)] for voxel in voxels])
-        profile = np.append(profile, [profile.mean(), profile.std()])
+        img = self.read_image(center, shape)
+        mask = self.read_segmentation(center, shape)
 
-        # Set patches
-        proposal_mask = self.get_proposal_mask(proposal, center, shape)
-        img_path = img_util.resize(img_patch, self.patch_shape)
-        patches = np.stack([img_path, proposal_mask], axis=0)
-        return patches, profile
-
-    def get_proposal_mask(self, proposal, center, shape):
-        """
-        Generates a segmentation mask for a proposal-centered image patch.
-
-        Parameters
-        ----------
-        proposal : FrozenSet[int]
-            Edge proposal to extract image features for.
-        center : Tuple[int]
-            Center of image patch to be read.
-        shape : Tuple[int]
-            Shape of the patch to to be read.
-
-        Returns
-        -------
-        segmentation_mask : numpy.ndarray
-            Segmentation mask containing annotations for the proposal and its
-            incident edges, suitable for use as a model input.
-        """
-        # Read segmentation
-        segmentation_mask = self.read_segmentation_mask(center, shape)
-
-        # Annotate label patch
-        node1, node2 = tuple(proposal)
-        offset = img_util.get_offset(center, shape)
-        self.annotate_edge(node1, segmentation_mask, offset)
-        self.annotate_edge(node2, segmentation_mask, offset)
-        self.annotate_proposal(proposal, segmentation_mask, offset)
-        return img_util.resize(segmentation_mask, self.patch_shape, True)
-
-    def annotate_edge(self, node, mask, offset):
-        """
-        Annotates the neuron branch containing the specified node within the
-        given mask.
-
-        Parameters
-        ----------
-        node : int
-            Node ID used to get branch to be annotated.
-        mask : numpy.ndarray
-            Segmentation mask to be annotated in place.
-        offset : numpy.ndarray
-            Offset used to map global coordinates into the local mask.
-        """
-        voxels = self.get_local_coordinates(node, offset)
-        voxels = geometry_util.make_voxels_connected(voxels)
-        img_util.annotate_voxels(mask, voxels, val=0.5)
-
-    def annotate_proposal(self, proposal, mask, offset):
-        """
-        Annotates the proposal within the given mask.
-
-        Parameters
-        ----------
-        proposal : FrozenSet[int]
-            Proposal to be annotated.
-        mask : numpy.ndarray
-            Segmentation mask to be annotated in place.
-        offset : numpy.ndarray
-            Offset used to map global coordinates into the local mask.
-        """
-        profile_line = self.get_profile_line(proposal, offset)
-        img_util.annotate_voxels(mask, profile_line, val=1)
+        # Create patch feature extractor
+        extractor = PatchFeatureExtractor(
+            subgraph, img, mask, proposal, offset, self.patch_shape
+        )
+        return extractor
 
     # --- Helpers ---
-    def compute_proposal_crop(self, proposal):
-        """
-        Compute a cubic image crop centered on a proposal.
-
-        Parameters
-        ----------
-        proposal : FrozenSet[int]
-            Proposal to compute crop of.
-
-        Returns
-        -------
-        center : Tuple[int]
-            Center of image crop.
-        shape : Tuple[int]
-            Shape of image crop.
-        """
-        # Compute bounds
-        node1, node2 = proposal
-        voxel1 = self.graph.get_voxel(node1)
-        voxel2 = self.graph.get_voxel(node2)
-        bounds = img_util.get_minimal_bbox([voxel1, voxel2], self.padding)
-
-        # Transform into square
-        center = tuple([int((v1 + v2) / 2) for v1, v2 in zip(voxel1, voxel2)])
-        length = np.max([u - l for u, l in zip(bounds["max"], bounds["min"])])
-        return center, (length, length, length)
-
-    def get_profile_line(self, proposal, offset, n_pts=None):
-        """
-        Generates a voxel line between the two nodes of a proposal.
-
-        Parameters
-        ----------
-        proposal : FrozenSet[int]
-            Proposal to generate voxel line from.
-        offset : numpy.ndarray
-            Offset used to map global coordinates into the local mask.
-        n_pts : int, optional
-            Number of points to sample along the line. If not provided, a
-            dense voxel line is returned.
-
-        Returns
-        -------
-        numpy.ndarray
-            Voxel line between the two nodes of a proposal.
-        """
-        node1, node2 = proposal
-        voxel1 = self.graph.get_local_voxel(node1, offset)
-        voxel2 = self.graph.get_local_voxel(node2, offset)
-        if n_pts:
-            return geometry_util.make_line(voxel1, voxel2, n_pts)
-        else:
-            return geometry_util.make_digital_line(voxel1, voxel2)
-
-    def get_local_coordinates(self, node, offset):
-        """
-        Convert edge coordinates associated with a node into local voxel
-        coordinates.
-
-        Parameters
-        ----------
-        node : int
-            Identifier of the node whose incident edge coordinates are
-            queried.
-        offset : numpy.ndarray
-            Offset used to map global voxel coordinates into the local patch.
-
-        Returns
-        -------
-        List[Tuple[int]]
-            Voxel coordinates representing the edge path in local patch
-            coordinates.
-        """
-        pts = np.vstack(self.graph.edge_attr(node, "xyz"))
-        anisotropy = self.graph.anisotropy
-        voxels = [img_util.to_voxels(xyz, anisotropy) for xyz in pts]
-        voxels = geometry_util.shift_path(voxels, offset)
-        return voxels
-
-    def read_image_patch(self, center, shape):
+    def read_image(self, center, shape):
         """
         Reads the image patch specified by the given center and shape.
 
@@ -469,7 +323,7 @@ class ImageFeatureExtractor:
         patch = img_util.normalize(np.minimum(patch, self.brightness_clip))
         return patch
 
-    def read_segmentation_mask(self, center, shape):
+    def read_segmentation(self, center, shape):
         """
         Reads the segmentation patch specified by the given center and shape.
 
@@ -485,6 +339,223 @@ class ImageFeatureExtractor:
             return 0.25 * (patch > 0).astype(float)
         else:
             return np.zeros(shape)
+
+    def compute_crop(self, graph, proposal):
+        """
+        Compute a cubic image crop centered on a proposal.
+
+        Returns
+        -------
+        center : Tuple[int]
+            Center of image crop.
+        shape : Tuple[int]
+            Shape of image crop.
+        """
+        # Compute bounds
+        node1, node2 = proposal
+        voxel1 = graph.get_voxel(node1)
+        voxel2 = graph.get_voxel(node2)
+        bounds = img_util.get_minimal_bbox([voxel1, voxel2], self.padding)
+
+        # Transform into square
+        center = tuple([int((v1 + v2) / 2) for v1, v2 in zip(voxel1, voxel2)])
+        length = np.max([u - l for u, l in zip(bounds["max"], bounds["min"])])
+        return center, (length, length, length)
+
+
+class PatchFeatureExtractor:
+    """
+    A class that extracts features from an image patch that is centered at a
+    proposal.
+    """
+
+    def __init__(
+        self, graph, img, mask, proposal, offset, patch_shape=(96, 96, 96)
+    ):
+        """
+        Instantiates a PatchFeatureExtractor object.
+
+        Parameters
+        ----------
+        graph : ProposalGraph
+            Graph to extract features from.
+        img : numpy.ndarray
+            Image patch centered at proposal coordinates.
+        mask : numpy.ndarray
+            Segmentation patch centered at proposal coordinates.
+        proposal : Frozenset[int]
+            Proposal that patch is centered about.
+        offset : numpy.ndarray
+            Offset used to map global coordinates into the local mask.
+        """
+        # Instance attributes
+        self.graph = graph
+        self.img = img
+        self.mask = mask
+        self.proposal = proposal
+        self.offset = offset
+        self.patch_shape = patch_shape
+
+        # Annotate mask
+        node1, node2 = tuple(self.proposal)
+        self.annotate_edge(node1)
+        self.annotate_edge(node2)
+        self.annotate_proposal()
+
+    # --- Core Routines ---
+    def get_input_patch(self):
+        """
+        Gets input patch from the image and segmentation mask.
+
+        Returns
+        -------
+        numpy.ndarray
+            Array with shape (2, *patch_shape), where channel 0 contains
+            raw image data and channel 1 contains segmentation data.
+        """
+        img = img_util.resize(self.img, self.patch_shape)
+        mask = img_util.resize(self.mask, self.patch_shape, True)
+        return np.stack([img, mask], axis=0)
+
+    def get_intensity_profile(self):
+        """
+        Gets an intensity profile along the branches and proposal.
+
+        Returns
+        -------
+        profile : numpy.ndarray
+            Intensity profile along the branches and proposal.
+        """
+        # Branch profiles
+        node1, node2 = tuple(self.proposal)
+        branch1_profile = self.get_branch_profile(node1)
+        branch2_profile = self.get_branch_profile(node2)
+
+        # Proposal profile
+        voxels = self.get_profile_line(16)
+        proposal_profile = self._extract_profile(voxels)
+
+        # Combine profiles
+        profile = np.concatenate(
+            (branch1_profile, proposal_profile, branch2_profile)
+        )
+
+        # Adjust intensities
+        max_intensity = np.max(profile)
+        self.img = np.minimum(max_intensity, self.img) / max_intensity
+        profile /= max_intensity
+        return profile
+
+    def get_branch_profile(self, node):
+        """
+        Gets an intensity profile along the branch containing the given node.
+
+        Parameters
+        ----------
+        node : int
+            Identifier of the node whose incident branch coordinates are
+            extracted.
+
+        Returns
+        -------
+        profile : numpy.ndarray
+            Intensity profile along the branch containing the given node.
+        """
+        # Get branch voxel coordinates
+        voxels = self.get_branch_voxels(node)
+        voxels = geometry_util.make_voxels_connected(voxels)
+        voxels = img_util.get_contained_voxels(voxels, self.mask.shape)
+
+        # Resample voxels
+        voxels = np.array(voxels)
+        voxels = geometry_util.resample_curve_3d(voxels, 16).astype(int)
+        voxels = img_util.get_contained_voxels(voxels, self.mask.shape)
+        return self._extract_profile(voxels)
+
+    def _extract_profile(self, voxels):
+        """
+        Extracts an intensity profile along a set of voxel coordinates.
+
+        Parameters
+        ----------
+        voxels : numpy.ndarray
+            Voxel coordinates at which to sample the image.
+    
+        Returns
+        -------
+        profile : numpy.ndarray
+            Image with shape (2, H, W, D) containing a raw image and proposal
+            mask channels.
+        """
+        profile = np.array([self.img[tuple(voxel)] for voxel in voxels])
+        profile = np.append(profile, [profile.mean(), profile.std()])
+        return profile
+
+    # --- Helpers ---
+    def annotate_edge(self, node):
+        """
+        Annotates the neuron branch containing the specified node within the
+        given mask.
+
+        Parameters
+        ----------
+        node : int
+            Node ID used to get branch to be annotated.
+        """
+        voxels = self.get_branch_voxels(node)
+        voxels = geometry_util.make_voxels_connected(voxels)
+        img_util.annotate_voxels(self.mask, voxels, val=0.5)
+
+    def annotate_proposal(self):
+        """
+        Annotates the proposal within the given mask.
+        """
+        voxels = self.get_profile_line()
+        img_util.annotate_voxels(self.mask, voxels, val=1)
+
+    def get_profile_line(self, n_pts=None):
+        """
+        Generates a voxel line between the two nodes of a proposal.
+
+        Parameters
+        ----------
+        n_pts : int, optional
+            Number of points to sample along the line. If not provided, a
+            dense voxel line is returned.
+
+        Returns
+        -------
+        numpy.ndarray
+            Voxel line between the two nodes of a proposal.
+        """
+        node1, node2 = self.proposal
+        voxel1 = self.graph.get_local_voxel(node1, self.offset)
+        voxel2 = self.graph.get_local_voxel(node2, self.offset)
+        if n_pts:
+            return geometry_util.make_line(voxel1, voxel2, n_pts)
+        else:
+            return geometry_util.make_digital_line(voxel1, voxel2)
+
+    def get_branch_voxels(self, node):
+        """
+        Gets the voxel coordinates of the branch containing the given node.
+
+        Parameters
+        ----------
+        node : int
+            Identifier of the node whose incident branch coordinates are
+            extracted.
+
+        Returns
+        -------
+        voxels : List[Tuple[int]]
+            Voxel coordinates representing the edge path in local patch
+            coordinates.
+        """
+        pts = np.vstack(self.graph.edge_attr(node, "xyz"))
+        anisotropy = self.graph.anisotropy
+        voxels = [img_util.to_voxels(xyz, anisotropy) for xyz in pts]
+        return geometry_util.shift_path(voxels, self.offset)
 
 
 # --- Feature Data Structures ---
@@ -826,4 +897,4 @@ def get_node_dict():
     dict
         Dictionary containing the number of features for each node type
     """
-    return {"branch": 2, "proposal": 34}
+    return {"branch": 2, "proposal": 70}

@@ -86,7 +86,6 @@ def run(gt_graph, pred_graph):
         if is_consistent:
             accepts_graph.add_edge(i, j)
             gt_accepts.append(proposal)
-    del pred_graph.num_node_accepts
     return gt_accepts
 
 

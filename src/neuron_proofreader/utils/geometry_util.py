@@ -262,7 +262,7 @@ def shift_path(pts, offset):
     return [tuple(xyz - offset) for xyz in map(np.array, pts)]
 
 
-def smooth_curve_1d(pts, n_pts=None, s=None):
+def resample_curve_1d(pts, n_pts=None, s=None):
     """
     Smooths a 1D curve by fitting a spline and resampling it.
 
@@ -289,7 +289,7 @@ def smooth_curve_1d(pts, n_pts=None, s=None):
     return spline(t)
 
 
-def smooth_curve_3d(pts, n_pts=None, s=None):
+def resample_curve_3d(pts, n_pts=None, s=None):
     """
     Smooths an Nx3 array of points by fitting a spline. Points are assumed
     to form a continuous curve that does not have any branching points.
