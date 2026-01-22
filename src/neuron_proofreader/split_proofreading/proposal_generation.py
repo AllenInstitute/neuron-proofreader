@@ -270,35 +270,7 @@ def get_closer_endpoint(graph, edge, xyz):
 
 
 # --- Trim Endpoints ---
-def run_endpoint_trimming(graph, search_radius):
-    # Initializations
-    augmented_search_radius = search_radius * SEARCH_SCALING_FACTOR
-    long_range, in_range = deque(), deque()
-    for p in graph.proposals:
-        if graph.proposal_length(p) < augmented_search_radius:
-            in_range.append(p)
-        else:
-            long_range.append(p)
-
-    # Trim endpoints by proposal type
-    trim_proposal_endpoints(graph, in_range, search_radius)
-    trim_proposal_endpoints(
-        graph, long_range, augmented_search_radius
-    )
-
-
-def trim_proposal_endpoints(graph, proposals, max_length):
-    while proposals:
-        p = proposals.pop()
-        is_simple = graph.is_simple(p)
-        is_single = graph.is_single_proposal(p)
-        if is_simple and is_single:
-            trim_endpoints_at_proposal(graph, p, max_length)
-        elif graph.proposal_length(p) > max_length:
-            graph.remove_proposal(p)
-
-
-def trim_endpoints_at_proposal(graph, proposal, max_length):
+def trim_endpoints_at_proposal(graph, proposal):
     # Find closest points between proposal branches
     i, j = tuple(proposal)
     pts_i = graph.edge_attr(i, key="xyz", ignore=True)[0]
@@ -306,9 +278,7 @@ def trim_endpoints_at_proposal(graph, proposal, max_length):
     dist_ij, (idx_i, idx_j) = find_closest_pair(pts_i, pts_j)
 
     # Update branches (if applicable)
-    if dist_ij > max_length:
-        graph.remove_proposal(frozenset((i, j)))
-    elif dist_ij + 2 < geometry_util.dist(pts_i[0], pts_j[0]):
+    if dist_ij < geometry_util.dist(pts_i[0], pts_j[0]):
         if compute_dot(pts_i, pts_j, idx_i, idx_j) < DOT_THRESHOLD:
             trim_to_idx(graph, i, idx_i)
             trim_to_idx(graph, j, idx_j)
@@ -413,10 +383,10 @@ def compute_dot(branch1, branch2, idx1, idx2):
     b2 = branch2 - midpoint
 
     # Main
-    dot5 = np.dot(tangent(b1, idx1, 5), tangent(b2, idx2, 5))
     dot10 = np.dot(tangent(b1, idx1, 10), tangent(b2, idx2, 10))
     dot20 = np.dot(tangent(b1, idx1, 20), tangent(b2, idx2, 20))
-    return min(dot5, min(dot10, dot20))
+    dot40 = np.dot(tangent(b1, idx1, 40), tangent(b2, idx2, 40))
+    return np.min([dot10, dot20, dot40])
 
 
 def tangent(branch, idx, depth):

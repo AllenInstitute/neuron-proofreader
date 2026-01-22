@@ -71,7 +71,7 @@ def run(gt_graph, pred_graph):
 
         # Check proposal projection distance
         dist = compute_proposal_proj_dist(gt_graph, pred_graph, proposal)
-        if dist > 10:
+        if dist > 8:
             continue
 
         # Check if nodes are connected
