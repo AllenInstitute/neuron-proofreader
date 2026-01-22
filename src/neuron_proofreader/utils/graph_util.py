@@ -309,7 +309,7 @@ class GraphLoader:
                 attrs = to_numpy(attrs)
                 if self.smooth_bool:
                     n_pts = int(edge_length / self.node_spacing)
-                    self.smooth_curve_3d(graph, attrs, (root, j), n_pts)
+                    self.resample_curve_3d(graph, attrs, (root, j), n_pts)
                 if graph.degree[j] == 1:
                     leafs.add(j)
 
@@ -474,7 +474,7 @@ class GraphLoader:
         """
         return path_length(graph, self.min_size) > self.min_size
 
-    def smooth_curve_3d(self, graph, attrs, edge, n_pts):
+    def resample_curve_3d(self, graph, attrs, edge, n_pts):
         """
         Smooth a 3D curve and update the corresponding edge endpoints in the
         graph.
@@ -495,8 +495,8 @@ class GraphLoader:
         -------
         None
         """
-        attrs["xyz"] = geometry.smooth_curve_3d(attrs["xyz"], n_pts=n_pts)
-        attrs["radius"] = geometry.smooth_curve_1d(attrs["radius"], n_pts)
+        attrs["xyz"] = geometry.resample_curve_3d(attrs["xyz"], n_pts=n_pts)
+        attrs["radius"] = geometry.resample_curve_1d(attrs["radius"], n_pts)
         graph.graph["xyz"][edge[0]] = attrs["xyz"][0]
         graph.graph["xyz"][edge[1]] = attrs["xyz"][-1]
 
