@@ -45,7 +45,7 @@ class FragmentsDataset(IterableDataset):
     def __init__(
         self,
         config,
-        brightness_clip=500,
+        brightness_clip=400,
         patch_shape=(128, 128, 128),
         shuffle=True,
         transform=False

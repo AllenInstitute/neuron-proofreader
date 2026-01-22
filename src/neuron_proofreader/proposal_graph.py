@@ -316,17 +316,22 @@ class ProposalGraph(SkeletonGraph):
         self.set_proposals_per_leaf(proposals_per_leaf)
 
         # Generate proposals
-        augmented_search_radius = search_radius * 1.5
         proposal_generation.run(
             self,
-            augmented_search_radius if trim_endpoints_bool else search_radius,
+            search_radius,
             complex_bool=complex_bool,
             long_range_bool=long_range_bool,
         )
 
         # Trim endpoints between proposals
         if trim_endpoints_bool:
-            proposal_generation.run_endpoint_trimming(self, search_radius)
+            for proposal in self.list_proposals():
+                is_simple = self.is_simple(proposal)
+                is_single = self.is_single_proposal(proposal)
+                if is_simple and is_single:
+                    proposal_generation.trim_endpoints_at_proposal(
+                        self, proposal
+                    )
 
         # Set groundtruth
         if groundtruth_graph:
