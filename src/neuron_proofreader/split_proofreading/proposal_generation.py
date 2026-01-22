@@ -8,8 +8,6 @@ Code that generates edge proposals for a given graph.
 
 """
 
-from collections import deque
-
 import numpy as np
 from tqdm import tqdm
 
