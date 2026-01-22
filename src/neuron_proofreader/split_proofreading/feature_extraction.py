@@ -31,7 +31,7 @@ class FeaturePipeline:
         img_path,
         search_radius,
         brightness_clip=400,
-        padding=40,
+        padding=50,
         patch_shape=(96, 96, 96),
         segmentation_path=None,
     ):
@@ -295,7 +295,7 @@ class ImageFeatureExtractor:
             mask, spatial offset, and patch shape.
         """
         # Read images
-        center, shape = self.compute_crop(subgraph, proposal)
+        center, shape = self.compute_crop(proposal)
         offset = img_util.get_offset(center, shape)
 
         img = self.read_image(center, shape)
@@ -303,7 +303,12 @@ class ImageFeatureExtractor:
 
         # Create patch feature extractor
         extractor = PatchFeatureExtractor(
-            subgraph, img, mask, proposal, offset, self.patch_shape
+            self.graph,
+            img,
+            mask,
+            proposal,
+            offset,
+            self.patch_shape
         )
         return extractor
 
@@ -340,27 +345,25 @@ class ImageFeatureExtractor:
         else:
             return np.zeros(shape)
 
-    def compute_crop(self, graph, proposal):
+    def compute_crop(self, proposal):
         """
-        Compute a cubic image crop centered on a proposal.
+        Extracts an intensity profile along a set of voxel coordinates.
 
         Returns
         -------
-        center : Tuple[int]
-            Center of image crop.
-        shape : Tuple[int]
-            Shape of image crop.
+        profile : numpy.ndarray
+            Image with shape (2, H, W, D) containing a raw image and proposal
+            mask channels.
         """
-        # Compute bounds
-        node1, node2 = proposal
-        voxel1 = graph.get_voxel(node1)
-        voxel2 = graph.get_voxel(node2)
-        bounds = img_util.get_minimal_bbox([voxel1, voxel2], self.padding)
+        profile = np.array([self.img[tuple(voxel)] for voxel in voxels])
+        profile = np.append(profile, [profile.mean(), profile.std()])
+        return profile
 
-        # Transform into square
-        center = tuple([int((v1 + v2) / 2) for v1, v2 in zip(voxel1, voxel2)])
-        length = np.max([u - l for u, l in zip(bounds["max"], bounds["min"])])
-        return center, (length, length, length)
+    # --- Helpers ---
+    def annotate_edge(self, node):
+        """
+        Annotates the neuron branch containing the specified node within the
+        given mask.
 
 
 class PatchFeatureExtractor:
