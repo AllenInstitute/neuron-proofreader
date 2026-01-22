@@ -492,6 +492,11 @@ class PatchFeatureExtractor:
             Image with shape (2, H, W, D) containing a raw image and proposal
             mask channels.
         """
+        # Check for correct number of voxels
+        while len(voxels) < 16:
+            voxels.append(voxels[-1])
+
+        # Extract profile
         profile = np.array([self.img[tuple(voxel)] for voxel in voxels])
         profile = np.append(profile, [profile.mean(), profile.std()])
         return profile
