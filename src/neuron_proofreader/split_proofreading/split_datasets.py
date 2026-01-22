@@ -136,7 +136,7 @@ class FragmentsDataset(IterableDataset):
             Graph constructed from SWC files.
         """
         # Build graph
-        node_spacing = 1 if is_gt else self.config.node_spacing
+        node_spacing = 1 if is_gt else 2
         graph = ProposalGraph(
             anisotropy=self.config.anisotropy,
             min_size=self.config.min_size,
