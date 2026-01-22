@@ -71,8 +71,8 @@ class Reader:
                 - dir_path: Path to local directory with SWC files
                 - zip_path: Path to local ZIP with SWC files
                 - zip_dir_path: Path to local directory of ZIPs with SWC files
-                - gcs_dir_path: Path to GCS directory with SWC files
-                - gcs_zip_dir_path: Path to GCS directory with ZIPs of SWC files
+                - gcs_dir_path: Path to GCS prefix with SWC files
+                - gcs_zip_dir_path: Path to GCS prefix with ZIPs of SWC files
                 - path_list: List of paths to local SWC files
 
         Returns

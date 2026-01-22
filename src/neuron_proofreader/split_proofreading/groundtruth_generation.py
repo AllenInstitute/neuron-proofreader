@@ -31,7 +31,7 @@ from copy import deepcopy
 import networkx as nx
 import numpy as np
 
-from neuron_proofreader.utils import geometry_util, graph_util as gutil, util
+from neuron_proofreader.utils import geometry_util, util
 
 
 def run(gt_graph, pred_graph):
@@ -166,6 +166,23 @@ def find_aligned_component(gt_graph, pred_graph, nodes):
 
 
 def check_connectedness(pred_graph, proposal):
+    """
+    Checks if branches connected by proposal are already connected by a path
+    that contains another branch.
+
+    Parameters
+    ----------
+    pred_graph : ProposalGraph
+        Graph to be checked.
+    proposal : Frozenset[int]
+        Proposal to check connectedness of.
+
+    Returns
+    -------
+    bool
+        Indication of whether the branches connected by proposal are already
+        connected by a path that contains another branch.
+    """
     # Get path between nodes
     i, j = proposal
     try:
@@ -178,6 +195,7 @@ def check_connectedness(pred_graph, proposal):
         if frozenset((node1, node2)) not in pred_graph.proposals:
             return True
     return False
+
 
 def compute_proposal_proj_dist(gt_graph, pred_graph, proposal):
     """
