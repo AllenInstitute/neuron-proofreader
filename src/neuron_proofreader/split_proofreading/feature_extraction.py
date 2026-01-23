@@ -355,15 +355,9 @@ class ImageFeatureExtractor:
             Image with shape (2, H, W, D) containing a raw image and proposal
             mask channels.
         """
-        profile = np.array([self.img[tuple(voxel)] for voxel in voxels])
-        profile = np.append(profile, [profile.mean(), profile.std()])
-        return profile
-
-    # --- Helpers ---
-    def annotate_edge(self, node):
-        """
-        Annotates the neuron branch containing the specified node within the
-        given mask.
+        center = tuple([int((v1 + v2) / 2) for v1, v2 in zip(voxel1, voxel2)])
+        length = np.max([u - l for u, l in zip(bounds["max"], bounds["min"])])
+        return center, (length, length, length)
 
 
 class PatchFeatureExtractor:
