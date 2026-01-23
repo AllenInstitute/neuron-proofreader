@@ -236,11 +236,12 @@ class SkeletonGraph(nx.Graph):
         old_to_new = dict(zip(old_node_ids, new_node_ids))
         old_edge_ids = list(self.edges)
         old_irr_edge_ids = self.irreducible.edges
+        edge_attrs = {(i, j): data for i, j, data in self.edges(data=True)}
 
         # Reset graph
         self.clear()
         for (i, j) in old_edge_ids:
-            self.add_edge(old_to_new[i], old_to_new[j])
+            self.add_edge(old_to_new[i], old_to_new[j], **edge_attrs[(i, j)])
 
         self.irreducible.clear()
         for (i, j) in old_irr_edge_ids:

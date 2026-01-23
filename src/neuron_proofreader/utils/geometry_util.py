@@ -174,7 +174,7 @@ def fit_spline_1d(pts, k=3, s=None):
         Spline fit to the given points.
     """
     t = np.linspace(0, 1, len(pts))
-    s = len(pts) / s if s else len(pts) / 10
+    s = len(pts) / s if s else len(pts) / 15
     return UnivariateSpline(t, pts, k=k, s=s)
 
 
@@ -520,11 +520,13 @@ def remove_doubles(graph, max_length):
     """
     # Initializations
     components = [c for c in nx.connected_components(graph) if len(c) == 2]
+    iterator = np.argsort([len(c) for c in components])
     kdtree = graph.get_kdtree()
-
+    if graph.verbose:
+        iterator = tqdm(iterator, desc="Filter Doubled Fragments")
+        
     # Main
-    desc = "Filter Doubled Fragments"
-    for idx in tqdm(np.argsort([len(c) for c in components]), desc=desc):
+    for idx in iterator:
         i, j = tuple(components[idx])
         if graph.node_component_id[i] in graph.component_id_to_swc_id:
             if graph.edge_length((i, j)) < max_length:
@@ -533,6 +535,7 @@ def remove_doubles(graph, max_length):
                 hits = compute_projections(graph, kdtree, (i, j))
                 if is_double(hits, n_pts):
                     graph.remove_line_fragment(i, j)
+    graph.relabel_nodes()
 
 
 def compute_projections(graph, kdtree, edge):

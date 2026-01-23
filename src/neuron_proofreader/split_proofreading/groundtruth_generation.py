@@ -74,10 +74,6 @@ def run(gt_graph, pred_graph):
         if dist > 8:
             continue
 
-        # Check if nodes are connected via a->b->c and a->c
-        if accepts_graph.is_transitive_connection(proposal):
-            continue
-
         # Check if proposal is structurally consistent
         gt_id = pred_to_gt[id1]
         is_consistent = is_structure_consistent(
@@ -120,7 +116,7 @@ def compute_proposal_proj_dist(gt_graph, pred_graph, proposal):
     for pt in geometry_util.make_line(xyz_i, xyz_j, n_pts):
         dist, _ = gt_graph.kdtree.query(pt)
         proj_dists.append(dist)
-    return np.max(proj_dists)
+    return np.percentile(proj_dists, 90)
 
 
 def find_aligned_component(gt_graph, pred_graph, nodes):
@@ -161,10 +157,10 @@ def find_aligned_component(gt_graph, pred_graph, nodes):
     gt_id = util.find_best(dists)
     dists = np.array(dists[gt_id])
     percent_aligned = len(dists) / n_pts
-    aligned_score = np.mean(dists[dists < np.percentile(dists, 80)])
+    aligned_score = np.percentile(dists, 60)
 
     # Deterine whether aligned
-    if (aligned_score < 4 and gt_id) and percent_aligned > 0.6:
+    if (aligned_score < 7 and gt_id) and percent_aligned > 0.6:
         return gt_id
     else:
         return None

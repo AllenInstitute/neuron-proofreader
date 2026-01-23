@@ -104,15 +104,15 @@ class ProposalGraph(SkeletonGraph):
 
         # Instance attributes - Proposals
         self.gt_accepts = set()
-        self.max_proposals_per_leaf = max_proposals_per_leaf
         self.merged_ids = set()
-        self.min_size_with_proposals = min_size_with_proposals
         self.n_merges_blocked = 0
         self.node_proposals = defaultdict(set)
         self.proposals = set()
 
         self.proposal_generator = ProposalGenerator(
-            self, filter_transitive_proposals=filter_transitive_proposals
+            self,
+            max_proposals_per_leaf=max_proposals_per_leaf,
+            min_size_with_proposals=min_size_with_proposals
         )
 
         # Graph Loader
@@ -195,6 +195,37 @@ class ProposalGraph(SkeletonGraph):
         i, j = tuple(edge_id)
         self.add_edge(i, j, radius=attrs["radius"], xyz=attrs["xyz"])
         self.xyz_to_edge.update({tuple(xyz): edge_id for xyz in attrs["xyz"]})
+
+    def relabel_nodes(self):
+        """
+        Reassigns contiguous node IDs and update all dependent structures.
+        """
+               # Set node ids
+        old_node_ids = np.array(self.nodes, dtype=int)
+        new_node_ids = np.arange(len(old_node_ids))
+
+        # Set edge ids
+        old_to_new = dict(zip(old_node_ids, new_node_ids))
+        old_edge_ids = list(self.edges)
+        old_irr_edge_ids = self.irreducible.edges
+        edge_attrs = {(i, j): data for i, j, data in self.edges(data=True)}
+
+        # Reset graph
+        self.clear()
+        for (i, j) in old_edge_ids:
+            edge_id = (int(old_to_new[i]), int(old_to_new[j]))
+            self._add_edge(edge_id, edge_attrs[(i, j)])
+
+        self.irreducible.clear()
+        for (i, j) in old_irr_edge_ids:
+            self.irreducible.add_edge(old_to_new[i], old_to_new[j])
+
+        # Update attributes
+        self.node_radius = self.node_radius[old_node_ids]
+        self.node_xyz = self.node_xyz[old_node_ids]
+        self.node_component_id = self.node_component_id[old_node_ids]
+
+        self.reassign_component_ids()
 
     def remove_line_fragment(self, i, j):
         """
