@@ -145,7 +145,7 @@ def init_patch_embedding(patch_shape, output_dim):
     Parameters
     ----------
     output_dim : int
-            Output dimension of the embedding.
+        Output dimension of the embedding.
     """
     patch_embedding = CNN3D(
         patch_shape,
