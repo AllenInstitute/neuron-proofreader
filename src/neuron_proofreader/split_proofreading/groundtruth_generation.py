@@ -160,7 +160,7 @@ def find_aligned_component(gt_graph, pred_graph, nodes):
     aligned_score = np.percentile(dists, 60)
 
     # Deterine whether aligned
-    if (aligned_score < 7 and gt_id) and percent_aligned > 0.6:
+    if (aligned_score < 7 and gt_id is not None) and percent_aligned > 0.6:
         return gt_id
     else:
         return None
@@ -188,7 +188,7 @@ def get_pred_to_gt_mapping(gt_graph, pred_graph):
     pred_to_gt = defaultdict(lambda: None)
     for nodes in nx.connected_components(pred_graph):
         gt_id = find_aligned_component(gt_graph, pred_graph, nodes)
-        if gt_id:
+        if gt_id is not None:
             node = util.sample_once(nodes)
             pred_to_gt[pred_graph.node_component_id[node]] = gt_id
     return pred_to_gt

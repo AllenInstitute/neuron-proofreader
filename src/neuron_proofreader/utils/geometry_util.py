@@ -524,7 +524,7 @@ def remove_doubles(graph, max_length):
     kdtree = graph.get_kdtree()
     if graph.verbose:
         iterator = tqdm(iterator, desc="Filter Doubled Fragments")
-        
+
     # Main
     for idx in iterator:
         i, j = tuple(components[idx])

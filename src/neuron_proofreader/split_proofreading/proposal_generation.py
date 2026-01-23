@@ -8,7 +8,7 @@ Code that generates edge proposals for a given graph.
 
 """
 
-from copy import deepcopy
+from tqdm import tqdm
 
 import numpy as np
 
@@ -73,10 +73,16 @@ class ProposalGenerator:
             Initial search radius used to generate proposals between endpoints
             of proposal.
         """
+        # Initializations
         self.set_kdtree()
+        iterator = self.graph.get_leafs()
+        if self.graph.verbose:
+            iterator = tqdm(iterator, desc="Proposal Generation")
+
+        # Main
         connections = dict()
         proposals = set()
-        for leaf in self.graph.get_leafs():
+        for leaf in iterator:
             # Check if fragment satisfies size requirement
             length = self.graph.path_length(
                 max_depth=self.min_size_with_proposals, root=leaf
