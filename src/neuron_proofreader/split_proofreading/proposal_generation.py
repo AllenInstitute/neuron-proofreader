@@ -26,8 +26,9 @@ class ProposalGenerator:
         self,
         graph,
         allow_nonleaf_targets=False,
-        filter_transitive_proposals=False,
         max_attempts=2,
+        max_proposals_per_leaf=3,
+        min_size_with_proposals=0,
         search_scaling_factor=1.5
     ):
         """
@@ -40,24 +41,24 @@ class ProposalGenerator:
         allow_nonleaf_targets : bool, optional
             Indication of whether to generate proposals between leaf and nodes
             with degree 2. Default is False.
-        filter_transitive_proposals : bool, optional
-            Indication of whether to filter proposals between fragments with a
-            connection via other proposals and fragments. Default is False.
         max_attempts : int, optional
             Number of attempts made to generate proposals from a node with
             increasing search radii. Default is 2.
+        max_proposals_per_leaf : bool, optional
+            Maximum number of proposals generated at each leaf. Default is 3.
+        min_size_with_proposals : float, optional
+            Minimum fragment path length required for proposals. Default is 0.
         search_scaling_factor : 1.5, optional
             Scaling actor used to enlarge search radius for each search.
             Default is 2.
         """
         # Instance attributes
         self.allow_nonleaf_targets = allow_nonleaf_targets
-        self.filter_transitive_proposals = filter_transitive_proposals
         self.graph = graph
         self.kdtree = None
         self.max_attempts = max_attempts
-        self.max_proposals_per_leaf = graph.max_proposals_per_leaf
-        self.min_size_with_proposals = graph.min_size_with_proposals
+        self.max_proposals_per_leaf = max_proposals_per_leaf
+        self.min_size_with_proposals = min_size_with_proposals
         self.n_proposals_blocked = 0
         self.search_scaling_factor = search_scaling_factor
 
@@ -115,10 +116,6 @@ class ProposalGenerator:
                     # Add proposal
                     proposals.add(pair_id)
                     connections[pair_component_id] = pair_id
-
-        # Filter proposals (if applicable)
-        if self.filter_transitive_proposals:
-            proposals = self._filter_transitive_proposals(proposals)
         return proposals
 
     def find_node_candidates(self, leaf, radius):
@@ -164,30 +161,6 @@ class ProposalGenerator:
         pts_dict = self.query_closest_points_per_component(leaf, radius)
         pts_dict = self.select_closest_components(pts_dict)
         return [val["xyz"] for val in pts_dict.values()]
-
-    def _filter_transitive_proposals(self, proposals):
-        """
-        Removes proposals that directly connect fragments a and c when an
-        indirect path exists via a → b → c.
-
-        Parameters
-        ----------
-        proposals : List[Frozenset[int]]
-            Proposals to be filtered.
-        """
-        # Initializations
-        graph = deepcopy(self.graph)
-        proposals = get_sorted_proposals(graph, proposals)
-
-        # Main
-        filtered_proposals = list()
-        for proposal in proposals:
-            if not graph.is_transitive_connection(proposal):
-                i, j = proposal
-                graph.add_edge(i, j)
-                graph.add_proposal(i, j)
-                filtered_proposals.append(proposal)
-        return filtered_proposals
 
     # --- Helpers ---
     def get_closer_endpoint(self, edge, xyz):

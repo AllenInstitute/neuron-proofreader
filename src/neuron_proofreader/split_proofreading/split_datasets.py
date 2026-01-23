@@ -135,14 +135,13 @@ class FragmentsDataset(IterableDataset):
         # Build graph
         graph = ProposalGraph(
             anisotropy=self.config.anisotropy,
-            filter_transitive_proposals=True,
             min_size=self.config.min_size
         )
         graph.load(swc_pointer)
 
         # Filter doubles (if applicable)
         if not is_gt:
-            geometry_util.remove_doubles(graph, 160)
+            geometry_util.remove_doubles(graph, 200)
         return graph
 
     # --- Get Data ---

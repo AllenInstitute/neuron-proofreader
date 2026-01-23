@@ -48,7 +48,6 @@ class ProposalGraph(SkeletonGraph):
     def __init__(
         self,
         anisotropy=(1.0, 1.0, 1.0),
-        filter_transitive_proposals=False,
         max_proposals_per_leaf=3,
         min_size=0,
         min_size_with_proposals=0,
@@ -104,15 +103,15 @@ class ProposalGraph(SkeletonGraph):
 
         # Instance attributes - Proposals
         self.gt_accepts = set()
-        self.max_proposals_per_leaf = max_proposals_per_leaf
         self.merged_ids = set()
-        self.min_size_with_proposals = min_size_with_proposals
         self.n_merges_blocked = 0
         self.node_proposals = defaultdict(set)
         self.proposals = set()
 
         self.proposal_generator = ProposalGenerator(
-            self, filter_transitive_proposals=filter_transitive_proposals
+            self,
+            max_proposals_per_leaf=max_proposals_per_leaf,
+            min_size_with_proposals=min_size_with_proposals
         )
 
         # Graph Loader
@@ -195,6 +194,37 @@ class ProposalGraph(SkeletonGraph):
         i, j = tuple(edge_id)
         self.add_edge(i, j, radius=attrs["radius"], xyz=attrs["xyz"])
         self.xyz_to_edge.update({tuple(xyz): edge_id for xyz in attrs["xyz"]})
+
+    def relabel_nodes(self):
+        """
+        Reassigns contiguous node IDs and update all dependent structures.
+        """
+               # Set node ids
+        old_node_ids = np.array(self.nodes, dtype=int)
+        new_node_ids = np.arange(len(old_node_ids))
+
+        # Set edge ids
+        old_to_new = dict(zip(old_node_ids, new_node_ids))
+        old_edge_ids = list(self.edges)
+        old_irr_edge_ids = self.irreducible.edges
+        edge_attrs = {(i, j): data for i, j, data in self.edges(data=True)}
+
+        # Reset graph
+        self.clear()
+        for (i, j) in old_edge_ids:
+            edge_id = (int(old_to_new[i]), int(old_to_new[j]))
+            self._add_edge(edge_id, edge_attrs[(i, j)])
+
+        self.irreducible.clear()
+        for (i, j) in old_irr_edge_ids:
+            self.irreducible.add_edge(old_to_new[i], old_to_new[j])
+
+        # Update attributes
+        self.node_radius = self.node_radius[old_node_ids]
+        self.node_xyz = self.node_xyz[old_node_ids]
+        self.node_component_id = self.node_component_id[old_node_ids]
+
+        self.reassign_component_ids()
 
     def remove_line_fragment(self, i, j):
         """
@@ -429,35 +459,6 @@ class ProposalGraph(SkeletonGraph):
         """
         i, j = tuple(proposal)
         return True if self.degree[i] == 1 and self.degree[j] == 1 else False
-
-    def is_transitive_connection(self, node_pair):
-        """
-        Checks if the given nodes connect fragments a and c when an indirect
-        path already exists via a → b → c.
-    
-        Parameters
-        ----------
-        node_pair : Frozenset[int]
-            Pair of nodes to be checked.
-    
-        Returns
-        -------
-        bool
-            Indication of whether the connection is transitive.
-        """
-        # Get path between nodes
-        i, j = node_pair
-        try:
-            path = nx.shortest_path(self, source=i, target=j)
-        except nx.NetworkXNoPath:
-            return False
-    
-        # Search path
-        if len(path) < 6:
-            for node1, node2 in zip(path[0:-1], path[1:]):
-                if frozenset((node1, node2)) not in self.proposals:
-                    return True
-        return False
 
     def simple_proposals(self):
         return set([p for p in self.proposals if self.is_simple(p)])
