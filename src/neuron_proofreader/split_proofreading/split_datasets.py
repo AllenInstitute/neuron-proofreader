@@ -134,7 +134,9 @@ class FragmentsDataset(IterableDataset):
         """
         # Build graph
         graph = ProposalGraph(
-            anisotropy=self.config.anisotropy, min_size=self.config.min_size
+            anisotropy=self.config.anisotropy,
+            filter_transitive_proposals=True,
+            min_size=self.config.min_size
         )
         graph.load(swc_pointer)
 
