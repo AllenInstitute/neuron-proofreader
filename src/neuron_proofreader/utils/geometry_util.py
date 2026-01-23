@@ -349,29 +349,6 @@ def truncate_path(xyz_path, depth):
 
 
 # --- KDTree utils ---
-def query_ball(kdtree, xyz, radius):
-    """
-    Queries a KD-tree for points within a given radius from a target point.
-
-    Parameters
-    ----------
-    kdtree : scipy.spatial.cKDTree
-        KD-tree to be queried.
-    xyz : numpy.ndarray
-        Target 3D coordinate (x, y, z) around which to search for points.
-    radius : float
-        The radius within which to search for points.
-
-    Returns
-    -------
-    numpy.ndarray
-        An array containing the points within the specified radius from the
-        target coordinate.
-    """
-    idxs = kdtree.query_ball_point(xyz, radius)
-    return kdtree.data[idxs]
-
-
 def kdtree_query(kdtree, xyz):
     """
     Gets the xyz coordinates of the nearest neighbor of "xyz" from "kdtree".
@@ -752,3 +729,26 @@ def nearest_neighbor(pts, query_pt):
             best_dist = dist(query_pt, pt)
             best_pt = pt
     return best_pt
+
+
+def query_ball(kdtree, query_xyz, radius):
+    """
+    Queries a KD-tree for points within a given radius from a target point.
+
+    Parameters
+    ----------
+    kdtree : scipy.spatial.cKDTree
+        KD-tree to be queried.
+    xyz : numpy.ndarray
+        Target 3D coordinate around which to search for points.
+    radius : float
+        Search radius used to generate proposals.
+
+    Returns
+    -------
+    numpy.ndarray
+        An array containing the points within the specified radius from the
+        target coordinate.
+    """
+    idxs = kdtree.query_ball_point(query_xyz, radius)
+    return kdtree.data[idxs]

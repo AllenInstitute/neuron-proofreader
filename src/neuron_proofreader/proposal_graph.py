@@ -403,35 +403,6 @@ class ProposalGraph(SkeletonGraph):
         single_j = len(self.node_proposals[j]) == 1
         return single_i and single_j
 
-    def is_valid_proposal(self, leaf, i, complex_bool):
-        """
-        Determines whether a pair of nodes would form a "valid" proposal. A
-        proposal is said to be valid if (1) "leaf" and "i" do not have swc_ids
-        contained in "self.soma_ids" and (2) "i" is a leaf if "complex_bool"
-        is False.
-
-        Parmeters
-        ---------
-        leaf : int
-            Leaf node ID.
-        i : int
-            NOde ID.
-        complex_bool : bool
-            Indication of whether complex proposals are should be generated.
-
-        Returns
-        -------
-        bool
-            Indication of whether proposal is valid.
-        """
-        if i is not None:
-            skip_soma = self.is_soma(i) and self.is_soma(leaf)
-            skip_complex = self.degree[i] > 1 and not complex_bool
-            self.n_proposals_blocked += 1 if skip_soma else 0
-            return not (skip_soma or skip_complex)
-        else:
-            return False
-
     def list_proposals(self):
         """
         Lists proposals in self.

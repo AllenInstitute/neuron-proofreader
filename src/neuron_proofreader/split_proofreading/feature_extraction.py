@@ -578,6 +578,8 @@ class FeatureSet:
         "proposal": ("proposal_features", "proposal_index_mapping"),
         "proposal_patches": ("proposal_patches", "proposal_index_mapping"),
     }
+    n_branch_features = 2
+    n_proposal_features = 70
 
     def __init__(self, graph):
         """
@@ -737,7 +739,7 @@ class HeteroGraphData(HeteroData):
     # --- Core Routines ---
     def build_proposal_adjacency(self, graph):
         """
-        Builds proposal–proposal adjacency based on shared node incidence.
+        Builds proposal to proposal adjacency based on shared node incidence.
 
         Parameters
         ----------
@@ -750,7 +752,7 @@ class HeteroGraphData(HeteroData):
 
     def build_branch_adjacency(self, graph):
         """
-        Builds branch–branch adjacency based on shared node incidence.
+        Builds branch to branch adjacency based on shared node incidence.
 
         Parameters
         ----------
@@ -762,7 +764,7 @@ class HeteroGraphData(HeteroData):
 
     def build_branch_proposal_adjacency(self, graph):
         """
-        Builds branch–proposal adjacency based on shared node incidence.
+        Builds branch to proposal adjacency based on shared node incidence.
 
         Parameters
         ----------
@@ -810,6 +812,23 @@ class HeteroGraphData(HeteroData):
             v2 = index_mapping.id_to_idx[frozenset(e2)]
             edge_index.extend([[v1, v2], [v2, v1]])
         return edge_index
+
+    def get_feature_dict(self):
+        """
+        Gets a dictionary that contains the number of features for branchs and
+        proposals.
+
+        Returns
+        -------
+        feature_dict : Dict[str, int]
+            Dictionary that contains the number of features for branchs and
+            proposals.
+        """
+        feature_dict = {
+            "branch": FeatureSet.n_branch_features,
+            "proposal": FeatureSet.n_proposal_features
+        }
+        return feature_dict
 
     def get_inputs(self):
         """
@@ -893,16 +912,3 @@ class IndexMapping:
             # Populate dictionary
             self.id_to_idx[object_id] = idx
             self.idx_to_id[idx] = object_id
-
-
-# --- Helpers ---
-def get_node_dict():
-    """
-    Returns the number of features for different node types.
-
-    Returns
-    -------
-    dict
-        Dictionary containing the number of features for each node type
-    """
-    return {"branch": 2, "proposal": 70}
