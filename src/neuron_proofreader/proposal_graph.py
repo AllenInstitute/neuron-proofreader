@@ -24,7 +24,11 @@ import zipfile
 
 from neuron_proofreader.skeleton_graph import SkeletonGraph
 from neuron_proofreader.split_proofreading import (
-    groundtruth_generation, proposal_generation
+    groundtruth_generation
+)
+from neuron_proofreader.split_proofreading.proposal_generation import (
+    ProposalGenerator,
+    trim_endpoints_at_proposal
 )
 from neuron_proofreader.utils import (
     geometry_util as geometry, graph_util as gutil, util,
@@ -44,6 +48,7 @@ class ProposalGraph(SkeletonGraph):
     def __init__(
         self,
         anisotropy=(1.0, 1.0, 1.0),
+        max_proposals_per_leaf=3,
         min_size=0,
         min_size_with_proposals=0,
         node_spacing=1,
@@ -98,12 +103,14 @@ class ProposalGraph(SkeletonGraph):
 
         # Instance attributes - Proposals
         self.gt_accepts = set()
+        self.max_proposals_per_leaf = max_proposals_per_leaf
         self.merged_ids = set()
         self.min_size_with_proposals = min_size_with_proposals
         self.n_merges_blocked = 0
         self.n_proposals_blocked = 0
         self.node_proposals = defaultdict(set)
         self.proposals = set()
+        self.proposal_generator = ProposalGenerator(self)
 
         # Graph Loader
         self.graph_loader = gutil.GraphLoader(
@@ -281,15 +288,7 @@ class ProposalGraph(SkeletonGraph):
             return geometry.query_ball(self.kdtree, xyz, d)
 
     # --- Proposal Generation ---
-    def generate_proposals(
-        self,
-        search_radius,
-        complex_bool=False,
-        groundtruth_graph=None,
-        long_range_bool=False,
-        proposals_per_leaf=3,
-        trim_endpoints_bool=True,
-    ):
+    def generate_proposals(self, search_radius, gt_graph=None):
         """
         Generates proposals from leaf nodes.
 
@@ -297,60 +296,19 @@ class ProposalGraph(SkeletonGraph):
         ----------
         search_radius : float
             Search radius used to generate proposals.
-        complex_bool : bool, optional
-            Indication of whether to generate proposals between leaf and
-            non-leaf nodes. Default is False.
         gt_graph : networkx.Graph, optional
             Ground truth graph. Default is None.
-        long_range_bool : bool, optional
-            Indication of whether to generate long range proposals. Default is
-            False.
-        proposals_per_leaf : int, optional
-            Maximum number of proposals generated for each leaf. Default is 3.
-        trim_endpoints_bool : bool, optional
-            Indication of whether to trim endpoints. Default is True.
         """
-        # Reset proposals
-        self.proposals = set()
-        self.node_proposals = defaultdict(set)
-        self.set_proposals_per_leaf(proposals_per_leaf)
-
         # Generate proposals
-        proposal_generation.run(
-            self,
-            search_radius,
-            complex_bool=complex_bool,
-            long_range_bool=long_range_bool,
-        )
-
-        # Trim endpoints between proposals
-        if trim_endpoints_bool:
-            for proposal in self.list_proposals():
-                is_simple = self.is_simple(proposal)
-                is_single = self.is_single_proposal(proposal)
-                if is_simple and is_single:
-                    proposal_generation.trim_endpoints_at_proposal(
-                        self, proposal
-                    )
+        proposals = self.proposal_generator(search_radius)
+        self.store_proposals(proposals)
+        self.trim_proposals()
 
         # Set groundtruth
-        if groundtruth_graph:
-            self.gt_accepts = groundtruth_generation.run(
-                groundtruth_graph, self
-            )
+        if gt_graph:
+            self.gt_accepts = groundtruth_generation.run(gt_graph, self)
         else:
             self.gt_accepts = set()
-
-    def set_proposals_per_leaf(self, proposals_per_leaf):
-        """
-        Sets the maximum number of proposals per leaf as a class attribute.
-
-        Parameters
-        ----------
-        proposals_per_leaf : int
-            Maximum number of proposals per leaf.
-        """
-        self.proposals_per_leaf = proposals_per_leaf
 
     def add_proposal(self, i, j):
         """
@@ -368,6 +326,12 @@ class ProposalGraph(SkeletonGraph):
         self.node_proposals[j].add(i)
         self.proposals.add(proposal)
 
+    def store_proposals(self, proposals):
+        self.node_proposals = defaultdict(set)
+        for proposal in proposals:
+            i, j = tuple(proposal)
+            self.add_proposal(i, j)
+
     def remove_proposal(self, proposal):
         """
         Removes an existing proposal between two nodes.
@@ -381,6 +345,13 @@ class ProposalGraph(SkeletonGraph):
         self.node_proposals[i].remove(j)
         self.node_proposals[j].remove(i)
         self.proposals.remove(proposal)
+
+    def trim_proposals(self):
+        for proposal in self.list_proposals():
+            is_simple = self.is_simple(proposal)
+            is_single = self.is_single_proposal(proposal)
+            if is_simple and is_single:
+                trim_endpoints_at_proposal(self, proposal)
 
     def is_single_proposal(self, proposal):
         """
