@@ -8,6 +8,8 @@ Code that generates edge proposals for a given graph.
 
 """
 
+from copy import deepcopy
+
 import numpy as np
 
 from neuron_proofreader.utils import geometry_util
@@ -116,7 +118,7 @@ class ProposalGenerator:
 
         # Filter proposals (if applicable)
         if self.filter_transitive_proposals:
-            self._filter_transitive_proposals(proposals)
+            proposals = self._filter_transitive_proposals(proposals)
         return proposals
 
     def find_node_candidates(self, leaf, radius):
@@ -164,7 +166,28 @@ class ProposalGenerator:
         return [val["xyz"] for val in pts_dict.values()]
 
     def _filter_transitive_proposals(self, proposals):
-        pass
+        """
+        Removes proposals that directly connect fragments a and c when an
+        indirect path exists via a → b → c.
+
+        Parameters
+        ----------
+        proposals : List[Frozenset[int]]
+            Proposals to be filtered.
+        """
+        # Initializations
+        graph = deepcopy(self.graph)
+        proposals = get_sorted_proposals(graph, proposals)
+
+        # Main
+        filtered_proposals = list()
+        for proposal in proposals:
+            if not graph.is_transitive_connection(proposal):
+                i, j = proposal
+                graph.add_edge(i, j)
+                graph.add_proposal(i, j)
+                filtered_proposals.append(proposal)
+        return filtered_proposals
 
     # --- Helpers ---
     def get_closer_endpoint(self, edge, xyz):
@@ -438,6 +461,33 @@ def compute_dot(branch1, branch2, idx1, idx2):
     dot20 = np.dot(tangent(b1, idx1, 20), tangent(b2, idx2, 20))
     dot40 = np.dot(tangent(b1, idx1, 40), tangent(b2, idx2, 40))
     return np.min([dot10, dot20, dot40])
+
+
+def get_sorted_proposals(graph, proposals):
+    """
+    Sorts the given proposals by physical length.
+
+    Parameters
+    ----------
+    graph : ProposalGraph
+        Graph used to generate proposals.
+    proposals : List[Frozenset[int]]
+        Proposals to be sorted.
+
+    Returns
+    -------
+    proposals : List[Frozenset[int]]
+        Sorted proposals.
+    """
+    # Compute lengths
+    lengths = list()
+    proposals = list(proposals)
+    for i, j in proposals:
+        lengths.append(graph.dist(i, j))
+
+    # Sort by distance
+    lengths = [graph.proposal_length(p) for p in proposals]
+    return [proposals[i] for i in np.argsort(lengths)]
 
 
 def tangent(branch, idx, depth):

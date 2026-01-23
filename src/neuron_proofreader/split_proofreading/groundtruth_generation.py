@@ -59,7 +59,7 @@ def run(gt_graph, pred_graph):
     # Main
     accepts_graph = deepcopy(pred_graph)
     gt_accepts = list()
-    for proposal in get_sorted_proposals(pred_graph):
+    for proposal in pred_graph.get_sorted_proposals():
         # Extract proposal info
         i, j = tuple(proposal)
         id1 = pred_graph.node_component_id[i]
@@ -74,8 +74,8 @@ def run(gt_graph, pred_graph):
         if dist > 8:
             continue
 
-        # Check if nodes are connected
-        if is_jump_connection(accepts_graph, proposal):
+        # Check if nodes are connected via a->b->c and a->c
+        if accepts_graph.is_transitive_connection(proposal):
             continue
 
         # Check if proposal is structurally consistent
@@ -198,38 +198,6 @@ def get_pred_to_gt_mapping(gt_graph, pred_graph):
     return pred_to_gt
 
 
-def is_jump_connection(pred_graph, proposal):
-    """
-    Checks if branches connected by proposal are already connected by a path
-    that contains another branch.
-
-    Parameters
-    ----------
-    pred_graph : ProposalGraph
-        Graph to be checked.
-    proposal : Frozenset[int]
-        Proposal to check connectedness of.
-
-    Returns
-    -------
-    bool
-        Indication of whether the branches connected by proposal are already
-        connected by a path that contains another branch.
-    """
-    # Get path between nodes
-    i, j = proposal
-    try:
-        path = nx.shortest_path(pred_graph, source=i, target=j)
-    except nx.NetworkXNoPath:
-        return False
-
-    # Search path
-    for node1, node2 in zip(path[0:-1], path[1:]):
-        if frozenset((node1, node2)) not in pred_graph.proposals:
-            return True
-    return False
-
-
 def is_structure_consistent(
     gt_graph, pred_graph, accepts_graph, gt_id, proposal
 ):
@@ -346,25 +314,6 @@ def find_closest_point(xyz_list, query_xyz):
             best_dist = dist
             best_idx = idx
     return best_idx
-
-
-def get_sorted_proposals(pred_graph):
-    """
-    Return proposals sorted by physical length.
-
-    Parameters
-    ----------
-    pred_graph : ProposalGraph
-        Graph containing proposals to be sorted.
-
-    Returns
-    -------
-    List[Frozenset[int]]
-        List of proposals sorted by increasing proposal length.
-    """
-    proposals = pred_graph.list_proposals()
-    lengths = [pred_graph.proposal_length(p) for p in proposals]
-    return [proposals[i] for i in np.argsort(lengths)]
 
 
 def length_up_to(path_pts, idx):
