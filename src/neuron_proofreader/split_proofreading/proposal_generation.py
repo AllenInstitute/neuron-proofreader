@@ -9,262 +9,241 @@ Code that generates edge proposals for a given graph.
 """
 
 import numpy as np
-from tqdm import tqdm
 
 from neuron_proofreader.utils import geometry_util
 
 DOT_THRESHOLD = -0.35
-SEARCH_SCALING_FACTOR = 1.5
 
 
-def run(graph, search_radius, complex_bool=False, long_range_bool=True):
+class ProposalGenerator:
     """
-    Generates edge proposals from leaf nodes to other leaf nodes within the
-    given search radius. Note: proposals can be generated between leaf and
-    non-leaf nodes if "complex_bool" is set to True.
-
-    Parameters
-    ----------
-    graph : ProposalGraph
-        Graph that proposals will be generated for.
-    search_radius : float
-        Maximum Euclidean distance between endpoints of proposal.
-    complex_bool : bool, optional
-        Indication of whether to generate proposals between leaf and non-
-        leaf nodes. Default is False.
-    long_range_bool : bool, optional
-        Indication of wether to attempt generating proposals for a leaf
-        without existing proposals by expanding the search radius to
-        "SEARCH_SCALING_FACTOR" × radius microns. Default is True.
+    A class for generating proposals between fragments in a graph.
     """
-    # Initializations
-    connections = dict()
-    kdtree = init_kdtree(graph, complex_bool)
-    if graph.verbose:
-        iterable = tqdm(graph.get_leafs(), desc="Proposals")
-    else:
-        iterable = graph.get_leafs()
 
-    # Main
-    for leaf in iterable:
-        # Check fragment satisfies size requirement
-        length = graph.path_length(
-            max_depth=graph.min_size_with_proposals, root=leaf
-        )
-        if length < graph.min_size_with_proposals:
-            continue
+    def __init__(
+        self,
+        graph,
+        allow_nonleaf_targets=False,
+        filter_transitive_proposals=False,
+        max_attempts=2,
+        search_scaling_factor=1.5
+    ):
+        """
+        Instantiates a ProposalGenerator object.
 
-        # Generate potential proposals
-        candidates = get_candidates(
-            graph,
-            leaf,
-            kdtree,
-            search_radius,
-            graph.proposals_per_leaf,
-            complex_bool,
-        )
+        Parameters
+        ----------
+        graph : ProposalGraph
+            Graph that proposals will be generated for.
+        allow_nonleaf_targets : bool, optional
+            Indication of whether to generate proposals between leaf and nodes
+            with degree 2. Default is False.
+        filter_transitive_proposals : bool, optional
+            Indication of whether to filter proposals between fragments with a
+            connection via other proposals and fragments. Default is False.
+        max_attempts : int, optional
+            Number of attempts made to generate proposals from a node with
+            increasing search radii. Default is 2.
+        search_scaling_factor : 1.5, optional
+            Scaling actor used to enlarge search radius for each search.
+            Default is 2.
+        """
+        # Instance attributes
+        self.allow_nonleaf_targets = allow_nonleaf_targets
+        self.filter_transitive_proposals = filter_transitive_proposals
+        self.graph = graph
+        self.kdtree = None
+        self.max_attempts = max_attempts
+        self.max_proposals_per_leaf = graph.max_proposals_per_leaf
+        self.min_size_with_proposals = graph.min_size_with_proposals
+        self.search_scaling_factor = search_scaling_factor
 
-        # Generate long range proposals (if applicable)
-        if len(candidates) == 0 and long_range_bool:
-            candidates = get_candidates(
-                graph,
-                leaf,
-                kdtree,
-                search_radius * SEARCH_SCALING_FACTOR,
-                -1,
-                True,
+    def __call__(self, initial_radius):
+        """
+        Generates edge proposals between fragments within the given search
+        radius.
+
+        Parameters
+        ----------
+        initial_radius : float
+            Initial search radius used to generate proposals between endpoints
+            of proposal.
+        """
+        self.set_kdtree()
+        connections = dict()
+        for leaf in self.graph.get_leafs():
+            # Check if fragment satisfies size requirement
+            length = self.graph.path_length(
+                max_depth=self.min_size_with_proposals, root=leaf
             )
+            if length < self.min_size_with_proposals:
+                continue
 
-        # Determine which potential proposals to keep
-        for i in candidates:
-            leaf_component_id = graph.node_component_id[leaf]
-            node_component_id = graph.node_component_id[i]
-            pair_id = frozenset((leaf_component_id, node_component_id))
-            if pair_id in connections.keys():
-                cur_proposal = connections[pair_id]
-                cur_dist = graph.proposal_length(cur_proposal)
-                if graph.dist(leaf, i) < cur_dist:
-                    graph.remove_proposal(cur_proposal)
-                    del connections[pair_id]
-                else:
-                    continue
+            # Generate proposals
+            cnt = 0
+            node_candidates = list()
+            while len(node_candidates) == 0 and cnt < self.max_attempts:
+                # Search for candidates
+                cnt += 1
+                radius = initial_radius * self.search_scaling_factor ** cnt
+                node_candidates = self.find_node_candidates(leaf, radius)
 
-            # Add proposal
-            graph.add_proposal(leaf, i)
-            connections[pair_id] = frozenset({leaf, i})
+                # Determine which potential proposals to keep
+                for i in node_candidates:
+                    leaf_component_id = self.graph.node_component_id[leaf]
+                    node_component_id = self.graph.node_component_id[i]
+                    pair_id = frozenset((leaf_component_id, node_component_id))
+                    if pair_id in connections.keys():
+                        cur_proposal = connections[pair_id]
+                        cur_dist = self.graph.proposal_length(cur_proposal)
+                        if self.graph.dist(leaf, i) < cur_dist:
+                            self.graph.remove_proposal(cur_proposal)
+                            del connections[pair_id]
+                        else:
+                            continue
 
+                    # Add proposal
+                    self.graph.add_proposal(leaf, i)
+                    connections[pair_id] = frozenset({leaf, i})
 
-def init_kdtree(graph, complex_bool):
-    """
-    Initializes a KD-Tree used to generate proposals.
+    def find_node_candidates(self, leaf, radius):
+        node_candidates = list()
+        for xyz in self.get_nearby_points(leaf):
+            i = self.get_connecting_node(leaf, radius, xyz)
+            if self.is_valid_proposal(leaf, i):
+                node_candidates.append(i)
+        return node_candidates
 
-    Parameters
-    ----------
-    graph : FragmentsGraph
-        Graph that proposals will be generated for.
-    complex_bool : bool
-        Indication of whether to generate complex proposals.
+    def get_nearby_points(self, leaf, radius):
+        pts_dict = self.query_closest_points_per_component(leaf, radius)
+        pts_dict = self.select_closest_components(pts_dict)
+        return [val["xyz"] for val in pts_dict.values()]
 
-    Returns
-    -------
-    scipy.spatial.cKDTree
-        kdtree built from all xyz coordinates across edges in graph if
-        complex_bool is True; otherwise, only built from leaf nodes.
-    """
-    if complex_bool:
-        return graph.get_kdtree()
-    else:
-        return graph.get_kdtree(node_type="leaf")
+    # --- Helpers ---
+    def get_closer_endpoint(self, edge, xyz):
+        """
+        Gets node from "edge" that is closer to "xyz".
 
+        Parameters
+        ----------
+        edge : Tuple[int]
+            Edge to be checked.
+        xyz : numpy.ndarray
+            xyz coordinate.
 
-def get_candidates(
-    graph, leaf, kdtree, radius, max_proposals, complex_bool
-):
-    # Generate candidates
-    candidates = list()
-    for xyz in search_kdtree(graph, leaf, kdtree, radius, max_proposals):
-        i = get_connecting_node(graph, leaf, xyz, radius, complex_bool)
-        if i is not None:
-            if graph.is_valid_proposal(leaf, i, complex_bool):
-                candidates.append(i)
+        Returns
+        -------
+        int
+            Node closer to "xyz".
+        """
+        i, j = tuple(edge)
+        d_i = geometry_util.dist(self.graph.node_xyz[i], xyz)
+        d_j = geometry_util.dist(self.graph.node_xyz[j], xyz)
+        return i if d_i < d_j else j
 
-    # Process results
-    if max_proposals < 0 and len(candidates) == 1:
-        is_leaf = graph.degree[candidates[0]] == 1
-        return candidates if is_leaf else []
-    else:
-        return list() if max_proposals < 0 else candidates
+    def get_connecting_node(self, leaf, radius, xyz):
+        """
+        Gets node that proposal emanating from "leaf" will connect to.
 
+        Parameters
+        ----------
+        leaf : int
+            Leaf node to generate proposals from.
+        radius : float
+            Search radius used to generate proposals.
+        xyz : numpy.ndarray
+            Coordinate of potential proposal
 
-def search_kdtree(graph, leaf, kdtree, radius, max_proposals):
-    """
-    Generates proposals extending from node "leaf" by finding candidate xyz
-    points on distinct connected components nearby.
+        Returns
+        -------
+        int
+            Node id that proposal will connect to.
+        """
+        # Check if edge exists
+        try:
+            edge = self.graph.xyz_to_edge[xyz]
+        except KeyError:
+            return None
 
-    Parameters
-    ----------
-    graph : FragmentsGraph
-        Graph that proposals will be generated for.
-    kdtree : scipy.spatial.cKDTree
-        ...
-    leaf : int
-        Leaf node that proposals are to be generated from.
-    radius : float
-        Maximum Euclidean distance between endpoints of proposal.
-    max_proposals : int
-        Maximum number of proposals that can be generated from a leaf node.
-
-    Returns
-    -------
-    List[Tuple[float]]
-        xyz coordinates of candidates.
-    """
-    # Generate candidates
-    candidates = dict()
-    leaf_xyz = graph.node_xyz[leaf]
-    for xyz in geometry_util.query_ball(kdtree, leaf_xyz, radius):
-        component_id = graph.xyz_to_component_id(xyz)
-        if component_id != graph.node_component_id[leaf]:
-            dist = geometry_util.dist(leaf_xyz, xyz)
-            if component_id not in candidates.keys():
-                candidates[component_id] = {"dist": dist, "xyz": tuple(xyz)}
-            elif dist < candidates[component_id]["dist"]:
-                candidates[component_id] = {"dist": dist, "xyz": tuple(xyz)}
-
-    # Check whether to filter
-    if max_proposals < 0:
-        return [] if len(candidates) > 1 else list_candidates_xyz(candidates)
-    else:
-        return get_best(candidates, max_proposals)
-
-
-def get_best(candidates, max_proposals):
-    """
-    Gets the best candidates to become edge proposals given a dictionary
-    containing candidates.
-
-    Parameters
-    ----------
-    candidates : dict
-        Dictionary that maps swc ids to a dictionary containing a distance and
-        xyz coordinate.
-    max_proposals : int
-        Maximum number of proposals that can be generated from a leaf node.
-
-    Returns
-    -------
-    List[Tuple[float]]
-        xyz coordinates of candidates.
-    """
-    while len(candidates) > max_proposals:
-        worst_key = None
-        for key in candidates.keys():
-            if worst_key is None:
-                worst_key = key
-            elif candidates[key]["dist"] > candidates[worst_key]["dist"]:
-                worst_key = key
-        del candidates[worst_key]
-    return list_candidates_xyz(candidates)
-
-
-def get_connecting_node(graph, leaf, xyz, radius, complex_bool):
-    """
-    Gets node that proposal emanating from "leaf" will connect to.
-
-    Parameters
-    ----------
-    graph : FragmentsGraph
-        Graph containing "leaf".
-    leaf : int
-        Leaf node.
-    xyz : numpy.ndarray
-        xyz coordinate.
-
-    Returns
-    -------
-    int
-        Node id that proposal will connect to.
-    """
-    # Check if edge exists
-    try:
-        edge = graph.xyz_to_edge[xyz]
-    except:
+        # Find connecting node
+        node = self.get_closer_endpoint(edge, xyz)
+        if self.graph.dist(leaf, node) < radius:
+            return node
+        elif self.allow_nonleaf_targets:
+            attrs = self.graph.get_edge_data(*edge)
+            idx = np.where(np.all(attrs["xyz"] == xyz, axis=1))[0][0]
+            if type(idx) is int:
+                return self.graph.split_edge(edge, attrs, idx)
         return None
 
-    # Find connecting node
-    node = get_closer_endpoint(graph, edge, xyz)
-    if graph.dist(leaf, node) < radius:
-        return node
-    elif complex_bool:
-        attrs = graph.get_edge_data(*edge)
-        idx = np.where(np.all(attrs["xyz"] == xyz, axis=1))[0][0]
-        if type(idx) is int:
-            return graph.split_edge(edge, attrs, idx)
-    return None
+    def is_valid_proposal(self, leaf, i):
+        """
+        Determines whether a pair of nodes satisfies the following:
+            (1) "i" is not None
+            (2) "leaf" and "i" do not have swc_ids contained in
+                "self.graph.soma_ids"
 
+        Parmeters
+        ---------
+        leaf : int
+            Leaf node ID.
+        i : int
+            Node ID.
 
-def get_closer_endpoint(graph, edge, xyz):
-    """
-    Gets node from "edge" that is closer to "xyz".
+        Returns
+        -------
+        bool
+            Indication of whether proposal is valid.
+        """
+        if i is not None:
+            return not (self.graph.is_soma(i) and self.graph.is_soma(leaf))
+        else:
+            return False
 
-    Parameters
-    ----------
-    graph : FragmentsGraph
-        Graph containing "edge".
-    edge : tuple
-        Edge to be checked.
-    xyz : numpy.ndarray
-        xyz coordinate.
+    def query_closest_points_per_component(self, leaf, radius):
+        """
+        Finds the closest points on other connected components within the
+        search radius
 
-    Returns
-    -------
-    int
-        Node closer to "xyz".
-    """
-    i, j = tuple(edge)
-    d_i = geometry_util.dist(graph.node_xyz[i], xyz)
-    d_j = geometry_util.dist(graph.node_xyz[j], xyz)
-    return i if d_i < d_j else j
+        Parameters
+        ----------
+        leaf : int
+            Leaf node to generate proposals from.
+        radius : float
+            Search radius used to generate proposals.
+        """
+        pts_dict = dict()
+        leaf_xyz = self.graph.node_xyz[leaf]
+        for xyz in geometry_util.query_ball(self.kdtree, leaf_xyz, radius):
+            component_id = self.graph.xyz_to_component_id(xyz)
+            if component_id != self.graph.node_component_id[leaf]:
+                dist = geometry_util.dist(leaf_xyz, xyz)
+                if component_id not in pts_dict:
+                    pts_dict[component_id] = {"dist": dist, "xyz": tuple(xyz)}
+                elif dist < pts_dict[component_id]["dist"]:
+                    pts_dict[component_id] = {"dist": dist, "xyz": tuple(xyz)}
+        return pts_dict
+
+    def select_closest_components(self, pts_dict):
+        while len(pts_dict) > self.max_proposals_per_leaf:
+            farthest_key = None
+            for key, val in pts_dict.items():
+                if farthest_key is None:
+                    farthest_key = key
+                elif val["dist"] > pts_dict[farthest_key]["dist"]:
+                    farthest_key = key
+            del pts_dict[farthest_key]
+        return pts_dict
+
+    def set_kdtree(self):
+        """
+        Sets the KD-Tree used to search for nearby nodes to generate proposals
+        between.
+        """
+        if self.allow_nonleaf_targets:
+            self.kdtree = self.graph.get_kdtree()
+        else:
+            self.kdtree = self.graph.get_kdtree(node_type="leaf")
 
 
 # --- Trim Endpoints ---
@@ -283,6 +262,23 @@ def trim_endpoints_at_proposal(graph, proposal):
 
 
 def find_closest_pair(pts1, pts2):
+    """
+    Finds the closest pair of points from the given lists of points.
+
+    Parameters
+    ----------
+    pts1 : List[Tuple[int]]
+        First list of points.
+    pts2 : List[Tuple[int]]
+        Second list of points.
+
+    Returns
+    -------
+    best_dist : float
+        Distance between closest pair of points
+    best_idxs : Tuple[int]
+        Indices of closest pair of points from the given lists.
+    """
     best_dist, best_idxs = np.inf, (0, 0)
     i, length1 = -1, 0
     while length1 < 20 and i < len(pts1) - 1:
@@ -334,24 +330,6 @@ def trim_to_idx(graph, i, idx):
 
 
 # --- Helpers ---
-def list_candidates_xyz(candidates):
-    """
-    Lists the xyz coordinates of candidates.
-
-    Parameters
-    ----------
-    candidates : dict
-        Dictionary that maps swc ids to a dictionary containing a distance and
-        xyz coordinate.
-
-    Returns
-    -------
-    List[Tuple[int]]
-        xyz coordinates of candidates.
-    """
-    return [candidates[key]["xyz"] for key in candidates.keys()]
-
-
 def compute_dot(branch1, branch2, idx1, idx2):
     """
     Computes dot product between principal components of "branch1" and

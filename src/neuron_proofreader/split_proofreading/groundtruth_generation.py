@@ -36,7 +36,7 @@ from neuron_proofreader.utils import geometry_util, util
 
 def run(gt_graph, pred_graph):
     """
-    Initializes ground truth for edge proposals.
+    Determines ground truth for edge proposals.
 
     Parameters
     ----------
@@ -75,7 +75,7 @@ def run(gt_graph, pred_graph):
             continue
 
         # Check if nodes are connected
-        if check_connectedness(accepts_graph, proposal):
+        if is_jump_connection(accepts_graph, proposal):
             continue
 
         # Check if proposal is structurally consistent
@@ -89,11 +89,11 @@ def run(gt_graph, pred_graph):
     return gt_accepts
 
 
-def get_pred_to_gt_mapping(gt_graph, pred_graph):
+# --- Core Routines ---
+def compute_proposal_proj_dist(gt_graph, pred_graph, proposal):
     """
-    Gets fragments aligned to a single ground truth skeleton and builds a
-    dictionary that maps these fragment IDs to the corresponding ground truth
-    ID.
+    Computes the average projection distance of a proposed edge to the ground
+    truth graph.
 
     Parameters
     ----------
@@ -101,20 +101,26 @@ def get_pred_to_gt_mapping(gt_graph, pred_graph):
         Graph built from ground truth SWC files.
     pred_graph : ProposalGraph
         Graph build from predicted SWC files.
+    proposal : FrozenSet[int]
+        Propoal to compute projection distance of.
 
     Returns
     -------
-    pred_to_gt : Dict[int, int]
-        Dictionary that maps fragment IDs to the corresponding ground truth
-        ID.
+    float
+        Average projection distance.
     """
-    pred_to_gt = defaultdict(lambda: None)
-    for nodes in nx.connected_components(pred_graph):
-        gt_id = find_aligned_component(gt_graph, pred_graph, nodes)
-        if gt_id:
-            node = util.sample_once(nodes)
-            pred_to_gt[pred_graph.node_component_id[node]] = gt_id
-    return pred_to_gt
+    # Extract proposal info
+    i, j = proposal
+    xyz_i = pred_graph.node_xyz[i]
+    xyz_j = pred_graph.node_xyz[j]
+    n_pts = max(int(pred_graph.proposal_length(proposal)) + 1, 1)
+
+    # Compute projection distances
+    proj_dists = list()
+    for pt in geometry_util.make_line(xyz_i, xyz_j, n_pts):
+        dist, _ = gt_graph.kdtree.query(pt)
+        proj_dists.append(dist)
+    return np.max(proj_dists)
 
 
 def find_aligned_component(gt_graph, pred_graph, nodes):
@@ -164,7 +170,35 @@ def find_aligned_component(gt_graph, pred_graph, nodes):
         return None
 
 
-def check_connectedness(pred_graph, proposal):
+def get_pred_to_gt_mapping(gt_graph, pred_graph):
+    """
+    Gets fragments aligned to a single ground truth skeleton and builds a
+    dictionary that maps these fragment IDs to the corresponding ground truth
+    ID.
+
+    Parameters
+    ----------
+    gt_graph : ProposalGraph
+        Graph built from ground truth SWC files.
+    pred_graph : ProposalGraph
+        Graph build from predicted SWC files.
+
+    Returns
+    -------
+    pred_to_gt : Dict[int, int]
+        Dictionary that maps fragment IDs to the corresponding ground truth
+        ID.
+    """
+    pred_to_gt = defaultdict(lambda: None)
+    for nodes in nx.connected_components(pred_graph):
+        gt_id = find_aligned_component(gt_graph, pred_graph, nodes)
+        if gt_id:
+            node = util.sample_once(nodes)
+            pred_to_gt[pred_graph.node_component_id[node]] = gt_id
+    return pred_to_gt
+
+
+def is_jump_connection(pred_graph, proposal):
     """
     Checks if branches connected by proposal are already connected by a path
     that contains another branch.
@@ -194,39 +228,6 @@ def check_connectedness(pred_graph, proposal):
         if frozenset((node1, node2)) not in pred_graph.proposals:
             return True
     return False
-
-
-def compute_proposal_proj_dist(gt_graph, pred_graph, proposal):
-    """
-    Computes the average projection distance of a proposed edge to the ground
-    truth graph.
-
-    Parameters
-    ----------
-    gt_graph : ProposalGraph
-        Graph built from ground truth SWC files.
-    pred_graph : ProposalGraph
-        Graph build from predicted SWC files.
-    proposal : FrozenSet[int]
-        Propoal to compute projection distance of.
-
-    Returns
-    -------
-    float
-        Average projection distance.
-    """
-    # Extract proposal info
-    i, j = proposal
-    xyz_i = pred_graph.node_xyz[i]
-    xyz_j = pred_graph.node_xyz[j]
-    n_pts = max(int(pred_graph.proposal_length(proposal)) + 1, 1)
-
-    # Compute projection distances
-    proj_dists = list()
-    for pt in geometry_util.make_line(xyz_i, xyz_j, n_pts):
-        dist, _ = gt_graph.kdtree.query(pt)
-        proj_dists.append(dist)
-    return np.max(proj_dists)
 
 
 def is_structure_consistent(
