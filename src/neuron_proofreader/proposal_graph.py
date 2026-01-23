@@ -107,7 +107,6 @@ class ProposalGraph(SkeletonGraph):
         self.merged_ids = set()
         self.min_size_with_proposals = min_size_with_proposals
         self.n_merges_blocked = 0
-        self.n_proposals_blocked = 0
         self.node_proposals = defaultdict(set)
         self.proposals = set()
         self.proposal_generator = ProposalGenerator(self)

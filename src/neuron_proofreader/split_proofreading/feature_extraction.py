@@ -579,8 +579,6 @@ class FeatureSet:
         "proposal": ("proposal_features", "proposal_index_mapping"),
         "proposal_patches": ("proposal_patches", "proposal_index_mapping"),
     }
-    n_branch_features = 2
-    n_proposal_features = 70
 
     def __init__(self, graph):
         """
@@ -814,23 +812,6 @@ class HeteroGraphData(HeteroData):
             edge_index.extend([[v1, v2], [v2, v1]])
         return edge_index
 
-    def get_feature_dict(self):
-        """
-        Gets a dictionary that contains the number of features for branchs and
-        proposals.
-
-        Returns
-        -------
-        feature_dict : Dict[str, int]
-            Dictionary that contains the number of features for branchs and
-            proposals.
-        """
-        feature_dict = {
-            "branch": FeatureSet.n_branch_features,
-            "proposal": FeatureSet.n_proposal_features
-        }
-        return feature_dict
-
     def get_inputs(self):
         """
         Gets inputs in a format that can passed through a GNN.
@@ -913,3 +894,18 @@ class IndexMapping:
             # Populate dictionary
             self.id_to_idx[object_id] = idx
             self.idx_to_id[idx] = object_id
+
+
+# --- Helpers ---
+def get_feature_dict():
+    """
+    Gets a dictionary that contains the number of features for branchs and
+    proposals.
+
+    Returns
+    -------
+    Dict[str, int]
+        Dictionary that contains the number of features for branchs and
+        proposals.
+    """
+    return {"branch": 2, "proposal": 70}

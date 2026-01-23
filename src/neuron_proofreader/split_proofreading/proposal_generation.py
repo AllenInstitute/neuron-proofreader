@@ -56,6 +56,7 @@ class ProposalGenerator:
         self.max_attempts = max_attempts
         self.max_proposals_per_leaf = graph.max_proposals_per_leaf
         self.min_size_with_proposals = graph.min_size_with_proposals
+        self.n_proposals_blocked = 0
         self.search_scaling_factor = search_scaling_factor
 
     def __call__(self, initial_radius):
@@ -112,6 +113,10 @@ class ProposalGenerator:
                     # Add proposal
                     proposals.add(pair_id)
                     connections[pair_component_id] = pair_id
+
+        # Filter proposals (if applicable)
+        if self.filter_transitive_proposals:
+            self._filter_transitive_proposals(proposals)
         return proposals
 
     def find_node_candidates(self, leaf, radius):
@@ -157,6 +162,9 @@ class ProposalGenerator:
         pts_dict = self.query_closest_points_per_component(leaf, radius)
         pts_dict = self.select_closest_components(pts_dict)
         return [val["xyz"] for val in pts_dict.values()]
+
+    def _filter_transitive_proposals(self, proposals):
+        pass
 
     # --- Helpers ---
     def get_closer_endpoint(self, edge, xyz):
@@ -235,7 +243,9 @@ class ProposalGenerator:
             Indication of whether proposal is valid.
         """
         if i is not None:
-            return not (self.graph.is_soma(i) and self.graph.is_soma(leaf))
+            is_soma = (self.graph.is_soma(i) and self.graph.is_soma(leaf))
+            self.n_proposals_blocked += 1 if is_soma else 0
+            return not is_soma
         else:
             return False
 

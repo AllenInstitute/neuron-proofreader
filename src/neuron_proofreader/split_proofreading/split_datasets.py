@@ -101,16 +101,13 @@ class FragmentsDataset(IterableDataset):
             Path to the segmentation mask associated with the graph.
         """
         # Add graph
+        gt_graph = self.load_graph(gt_pointer, is_gt=True)
         self.graphs[key] = self.load_graph(pred_pointer)
         self.graphs[key].generate_proposals(
-            self.config.search_radius,
-            complex_bool=self.config.complex_bool,
-            groundtruth_graph=self.load_graph(gt_pointer, is_gt=True),
-            long_range_bool=self.config.long_range_bool,
-            proposals_per_leaf=self.config.proposals_per_leaf,
+            self.config.search_radius, gt_graph=gt_graph
         )
 
-        # Generate features -- add segmentation path
+        # Generate features
         self.feature_extractors[key] = FeaturePipeline(
             self.graphs[key],
             img_path,
@@ -136,11 +133,8 @@ class FragmentsDataset(IterableDataset):
             Graph constructed from SWC files.
         """
         # Build graph
-        node_spacing = 1 if is_gt else 2
         graph = ProposalGraph(
-            anisotropy=self.config.anisotropy,
-            min_size=self.config.min_size,
-            node_spacing=node_spacing,
+            anisotropy=self.config.anisotropy, min_size=self.config.min_size
         )
         graph.load(swc_pointer)
 
