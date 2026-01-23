@@ -106,7 +106,8 @@ def init_mlp(input_dim, hidden_dim, output_dim, dropout=0.1):
     """
     mlp = nn.Sequential(
         nn.Linear(input_dim, hidden_dim),
-        nn.LeakyReLU(),
+        #nn.LeakyReLU(),
+        nn.GELU(),
         nn.Dropout(p=dropout),
         nn.Linear(hidden_dim, output_dim),
     )
