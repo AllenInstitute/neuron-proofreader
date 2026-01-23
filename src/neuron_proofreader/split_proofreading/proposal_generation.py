@@ -56,6 +56,7 @@ class ProposalGenerator:
         self.max_attempts = max_attempts
         self.max_proposals_per_leaf = graph.max_proposals_per_leaf
         self.min_size_with_proposals = graph.min_size_with_proposals
+        self.n_proposals_blocked = 0
         self.search_scaling_factor = search_scaling_factor
 
     def __call__(self, initial_radius):
@@ -71,6 +72,7 @@ class ProposalGenerator:
         """
         self.set_kdtree()
         connections = dict()
+        proposals = set()
         for leaf in self.graph.get_leafs():
             # Check if fragment satisfies size requirement
             length = self.graph.path_length(
@@ -88,36 +90,81 @@ class ProposalGenerator:
                 radius = initial_radius * self.search_scaling_factor ** cnt
                 node_candidates = self.find_node_candidates(leaf, radius)
 
-                # Determine which potential proposals to keep
+                # Parse candidates
                 for i in node_candidates:
+                    # Candidate info
+                    pair_id = frozenset({leaf, i})
                     leaf_component_id = self.graph.node_component_id[leaf]
                     node_component_id = self.graph.node_component_id[i]
-                    pair_id = frozenset((leaf_component_id, node_component_id))
-                    if pair_id in connections.keys():
-                        cur_proposal = connections[pair_id]
-                        cur_dist = self.graph.proposal_length(cur_proposal)
-                        if self.graph.dist(leaf, i) < cur_dist:
-                            self.graph.remove_proposal(cur_proposal)
-                            del connections[pair_id]
+                    pair_component_id = frozenset(
+                        (leaf_component_id, node_component_id)
+                    )
+
+                    # Determine whether to keep
+                    if pair_component_id in connections:
+                        cur_proposal = connections[pair_component_id]
+                        cur_length = self.graph.proposal_length(cur_proposal)
+                        if self.graph.dist(leaf, i) < cur_length:
+                            proposals.remove(cur_proposal)
+                            del connections[pair_component_id]
                         else:
                             continue
 
                     # Add proposal
-                    self.graph.add_proposal(leaf, i)
-                    connections[pair_id] = frozenset({leaf, i})
+                    proposals.add(pair_id)
+                    connections[pair_component_id] = pair_id
+
+        # Filter proposals (if applicable)
+        if self.filter_transitive_proposals:
+            self._filter_transitive_proposals(proposals)
+        return proposals
 
     def find_node_candidates(self, leaf, radius):
+        """
+        Finds valid node proposal candidates for a given leaf within a search
+        radius.
+
+        Parameters
+        ----------
+        leaf : int
+            Leaf node to generate proposals from.
+        radius : float
+            Search radius used to generate proposals.
+
+        Returns
+        -------
+        node_candidates : List[int]
+            Node IDs that are valid proposal candidates for the given leaf.
+        """
         node_candidates = list()
-        for xyz in self.get_nearby_points(leaf):
+        for xyz in self.get_nearby_points(leaf, radius):
             i = self.get_connecting_node(leaf, radius, xyz)
             if self.is_valid_proposal(leaf, i):
                 node_candidates.append(i)
         return node_candidates
 
     def get_nearby_points(self, leaf, radius):
+        """
+        Get nearby spatial points for a leaf node within a given radius.
+
+        Parameters
+        ----------
+        leaf : int
+            Leaf node to generate proposals from.
+        radius : float
+            Search radius used to generate proposals.
+
+        Returns
+        -------
+        List[int]
+            Node IDs that are valid proposal candidates for the given leaf.
+        """
         pts_dict = self.query_closest_points_per_component(leaf, radius)
         pts_dict = self.select_closest_components(pts_dict)
         return [val["xyz"] for val in pts_dict.values()]
+
+    def _filter_transitive_proposals(self, proposals):
+        pass
 
     # --- Helpers ---
     def get_closer_endpoint(self, edge, xyz):
@@ -196,7 +243,9 @@ class ProposalGenerator:
             Indication of whether proposal is valid.
         """
         if i is not None:
-            return not (self.graph.is_soma(i) and self.graph.is_soma(leaf))
+            is_soma = (self.graph.is_soma(i) and self.graph.is_soma(leaf))
+            self.n_proposals_blocked += 1 if is_soma else 0
+            return not is_soma
         else:
             return False
 
@@ -225,6 +274,22 @@ class ProposalGenerator:
         return pts_dict
 
     def select_closest_components(self, pts_dict):
+        """
+        Retains only the closest components up to "max_proposals_per_leaf".
+
+        Parameters
+        ----------
+        pts_dict : Dict[int, dict]
+            Dictionary that maps component IDs to a dictionary containing a
+            node ID and its distance from the leaf from which proposals are
+            generated.
+
+        Returns
+        -------
+        pts_dict : Dict[int, dict]
+            Filtered dictionary containing up to "self.max_proposals_per_leaf"
+            components, corresponding to the smallest distances.
+        """
         while len(pts_dict) > self.max_proposals_per_leaf:
             farthest_key = None
             for key, val in pts_dict.items():
@@ -248,6 +313,16 @@ class ProposalGenerator:
 
 # --- Trim Endpoints ---
 def trim_endpoints_at_proposal(graph, proposal):
+    """
+    Trims branch endpoints corresponding to the given proposal.
+
+    Parameters
+    ----------
+    graph : ProposalGraph
+        Graph containing the given proposal.
+    proposal : Frozenset[int]
+        Proposal used to specify endpoints to be trimmed.
+    """
     # Find closest points between proposal branches
     i, j = tuple(proposal)
     pts_i = graph.edge_attr(i, key="xyz", ignore=True)[0]

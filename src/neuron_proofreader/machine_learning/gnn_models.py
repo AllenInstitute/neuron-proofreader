@@ -125,7 +125,7 @@ def init_node_embedding(output_dim):
         features.
     """
     # Get feature dimensions
-    node_input_dims = feature_extraction.get_node_dict()
+    node_input_dims = feature_extraction.get_feature_dict()
     dim_b = node_input_dims["branch"]
     dim_p = node_input_dims["proposal"]
 

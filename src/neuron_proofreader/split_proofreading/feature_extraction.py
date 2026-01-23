@@ -271,7 +271,7 @@ class ImageFeatureExtractor:
                 proposal = pending.pop(thread)
                 extractor = thread.result()
                 profiles[proposal] = extractor.get_intensity_profile()
-                patches[proposal] = extractor.get_input_patch()                
+                patches[proposal] = extractor.get_input_patch()
 
         # Update features
         features.set_features(patches, "proposal_patches")
@@ -280,14 +280,14 @@ class ImageFeatureExtractor:
     def init_extractor(self, subgraph, proposal):
         """
         Initializes a PatchFeatureExtractor for a given subgraph and proposal.
-    
+
         Parameters
         ----------
         subgraph : nx.Graph or similar
             Subgraph containing the given proposal.
         proposal : Any
             Proposal that image patches are centered about.
-    
+
         Returns
         -------
         extractor : PatchFeatureExtractor
@@ -355,6 +355,13 @@ class ImageFeatureExtractor:
             Image with shape (2, H, W, D) containing a raw image and proposal
             mask channels.
         """
+        # Get info
+        node1, node2 = tuple(proposal)
+        voxel1 = self.graph.get_voxel(node1)
+        voxel2 = self.graph.get_voxel(node2)
+
+        # Compute bounds
+        bounds = img_util.get_minimal_bbox([voxel1, voxel2], self.padding)
         center = tuple([int((v1 + v2) / 2) for v1, v2 in zip(voxel1, voxel2)])
         length = np.max([u - l for u, l in zip(bounds["max"], bounds["min"])])
         return center, (length, length, length)
@@ -477,7 +484,7 @@ class PatchFeatureExtractor:
         ----------
         voxels : numpy.ndarray
             Voxel coordinates at which to sample the image.
-    
+
         Returns
         -------
         profile : numpy.ndarray
@@ -906,3 +913,18 @@ class IndexMapping:
             # Populate dictionary
             self.id_to_idx[object_id] = idx
             self.idx_to_id[idx] = object_id
+
+
+# --- Helpers ---
+def get_feature_dict():
+    """
+    Gets a dictionary that contains the number of features for branchs and
+    proposals.
+
+    Returns
+    -------
+    Dict[str, int]
+        Dictionary that contains the number of features for branchs and
+        proposals.
+    """
+    return {"branch": 2, "proposal": 70}
