@@ -276,7 +276,7 @@ class ProposalGraph(SkeletonGraph):
         Parameters
         ----------
         node_type : None or str, optional
-            Type of nodes used to build kdtree.
+            Type of nodes used to build kdtree. Default is None.
 
         Returns
         -------
