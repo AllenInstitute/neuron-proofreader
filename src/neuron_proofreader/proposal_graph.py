@@ -200,7 +200,7 @@ class ProposalGraph(SkeletonGraph):
         """
         Reassigns contiguous node IDs and update all dependent structures.
         """
-               # Set node ids
+        # Set node ids
         old_node_ids = np.array(self.nodes, dtype=int)
         new_node_ids = np.arange(len(old_node_ids))
 
@@ -460,35 +460,6 @@ class ProposalGraph(SkeletonGraph):
         """
         i, j = tuple(proposal)
         return True if self.degree[i] == 1 and self.degree[j] == 1 else False
-
-    def is_transitive_connection(self, node_pair):
-        """
-        Checks if the given nodes connect fragments a and c when an indirect
-        path already exists via a → b → c.
-    
-        Parameters
-        ----------
-        node_pair : Frozenset[int]
-            Pair of nodes to be checked.
-    
-        Returns
-        -------
-        bool
-            Indication of whether the connection is transitive.
-        """
-        # Get path between nodes
-        i, j = node_pair
-        try:
-            path = nx.shortest_path(self, source=i, target=j)
-        except nx.NetworkXNoPath:
-            return False
-    
-        # Search path
-        if len(path) < 6:
-            for node1, node2 in zip(path[0:-1], path[1:]):
-                if frozenset((node1, node2)) not in self.proposals:
-                    return True
-        return False
 
     def simple_proposals(self):
         return set([p for p in self.proposals if self.is_simple(p)])
