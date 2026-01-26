@@ -212,6 +212,7 @@ class ProposalGraph(SkeletonGraph):
 
         # Reset graph
         self.clear()
+        self.xyz_to_edge = dict()
         for (i, j) in old_edge_ids:
             edge_id = (int(old_to_new[i]), int(old_to_new[j]))
             self._add_edge(edge_id, edge_attrs[(i, j)])
