@@ -294,6 +294,28 @@ def read_zip(zip_file, path):
         return f.read().decode("utf-8")
 
 
+def update_txt(path, text, verbose=True):
+    """
+    Appends the given text to a specified text file and prints the text.
+
+    Parameters
+    ----------
+    path : str
+        Path to txt file where the text will be appended.
+    text : str
+        Text to be written to the file.
+    verbose : bool, optional
+        Indication of whether to printout text. Default is True.
+    """
+    # Printout text (if applicable)
+    if verbose:
+        print(text)
+
+    # Update txt file
+    with open(path, "a") as file:
+        file.write(text + "\n")
+
+
 def write_json(path, contents):
     """
     Writes "contents" to a JSON file at "path".
@@ -342,6 +364,28 @@ def write_txt(path, contents):
 
 
 # --- GCS utils ---
+def check_gcs_file_exists(bucket_name, path):
+    """
+    Checks if the given path exists.
+
+    Parameters
+    ----------
+    bucket_name : str
+        Name of bucket to be checked.
+    path : str
+        Path to be checked.
+
+    Returns
+    -------
+    bool
+        Indication of whether the path exists.
+    """
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(path)
+    return blob.exists()
+
+
 def is_gcs_path(path):
     """
     Checks if the path is a GCS path.
@@ -359,7 +403,7 @@ def is_gcs_path(path):
     return path.startswith("gs://")
 
 
-def list_gcs_filenames(bucket_name, prefix, extension):
+def list_gcs_filenames(bucket_name, prefix, extension=""):
     """
     Lists all files in a GCS bucket with the given extension.
 
@@ -369,8 +413,8 @@ def list_gcs_filenames(bucket_name, prefix, extension):
         Name of bucket to be searched.
     prefix : str
         Path to location within bucket to be searched.
-    extension : str
-        File extension of filenames to be listed.
+    extension : str, optional
+        File extension of filenames to be listed. Default is an empty string.
 
     Returns
     -------
@@ -414,6 +458,28 @@ def list_gcs_subdirectories(bucket_name, prefix):
         if is_dir and is_direct_subdir:
             subdirs.append(prefix)
     return subdirs
+
+
+def read_json_from_gcs(bucket_name, blob_path):
+    """
+    Reads JSON file stored in a GCS bucket.
+
+    Parameters
+    ----------
+    bucket_name : str
+        Name of the GCS bucket containing the JSON file.
+    blob_path : str
+        Path to the JSON file within the GCS bucket.
+
+    Returns
+    -------
+    dict
+        Parsed JSON content as a Python dictionary.
+    """
+    client = storage.Client()
+    bucket = client.bucket(bucket_name)
+    blob = bucket.blob(blob_path)
+    return json.loads(blob.download_as_text())
 
 
 # --- S3 utils ---

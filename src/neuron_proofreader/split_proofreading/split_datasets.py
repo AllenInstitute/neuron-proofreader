@@ -80,6 +80,7 @@ class FragmentsDataset(IterableDataset):
         gt_pointer,
         pred_pointer,
         img_path,
+        metadata_path=None,
         segmentation_path=None
     ):
         """
@@ -97,12 +98,14 @@ class FragmentsDataset(IterableDataset):
             Path to predicted SWC files to be loaded.
         img_path : str
             Path to the raw image associated with the graph.
+        metadata_path : str
+            ...
         segmentation_path : str
             Path to the segmentation mask associated with the graph.
         """
         # Add graph
         gt_graph = self.load_graph(gt_pointer, is_gt=True)
-        self.graphs[key] = self.load_graph(pred_pointer)
+        self.graphs[key] = self.load_graph(pred_pointer, metadata_path)
         self.graphs[key].generate_proposals(
             self.config.search_radius, gt_graph=gt_graph
         )
@@ -117,7 +120,7 @@ class FragmentsDataset(IterableDataset):
             segmentation_path=segmentation_path
         )
 
-    def load_graph(self, swc_pointer, is_gt=False):
+    def load_graph(self, swc_pointer, is_gt=False, metadata_path=None):
         """
         Loads a graph by reading and processing SWC files specified by
         "swc_pointer".
@@ -126,6 +129,8 @@ class FragmentsDataset(IterableDataset):
         ----------
         swc_pointer : str
             Path to SWC files to be loaded.
+        metadata_path : str
+            ...
 
         Returns
         -------
@@ -139,8 +144,9 @@ class FragmentsDataset(IterableDataset):
         )
         graph.load(swc_pointer)
 
-        # Filter doubles (if applicable)
+        # Post process fragments
         if not is_gt:
+            self.clip_fragments(graph, metadata_path)
             geometry_util.remove_doubles(graph, 200)
         return graph
 
@@ -198,6 +204,23 @@ class FragmentsDataset(IterableDataset):
             return keys[0]
 
     # --- Helpers ---
+    @staticmethod
+    def clip_fragments(graph, metadata_path):
+        # Extract bounding box
+        bucket_name, path = util.parse_cloud_path(metadata_path)
+        metadata = util.read_json_from_gcs(bucket_name, path)
+        origin = metadata["chunk_origin"][::-1]
+        shape = metadata["chunk_shape"][::-1]
+
+        # Clip graph
+        nodes = list()
+        for i in graph.nodes:
+            voxel = graph.get_voxel(i)
+            if not img_util.is_contained(voxel - origin, shape):
+                nodes.append(i)
+        graph.remove_nodes_from(nodes)
+        graph.relabel_nodes()
+
     def n_proposals(self):
         """
         Counts the number of proposals in the dataset.
