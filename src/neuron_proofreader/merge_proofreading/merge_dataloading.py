@@ -44,7 +44,9 @@ def load_fragments(dataset, is_test=False):
         for segmentation_id in sub_df["segmentation_id"].unique():
             if (brain_id, segmentation_id) in target_pairs:
                 swc_pointer = f"{root}/{brain_id}/{segmentation_id}/merged_fragments.zip"
-                dataset.load_fragment_graphs(brain_id, swc_pointer)
+                dataset.load_fragment_graphs(
+                    brain_id, swc_pointer, use_anisotropy=False
+                )
 
 
 def load_groundtruth(dataset, is_test=False):
@@ -62,7 +64,7 @@ def load_groundtruth(dataset, is_test=False):
     print("\nLoading Ground Truth")
     root = "gs://allen-nd-goog/ground_truth_tracings"
     for brain_id in get_brain_ids(dataset.merge_sites_df, is_test):
-        swc_pointer = f"{root}/{brain_id}/world"
+        swc_pointer = f"{root}/{brain_id}/voxel"
         dataset.load_gt_graphs(brain_id, swc_pointer)
 
 

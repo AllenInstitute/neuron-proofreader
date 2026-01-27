@@ -121,7 +121,9 @@ class MergeSiteDataset(Dataset):
         self.merge_site_kdtrees = dict()
 
     # --- Load Data ---
-    def load_fragment_graphs(self, brain_id, swc_pointer):
+    def load_fragment_graphs(
+        self, brain_id, swc_pointer, use_anisotropy=True
+    ):
         """
         Loads fragments containing merge mistakes for a whole-brain dataset,
         then stores them in the "graphs" attribute.
@@ -137,7 +139,7 @@ class MergeSiteDataset(Dataset):
         graph = SkeletonGraph(
             anisotropy=self.anisotropy,
             node_spacing=self.node_spacing,
-            use_anisotropy=False
+            use_anisotropy=use_anisotropy
         )
         graph.load(swc_pointer)
 
@@ -184,7 +186,6 @@ class MergeSiteDataset(Dataset):
         self.gt_graphs[brain_id] = SkeletonGraph(
             anisotropy=self.anisotropy,
             node_spacing=self.node_spacing,
-            use_anisotropy=False
         )
         self.gt_graphs[brain_id].load(swc_pointer)
         self.gt_graphs[brain_id].set_kdtree()
