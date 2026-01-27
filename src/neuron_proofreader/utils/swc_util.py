@@ -59,7 +59,7 @@ class Reader:
         self.anisotropy = anisotropy
         self.min_size = min_size
 
-    def read(self, swc_pointer):
+    def __call__(self, swc_pointer):
         """
         Reads SWC files located at the path specified by "swc_pointer".
 

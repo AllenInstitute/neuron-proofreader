@@ -96,7 +96,7 @@ class SkeletonGraph(nx.Graph):
             Object that points to SWC files to be read.
         """
         # Extract irreducible components from SWC files
-        irreducibles = self.graph_loader.run(swc_pointer)
+        irreducibles = self.graph_loader(swc_pointer)
         n = 0
         for irr in irreducibles:
             n += len(irr["nodes"])

@@ -144,7 +144,7 @@ class GraphLoader:
             print("# Soma Merges:", n)
 
     # --- Irreducibles Extraction ---
-    def run(self, fragments_pointer):
+    def __call__(self, fragments_pointer):
         """
         Processes a list of swc dictionaries in parallel and extracts the
         components of the irreducible subgraph from each. Note: this routine
@@ -163,7 +163,7 @@ class GraphLoader:
             extracted from each SWC dictionary.
         """
         # Read SWC files
-        swc_dicts = self.swc_reader.read(fragments_pointer)
+        swc_dicts = self.swc_reader(fragments_pointer)
 
         # Load graphs
         desc = "Extract Graphs"
