@@ -127,6 +127,7 @@ class GraphLoader:
             # Assign threads
             threads = list()
             for xyz in self.soma_centroids:
+                # CHANGE THIS
                 voxel = img_util.to_voxels(xyz, (0.748, 0.748, 1.0))
                 threads.append(executor.submit(reader.read_voxel, voxel, xyz))
 
