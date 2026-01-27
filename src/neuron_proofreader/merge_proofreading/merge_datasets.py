@@ -77,7 +77,7 @@ class MergeSiteDataset(Dataset):
         self,
         merge_sites_df,
         anisotropy=(1.0, 1.0, 1.0),
-        brightness_clip=400,
+        brightness_clip=600,
         subgraph_radius=100,
         node_spacing=5,
         patch_shape=(128, 128, 128),
@@ -324,11 +324,11 @@ class MergeSiteDataset(Dataset):
 
         # Stack image channels
         try:
-            patches = np.stack([img_patch, segment_mask], axis=0)
+            patches = img_patch + 2 * segment_mask
         except ValueError:
             img_patch = img_util.pad_to_shape(img_patch, self.patch_shape)
-            patches = np.stack([img_patch, segment_mask], axis=0)
-        return patches, subgraph, label
+            patches = img_patch + segment_mask
+        return patches[np.newaxis], subgraph, label
 
     def sample_brain_id(self):
         """
@@ -940,7 +940,7 @@ class MergeSiteDataLoader(DataLoader):
         # Instance attributes
         self.is_multimodal = is_multimodal
         self.modality = modality
-        self.patches_shape = (2,) + self.dataset.patch_shape
+        self.patches_shape = (1,) + self.dataset.patch_shape
         self.use_shuffle = use_shuffle
 
     # --- Core Routines ---

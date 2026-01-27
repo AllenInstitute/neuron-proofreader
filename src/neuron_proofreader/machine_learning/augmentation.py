@@ -88,7 +88,7 @@ class RandomFlip3D:
         for axis in self.axes:
             if random.random() > 0.5:
                 patches[0, ...] = np.flip(patches[0, ...], axis=axis)
-                patches[1, ...] = np.flip(patches[1, ...], axis=axis)
+                #patches[1, ...] = np.flip(patches[1, ...], axis=axis)
 
 
 class RandomRotation3D:
@@ -124,7 +124,7 @@ class RandomRotation3D:
             if random.random() < 0.5:
                 angle = random.uniform(*self.angles)
                 patches[0, ...] = rotate3d(patches[0, ...], angle, axes)
-                patches[1, ...] = rotate3d(patches[1, ...], angle, axes, True)
+                #patches[1, ...] = rotate3d(patches[1, ...], angle, axes, True)
 
 
 class RandomScale3D:
@@ -174,7 +174,7 @@ class RandomScale3D:
 
         # Rescale images
         patches[0, ...] = zoom(patches[0, ...], zoom_factors, order=3)
-        patches[1, ...] = zoom(patches[1, ...], zoom_factors, order=0)
+        #patches[1, ...] = zoom(patches[1, ...], zoom_factors, order=0)
         return patches
 
 
@@ -207,7 +207,7 @@ class RandomContrast3D:
             the input image and "patches[1, ...]" is from the segmentation.
         """
         factor = random.uniform(*self.factor_range)
-        patches[0, ...] = np.clip(patches[0, ...] * factor, 0, 1)
+        #patches[0, ...] = np.clip(patches[0, ...] * factor, 0, 1)
 
 
 class RandomNoise3D:
@@ -240,7 +240,7 @@ class RandomNoise3D:
         std = self.max_std * random.random()
         noise = np.random.uniform(-std, std, img_patch[0, ...].shape)
         img_patch[0, ...] += noise
-        img_patch[0, ...] = np.clip(img_patch[0, ...], 0, 1)
+        #img_patch[0, ...] = np.clip(img_patch[0, ...], 0, 1)
 
 
 # --- Helpers ---

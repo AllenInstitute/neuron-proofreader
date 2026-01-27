@@ -59,7 +59,7 @@ class CNN3D(nn.Module):
 
         # Convolutional layers
         self.conv_layers = init_cnn3d(
-            2, n_feat_channels, n_conv_layers, use_double_conv=use_double_conv
+            1, n_feat_channels, n_conv_layers, use_double_conv=use_double_conv
         )
 
         # Output layer
@@ -82,7 +82,7 @@ class CNN3D(nn.Module):
             pooling.
         """
         with torch.no_grad():
-            x = torch.zeros(1, 2, *self.patch_shape)
+            x = torch.zeros(1, 1, *self.patch_shape)
             x = self.conv_layers(x)
             return x.view(1, -1).size(1)
 
@@ -147,9 +147,15 @@ class MAE3D(nn.Module):
 
         # Instance attributes
         self.encoder = full_model.encoder
-        self.output = ml_util.init_feedforward(2 * 384, 1, 2)
+        self.output = ml_util.init_feedforward(384, 1, 2)
 
     def forward(self, x):
+        latent = self.encoder(x)
+        x = latent["latents"][:, 0, :]
+        x = self.output(x)
+        return x
+
+    def forward_old(self, x):
         latent0 = self.encoder(x[:, 0:1, ...])
         latent1 = self.encoder(x[:, 1:2, ...])
 
