@@ -177,8 +177,8 @@ def init_dataset():
     test_idxs = data_util.read_idxs(test_idxs_path)
     merge_sites_df = data_util.load_merge_sites_df(
         merge_sites_path, is_test=is_test
-        )
-    #merge_sites_df = merge_sites_df.iloc[test_idxs].reset_index(drop=True)
+    )
+    merge_sites_df = merge_sites_df.iloc[test_idxs].reset_index(drop=True)
 
     # Initialize dataset
     dataset = MergeSiteDataset(
@@ -214,12 +214,12 @@ def save_points(zip_path, pts, color, prefix):
 
 if __name__ == "__main__":
     # Parameters
-    model_name = "MergeDetectorCNN3D-v4-run2-newmask=False-negativebias=0.2-20260110-116-0.8343"
+    model_name = "MergeDetectorCNN3D-v4-run1-newmask=True-negativebias=0-20260110-132-0.8273"
     exp_name = "V4"
 
     accept_threshold = 0.4
     anisotropy = (0.748, 0.748, 1.0)
-    batch_size = 32
+    batch_size = 24
     brightness_clip = 300
     d_tp = 32
     device = "cuda"
@@ -234,7 +234,6 @@ if __name__ == "__main__":
     fragments_prefix = "automated_proofreading_dataset/raw_merge_sites"
     image_prefixes_path = "/root/capsule/data/exaspim_image_prefixes.json"
     segmentation_prefixes_path = "/root/capsule/data/exaspim_segmentation_prefixes.json"
-    #merge_sites_path = f"/root/capsule/data/{exp_name}/merge_sites_df.csv"
     merge_sites_path = f"/root/capsule/data/{exp_name}/merge_sites_df.csv"
     test_idxs_path = f"/root/capsule/data/{exp_name}/test_idxs.csv"
     model_path = f"/root/capsule/data/{exp_name}/{model_name}.pth"
