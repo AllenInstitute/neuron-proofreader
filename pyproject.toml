@@ -22,6 +22,7 @@ dependencies = [
     'botocore==1.34.162',
     'einops',
     'fastremap',
+    'gcsfs',
     'google-cloud-storage',
     'matplotlib',
     'more_itertools',
