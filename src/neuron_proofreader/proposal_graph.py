@@ -141,7 +141,7 @@ class ProposalGraph(SkeletonGraph):
             documentation.
         """
         # Extract irreducible components from SWC files
-        irreducibles = self.graph_loader.run(swc_pointer)
+        irreducibles = self.graph_loader(swc_pointer)
         n = np.sum([len(irr["nodes"]) for irr in irreducibles])
 
         # Initialize node attribute data structures

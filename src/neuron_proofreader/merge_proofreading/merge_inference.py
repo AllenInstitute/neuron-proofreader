@@ -208,7 +208,7 @@ class GraphDataset(IterableDataset, ABC):
         brightness_clip=300,
         is_multimodal=False,
         min_search_size=0,
-        prefetch=128,
+        prefetch=64,
         segmentation_path=None,
         subgraph_radius=100,
         use_new_mask=False
