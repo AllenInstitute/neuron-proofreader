@@ -77,7 +77,7 @@ class MergeSiteDataset(Dataset):
         self,
         merge_sites_df,
         anisotropy=(1.0, 1.0, 1.0),
-        brightness_clip=500,
+        brightness_clip=400,
         subgraph_radius=100,
         node_spacing=5,
         patch_shape=(128, 128, 128),
