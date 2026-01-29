@@ -16,12 +16,14 @@ import pandas as pd
 
 from neuron_proofreader.proposal_graph import ProposalGraph
 from neuron_proofreader.machine_learning.augmentation import ImageTransforms
-from neuron_proofreader.machine_learning.subgraph_sampler import SubgraphSampler
+from neuron_proofreader.machine_learning.subgraph_sampler import (
+    SubgraphSampler
+)
 from neuron_proofreader.split_proofreading.feature_extraction import (
     FeaturePipeline,
     HeteroGraphData
 )
-from neuron_proofreader.utils import geometry_util, util
+from neuron_proofreader.utils import geometry_util, img_util, util
 
 
 class FragmentsDataset(IterableDataset):

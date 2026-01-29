@@ -21,7 +21,7 @@ import random
 import torch
 
 from neuron_proofreader.utils.img_util import TensorStoreReader
-from neuron_proofreader.utils import swc_util, img_util, util
+from neuron_proofreader.utils import swc_util, util
 
 
 # --- Custom Datasets ---
@@ -66,7 +66,7 @@ class ExaspimDataset(IterableDataset):
             Default is (1, 99.9).
         prefetch_foreground_sampling : int, optional
             Number of image patches that are preloaded during foreground
-            search in "self.sample_segmentation_voxel" and 
+            search in "self.sample_segmentation_voxel" and
             "self.sample_bright_voxel". Default is 32.
         """
         # Call parent class
@@ -421,7 +421,7 @@ class ExaspimDataset(IterableDataset):
         numpy.ndarray
             Segmentation patch.
         """
-        return self.segmentations[brain_id].read(voxel, self.patch_shape)            
+        return self.segmentations[brain_id].read(voxel, self.patch_shape)
 
 
 # --- Custom Dataloader ---

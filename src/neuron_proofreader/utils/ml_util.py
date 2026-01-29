@@ -203,3 +203,20 @@ def to_cpu(tensor, to_numpy=False):
         return np.array(tensor.detach().cpu())
     else:
         return tensor.detach().cpu()
+
+
+def to_tensor(arr):
+    """
+    Converts a numpy array to a tensor.
+
+    Parameters
+    ----------
+    arr : numpy.ndarray
+        Array to be converted.
+
+    Returns
+    -------
+    torch.Tensor
+        Array converted to tensor.
+    """
+    return torch.tensor(arr, dtype=torch.float32)

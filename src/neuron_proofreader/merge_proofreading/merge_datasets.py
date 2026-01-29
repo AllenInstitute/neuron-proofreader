@@ -77,7 +77,7 @@ class MergeSiteDataset(Dataset):
         self,
         merge_sites_df,
         anisotropy=(1.0, 1.0, 1.0),
-        brightness_clip=400,
+        brightness_clip=500,
         subgraph_radius=100,
         node_spacing=5,
         patch_shape=(128, 128, 128),
@@ -329,9 +329,6 @@ class MergeSiteDataset(Dataset):
         except ValueError:
             img_patch = img_util.pad_to_shape(img_patch, self.patch_shape)
             patches = np.stack([img_patch, segment_mask], axis=0)
-
-        if subgraph.number_of_nodes() == 0:
-            print("Empty subgraph! -->", brain_id, voxel, label)
         return patches, subgraph, label
 
     def sample_brain_id(self):
@@ -427,26 +424,27 @@ class MergeSiteDataset(Dataset):
         while True:
             # Sample node
             if outcome < 0.4:
+                # Any node
                 node = util.sample_once(list(self.graphs[brain_id].nodes))
-            elif outcome < 0.5:
-                node = util.sample_once(self.graphs[brain_id].get_leafs())
-            elif outcome < 0.6:
-                branching_nodes = self.gt_graphs[brain_id].get_branchings()
-                node = util.sample_once(branching_nodes)
-                if self.check_nearby_branching(brain_id, node, use_gt=True):
-                    continue
-                else:
-                    subgraph = self.gt_graphs[brain_id].get_rooted_subgraph(
-                        node, self.subgraph_radius
-                    )
-                    return brain_id, subgraph, 0
-            else:
+            #elif outcome < 0.5:
+            #    # Node close to soma
+            #    node = self.sample_node_nearby_soma(brain_id)
+            elif outcome < 0.8:
+                # Branching node
                 branching_nodes = self.graphs[brain_id].get_branchings()
                 if len(branching_nodes) > 0:
                     node = util.sample_once(branching_nodes)
                 else:
                     outcome = 0
                     continue
+            else:
+                # Branching node from GT
+                branching_nodes = self.gt_graphs[brain_id].get_branchings()
+                node = util.sample_once(branching_nodes)
+                subgraph = self.gt_graphs[brain_id].get_rooted_subgraph(
+                    node, self.subgraph_radius
+                )
+                return brain_id, subgraph, 0
 
             # Extract rooted subgraph
             subgraph = self.graphs[brain_id].get_rooted_subgraph(
@@ -454,10 +452,10 @@ class MergeSiteDataset(Dataset):
             )
 
             # Check branching
-            if self.graphs[brain_id].degree(node) == 3:
+            if self.graphs[brain_id].degree(node) > 2:
                 is_high_degree = self.graphs[brain_id].degree(node) > 3
                 is_too_branchy = self.check_nearby_branching(brain_id, node)
-                if is_too_branchy or is_high_degree:
+                if is_high_degree or is_too_branchy:
                     continue
 
             # Check if node is close to merge site
@@ -512,10 +510,11 @@ class MergeSiteDataset(Dataset):
 
         # Annotate fragment
         center = subgraph.get_voxel(0)
+        offset = img_util.get_offset(center, self.patch_shape)
         for node1, node2 in subgraph.edges:
             # Get local voxel coordinates
-            voxel1 = subgraph.get_local_voxel(node1, center, self.patch_shape)
-            voxel2 = subgraph.get_local_voxel(node2, center, self.patch_shape)
+            voxel1 = subgraph.get_local_voxel(node1, offset)
+            voxel2 = subgraph.get_local_voxel(node2, offset)
 
             # Populate mask
             voxels = geometry_util.make_digital_line(voxel1, voxel2)
@@ -621,6 +620,13 @@ class MergeSiteDataset(Dataset):
         xyz = self.graphs[brain_id].node_xyz[node]
         dist, _ = self.merge_site_kdtrees[brain_id].query(xyz)
         return dist < 100
+
+    def sample_node_nearby_soma(self, brain_id):
+        subgraph = self.gt_graphs[brain_id].get_rooted_subgraph(0, 600)
+        gt_node = util.sample_once(subgraph.nodes)
+        gt_xyz = self.gt_graphs[brain_id].node_xyz[gt_node]
+        d, node = self.graphs[brain_id].kdtree.query(gt_xyz)
+        return node
 
 
 class MergeSiteTrainDataset(MergeSiteDataset):

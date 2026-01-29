@@ -30,7 +30,7 @@ class ImageTransforms:
             RandomFlip3D(),
             RandomRotation3D(),
             RandomNoise3D(),
-            #RandomContrast3D()
+            RandomContrast3D()
         ]
 
     def __call__(self, patches):
@@ -45,7 +45,7 @@ class ImageTransforms:
             input image and second is the segmentation.
         """
         for transform in self.transforms:
-            transform(patches)
+            patches = transform(patches)
         return patches
 
 
@@ -81,6 +81,7 @@ class RandomFlip3D:
             if random.random() > 0.5:
                 patches[0, ...] = np.flip(patches[0, ...], axis=axis)
                 patches[1, ...] = np.flip(patches[1, ...], axis=axis)
+        return patches
 
 
 class RandomRotation3D:
@@ -117,6 +118,7 @@ class RandomRotation3D:
                 angle = random.uniform(*self.angles)
                 self.rotate3d(patches[0, ...], angle, axes, False)
                 self.rotate3d(patches[1, ...], angle, axes, True)
+        return patches
 
     @staticmethod
     def rotate3d(img_patch, angle, axes, is_segmentation=False):
@@ -206,17 +208,16 @@ class RandomContrast3D:
     Adjusts the contrast of a 3D image by scaling voxel intensities.
     """
 
-    def __init__(self, factor_range=(0.8, 1.2)):
+    def __init__(self, p_low=(0, 90), p_high=(97.5, 100)):
         """
         Initializes a RandomContrast3D transformer.
 
         Parameters
         ----------
-        factor_range : Tuple[float], optional
-            Tuple of integers representing the range of contrast factors.
-            Default is (0.8, 1.2).
+        ...
         """
-        self.factor_range = factor_range
+        self.p_low = p_low
+        self.p_high = p_high
 
     def __call__(self, patches):
         """
@@ -225,11 +226,18 @@ class RandomContrast3D:
         Parameters
         ----------
         patches : numpy.ndarray
-            Image with the shape (2, H, W, D), where "patches[0, ...]" is from
-            the input image and "patches[1, ...]" is from the segmentation.
+            Image with the shape (2, H, W, D), where the zeroth channel is
+            from the raw image and first channel is from the segmentation.
         """
-        factor = random.uniform(*self.factor_range)
-        patches[0, ...] = np.clip(patches[0, ...] * factor, 0, 1)
+        p_low = np.random.uniform(*self.p_low)
+        p_high = np.random.uniform(*self.p_high)
+        print("precentiles:", p_low, p_high)
+        lo = np.percentile(patches[0], p_low)
+        hi = np.percentile(patches[0], p_high)
+        print("intensities:", lo, hi)
+        patches[0] = (patches[0] - lo) / (hi - lo + 1e-5)
+        patches[0] = np.clip(patches[0], 0, 1)
+        return patches
 
 
 class RandomNoise3D:
@@ -237,7 +245,7 @@ class RandomNoise3D:
     Adds random Gaussian noise to a 3D image.
     """
 
-    def __init__(self, max_std=0.3):
+    def __init__(self, max_std=0.2):
         """
         Initializes a RandomNoise3D transformer.
 
@@ -247,9 +255,9 @@ class RandomNoise3D:
             Maximum standard deviation of the Gaussian noise distribution.
             Default is 0.3.
         """
-        self.max_std = 0.2  # max_std
+        self.max_std = max_std
 
-    def __call__(self, img_patch):
+    def __call__(self, img_patches):
         """
         Adds Gaussian noise to the input 3D image.
 
@@ -260,6 +268,6 @@ class RandomNoise3D:
             the input image and "patches[1, ...]" is from the segmentation.
         """
         std = self.max_std * random.random()
-        noise = np.random.uniform(-std, std, img_patch[0, ...].shape)
-        img_patch[0, ...] += noise
-        img_patch[0, ...] = np.clip(img_patch[0, ...], 0, 1)
+        img_patches[0] += np.random.uniform(-std, std, img_patches[0].shape)
+        img_patches[0] = np.clip(img_patches[0], 0, 1)
+        return img_patches
