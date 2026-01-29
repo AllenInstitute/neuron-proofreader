@@ -2,6 +2,7 @@ from scipy.spatial import KDTree
 
 import ast
 import matplotlib.pyplot as plt
+import networkx as nx
 import numpy as np
 import os
 import pandas as pd
@@ -24,24 +25,25 @@ def main():
     print_experiment_details()
     swc_zip_paths = util.list_gcs_filenames(bucket_name, dataset_prefix, ".zip")
     for cnt, swc_zip_path in enumerate(sorted(swc_zip_paths)):
-        # Extract data
-        neuron_data_path = f"gs://{bucket_name}/{swc_zip_path}"
-        filename = os.path.basename(neuron_data_path)
-        name, ext = os.path.splitext(filename)
-        neuron_merge_sites = merge_sites[merge_sites["GroundTruth_ID"] == name]
+        # Set paths
+        name = get_name(swc_zip_path)
+        gt_path = f"gs://allen-nd-goog/ground_truth_tracings/{brain_id}/voxel/{name}.swc"
+        fragments_path = f"gs://{bucket_name}/{swc_zip_path}"
 
         # Evaluate
         print(f"\nFilename ({cnt + 1}/{len(swc_zip_paths)}):", name)
-        evaluate_on_neuron(neuron_data_path, neuron_merge_sites, name)
+        neuron_merge_sites = merge_sites[merge_sites["GroundTruth_ID"] == name]
+        evaluate_on_neuron(gt_path, fragments_path, neuron_merge_sites)
 
 
-def evaluate_on_neuron(data_path, merge_sites, name):
+def evaluate_on_neuron(gt_path, fragments_path, merge_sites):
     # Parse name
+    name = get_name(fragments_path)
     name = name.replace("_", "-")
     neuron_id = name.split("-")[0]
 
     # Run merge detection
-    dataset = load_data(data_path)
+    dataset = load_data(gt_path, fragments_path)
     merge_detector = MergeDetector(
         dataset,
         model,
@@ -54,25 +56,22 @@ def evaluate_on_neuron(data_path, merge_sites, name):
     # Compute performance metrics
     detected_sites = merge_detector.get_detected_sites(accept_threshold)
     gt_sites = np.array(merge_sites["World"].apply(ast.literal_eval).tolist())
-    compute_metrics(detected_sites, gt_sites, name)
-    plot_precision_vs_recall(merge_detector, gt_sites, neuron_id)
+    compute_metrics(gt_sites, detected_sites, name)
+    plot_precision_vs_recall(gt_sites, merge_detector, neuron_id)
 
     # Save results
-    save_detections(detected_sites, gt_sites, neuron_id)
+    dataset.graph.node_radius = 10 * merge_detector.node_preds
+    detections_path = os.path.join(output_dir, f"detections-{neuron_id}.zip")
+    dataset.graph.to_zipped_swcs(detections_path, preserve_radius=True)
+    save_detections(gt_sites, detected_sites, neuron_id)
 
 
-def load_data(swc_pointer):
-    # Load graphs
-    graph = SkeletonGraph(
-        anisotropy=anisotropy,
-        node_spacing=node_spacing,
-        min_size=min_fragment_size,
-        verbose=True
-    )
-    graph.load(swc_pointer)
-
-    # Initialize dataset
+def load_data(gt_path, fragments_path):
+    # Initialize
+    graph = load_graphs(gt_path, fragments_path)
     img_path = img_util.find_img_path("allen-nd-goog", "from_aind/", brain_id) + "/0"
+
+    # Load
     dataset = DenseGraphDataset(
         graph,
         img_path,
@@ -81,24 +80,92 @@ def load_data(swc_pointer):
         is_multimodal=is_multimodal,
         min_search_size=min_search_size,
         step_size=step_size,
+        use_new_mask=use_new_mask
     )
     return dataset
 
 
+def load_graphs(gt_path, fragments_path):
+    # Ground Truth
+    gt_graph = SkeletonGraph(anisotropy=anisotropy)
+    gt_graph.load(gt_path)
+
+    # Fragments
+    graph = SkeletonGraph(
+        anisotropy=anisotropy,
+        node_spacing=node_spacing,
+        min_size=min_fragment_size,
+        use_anisotropy=False,
+        verbose=True
+    )
+    graph.load(fragments_path)
+
+    # Post process fragments
+    name = get_name(gt_path)
+    remove_groundtruth_component(graph, name)
+    clip_to_groundtruth(gt_graph, graph)
+    remove_far_components(gt_graph, graph)
+    return graph
+
+
+# --- Helpers ---
+def clip_to_groundtruth(gt_graph, graph, threshold=60):
+    nodes = list()
+    gt_graph.set_kdtree()
+    for node in graph.nodes:
+        dist, _ = gt_graph.kdtree.query(graph.node_xyz[node])
+        if dist > threshold:
+             nodes.append(node)
+    graph.remove_nodes(nodes)
+
+
+def get_name(path):
+    filename = os.path.basename(path)
+    name, ext = os.path.splitext(filename)
+    return name
+
+
+def remove_far_components(gt_graph, graph, threshold=5):
+    nodes = list()
+    for component in nx.connected_components(graph):
+        # Compute projections
+        is_far = True
+        for node in component:
+            dist, _ = gt_graph.kdtree.query(graph.node_xyz[node])
+            if dist < threshold:
+                is_far = False
+                break
+
+        # Check whether to remove component
+        if is_far:
+            nodes.extend(component)
+    graph.remove_nodes(nodes)
+
+
+def remove_groundtruth_component(graph, name):
+    swc_id = f"{name}.0"
+    component_id = graph.get_component_id_from_swc_id(swc_id)
+    gt_nodes = graph.get_nodes_with_component_id(component_id)
+    graph.remove_nodes(gt_nodes)
+
+
 # --- Performance Metrics ---
-def compute_metrics(detected_sites, gt_sites, name):
+def compute_metrics(gt_sites, detected_sites, name):
     # Compute stats
-    precision, recall, f1 = compute_stats(detected_sites, gt_sites)
+    precision, recall, f1 = compute_stats(gt_sites, detected_sites)
+    tp_sites, fp_sites = classify_detections(gt_sites, detected_sites)
 
     # Compile statistical results
-    results = [f"\nName: {name}"]
+    results = ["\n\n"]
     results.append(len(model_name) * ".")
-    results.append(f"Precision: {precision}")
-    results.append(f"Recall: {recall}")
-    results.append(f"F1: {f1}\n")
+    results.append(f"Name: {name}")
+    results.append(f"Precision: {round(precision, 4)}")
+    results.append(f"Recall: {round(recall, 4)}")
+    results.append(f"F1: {round(f1, 4)}\n")
     results.append(f"# Detected Merge Sites: {len(detected_sites)}")
-    results.append(f"% Detected GT Merge Sites: {int(len(gt_sites) * recall)}/{len(gt_sites)}")
-    results = "\n".join(results)
+    results.append(f"% Detected GT Merge Sites: {len(tp_sites)}/{len(gt_sites)}")
+    results.append(len(model_name) * ".")
+    results = "".join(results)
     print(results)
 
     # Save results
@@ -106,13 +173,13 @@ def compute_metrics(detected_sites, gt_sites, name):
     util.update_txt(log_path, results)
 
 
-def plot_precision_vs_recall(merge_detector, gt_sites, neuron_id, dt=0.05):
+def plot_precision_vs_recall(gt_sites, merge_detector, neuron_id, dt=0.05):
     # Compute error rates
     precision_list = list()
     recall_list = list()
     for t in np.arange(dt, 1, dt):
         detected_sites = merge_detector.get_detected_sites(t)
-        precision, recall, _ = compute_stats(detected_sites, gt_sites)
+        precision, recall, _ = compute_stats(gt_sites, detected_sites)
         precision_list.append(precision)
         recall_list.append(recall)
 
@@ -146,23 +213,23 @@ def classify_detections(gt_sites, detected_sites):
         return set(), set()
 
     # Separate detected sites into true and false positives
-    true_positives = set()
-    false_positives = set()
+    tp_sites = set()
+    fp_sites = set()
     for xyz in map(tuple, detected_sites):
         d, idx = kdtree.query(xyz)
         if d <= d_tp and idx not in gt_hits:
-            true_positives.add(xyz)
+            tp_sites.add(xyz)
             gt_hits.add(idx)
         elif d > d_tp:
-            false_positives.add(xyz)
-    return true_positives, false_positives
+            fp_sites.add(xyz)
+    return tp_sites, fp_sites
 
 
 def compute_stats(gt_sites, detected_sites):
     # Compute metrics
-    true_sites, false_sites = classify_detections(gt_sites, detected_sites)
-    tp = len(true_sites)
-    fp = len(false_sites)
+    tp_sites, fp_sites = classify_detections(gt_sites, detected_sites)
+    tp = len(tp_sites)
+    fp = len(fp_sites)
 
     precision = tp / (tp + fp + 1e-5)
     recall = tp / (len(gt_sites) + 1e-5)
@@ -210,20 +277,20 @@ def save_points(zip_path, pts, color, prefix):
 
 if __name__ == "__main__":
     # Parameters
-    bucket_name = "allen-nd-goog"
     brain_id = "802449"
     segmentation_id = "jin_masked_mean40_stddev105"
-
-    exp_name = "V5"
     model_name = "MergeDetectorCNN3D-v4-run1-newmask=False-negativebias=0-20260109-135-0.8374"
+
+    bucket_name = "allen-nd-goog"
+    exp_name = "V5"
 
     accept_threshold = 0.4
     anisotropy = (0.748, 0.748, 1.0)
-    batch_size = 32
+    batch_size = 24
     d_tp = 32
     device = "cuda:0"
     min_fragment_size = 40
-    min_search_size = 5000
+    min_search_size = 400
     node_spacing = 5
     patch_shape = (128, 128, 128)
     step_size = 20
@@ -232,7 +299,7 @@ if __name__ == "__main__":
     dataset_prefix = f"automated_proofreading_dataset/merge_detection/whole_brain_fragments_dataset/{brain_id}/{segmentation_id}"
     img_prefix_lookup_path = "/root/capsule/data/exaspim_image_prefixes.json"
     model_path = f"/root/capsule/data/{exp_name}/{model_name}.pth"
-    output_dir = f"/root/capsule/results"
+    output_dir = f"/root/capsule/results/{model_name}"
     util.mkdir(output_dir)
 
     # Model

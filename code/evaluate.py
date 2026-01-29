@@ -70,13 +70,13 @@ def evaluate(brain_id, fragments_graph, merge_sites_df):
     print("Brain ID:", brain_id)
     gt_sites = data_util.get_brain_merge_sites(merge_sites_df, brain_id)
     detected_sites = merge_detector.get_detected_sites(accept_threshold)
-    compute_performance_metrics(brain_id, detected_sites, gt_sites)
-    plot_precision_vs_recall(brain_id, merge_detector, gt_sites)
+    compute_performance_metrics(brain_id, gt_sites, detected_sites)
+    plot_precision_vs_recall(brain_id, gt_sites, merge_detector)
     print("-" * 100)
 
 
 # --- Performance Metrics ---
-def compute_performance_metrics(brain_id, detected_sites, gt_sites):
+def compute_performance_metrics(brain_id, gt_sites, detected_sites):
     # Compute metrics
     precision, recall, f1 = compute_metrics(gt_sites, detected_sites)
     save_detections(brain_id, gt_sites, detected_sites)
