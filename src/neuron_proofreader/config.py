@@ -81,22 +81,14 @@ class MLConfig:
     batch_size : int
         The number of samples processed in one batch during training or
         inference. Default is 64.
-    multiscale : int
-        Level in the image pyramid that voxel coordinates must index into.
     threshold : float
         A general threshold value used for classification. Default is 0.6.
-    model_type : str
-        Type of machine learning model to use. Default is "GraphNeuralNet".
     """
     batch_size: int = 64
-    device: str = "cpu"
-    lr: float = 1e-4
-    multiscale: int = 1
-    n_epochs: int = 1000
-    threshold: float = 0.6
-    transform: bool = False
-    validation_split: float = 0.15
-    weight_decay: float = 1e-3
+    brightness_clip: int = 400
+    device: str = "cuda"
+    patch_shape : tuple = (96, 96, 96)
+    threshold: float = 0.8
 
 
 class Config:

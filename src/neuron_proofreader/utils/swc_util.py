@@ -24,6 +24,7 @@ from concurrent.futures import (
     ThreadPoolExecutor,
     as_completed,
 )
+from google.auth.exceptions import RefreshError, TransportError
 from google.cloud import storage
 from io import BytesIO, StringIO
 from tqdm import tqdm
@@ -235,8 +236,8 @@ class Reader:
             List of dictionaries whose keys and values are the attribute
             names and values from an SWC file.
         """
+        swc_dicts = deque()
         with ZipFile(zip_path, "r") as zip_file:
-            swc_dicts = deque()
             swc_files = [f for f in zip_file.namelist() if f.endswith(".swc")]
             for f in swc_files:
                 swc_dict = self.read_from_zipped_file(zip_file, f)
@@ -402,7 +403,10 @@ class Reader:
 
                 # Store results
                 for process in as_completed(processes):
-                    swc_dicts.extend(process.result())
+                    try:
+                        swc_dicts.extend(process.result())
+                    except RefreshError:
+                        pass
                     pbar.update(1)
         return swc_dicts
 
@@ -426,10 +430,14 @@ class Reader:
             List of dictionaries whose keys and values are the attribute
             names and values from an SWC file.
         """
-        # Download zip
-        client = storage.Client()
-        bucket = client.bucket(bucket_name)
-        zip_content = bucket.blob(zip_path).download_as_bytes()
+        try:
+            # Download zip
+            client = storage.Client()
+            bucket = client.bucket(bucket_name)
+            zip_content = bucket.blob(zip_path).download_as_bytes()
+        except TransportError:
+            print(f"Failed to read {zip_path}!")
+            return deque()
 
         # Process files
         swc_dicts = deque()

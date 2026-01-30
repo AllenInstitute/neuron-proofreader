@@ -59,7 +59,6 @@ class ProposalGenerator:
         self.max_attempts = max_attempts
         self.max_proposals_per_leaf = max_proposals_per_leaf
         self.min_size_with_proposals = min_size_with_proposals
-        self.n_proposals_blocked = 0
         self.search_scaling_factor = search_scaling_factor
 
     def __call__(self, initial_radius):
@@ -246,7 +245,7 @@ class ProposalGenerator:
         """
         if i is not None:
             is_soma = (self.graph.is_soma(i) and self.graph.is_soma(leaf))
-            self.n_proposals_blocked += 1 if is_soma else 0
+            self.graph.n_proposals_blocked += 1 if is_soma else 0
             return not is_soma
         else:
             return False

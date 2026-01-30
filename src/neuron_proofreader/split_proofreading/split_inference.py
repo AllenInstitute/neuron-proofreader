@@ -41,13 +41,14 @@ import torch
 
 from neuron_proofreader.proposal_graph import ProposalGraph
 from neuron_proofreader.machine_learning.subgraph_sampler import (
-    SubgraphSampler, SeededSubgraphSampler
+    SubgraphSampler,
+    SeededSubgraphSampler
 )
-from neuron_proofreader.split_proofreading import datasets
-from neuron_proofreader.split_proofreading.feature_generation import (
-    FeatureGenerator,
+from neuron_proofreader.split_proofreading.split_feature_extraction import (
+    FeaturePipeline,
+    HeteroGraphData
 )
-from neuron_proofreader.split_proofreading.models import init_model
+from neuron_proofreader.machine_learning.gnn_models import VisionHGAT
 from neuron_proofreader.utils import geometry_util, ml_util, util
 
 
@@ -121,14 +122,14 @@ class InferencePipeline:
         self.log_handle = open(log_path, 'a')
 
     # --- Core ---
-    def run(self, swc_pointer):
+    def run(self, swcs_path, search_radius):
         """
         Executes the full inference pipeline.
 
         Parameters
         ----------
-        swc_pointer : Any
-            Pointer to SWC files used to build an instance of FragmentGraph,
+        swcs_path : str
+            Path to SWC files used to build an instance of FragmentGraph,
             see "swc_util.Reader" for further documentation.
         """
         # Initializations
@@ -137,50 +138,48 @@ class InferencePipeline:
         t0 = time()
 
         # Main
-        self.build_graph(swc_pointer)
+        self.build_graph(swcs_path)
         self.connect_soma_fragments() if self.soma_centroids else None
-        self.generate_proposals(self.graph_config.search_radius)
-        self.classify_proposals(self.ml_config.threshold)
+        self.generate_proposals(search_radius)
+        self.classify_proposals(self.ml_config.threshold, search_radius)
 
         # Finish
         t, unit = util.time_writer(time() - t0)
-        self.report_graph(prefix="\nFinal")
-        self.report(f"Total Runtime: {t:.2f} {unit}\n")
+        self.log_graph_specs(prefix="\nFinal")
+        self.log(f"Total Runtime: {t:.2f} {unit}\n")
         self.save_results()
 
-    def run_schedule(
-        self, swc_pointer, radius_schedule, threshold_schedule
-    ):
+    def run_schedule(self, swcs_path, radius_schedule, threshold_schedule):
         # Initializations
         self.log_experiment()
         self.write_metadata()
         t0 = time()
 
         # Main
-        self.build_graph(swc_pointer)
-        for i, radius in enumerate(radius_schedule):
-            self.report(f"\n--- Round {i + 1}:  Radius = {radius} ---")
-            self.generate_proposals(radius_schedule[i])
-            self.classify_proposals(threshold_schedule[i])
-            self.report_graph(prefix="Current")
+        self.build_graph(swcs_path)
+        schedules = zip(radius_schedule, threshold_schedule)
+        for i, (radius, threshold) in enumerate(schedules):
+            self.log(f"\n--- Round {i + 1}:  Radius = {radius} ---")
+            self.generate_proposals(radius)
+            self.classify_proposals(threshold)
+            self.log_graph_specs(prefix="Current")
 
         # Finish
         t, unit = util.time_writer(time() - t0)
-        self.report_graph(prefix="\nFinal")
-        self.report(f"Total Runtime: {t:.2f} {unit}\n")
+        self.log_graph_specs(prefix="\nFinal")
+        self.log(f"Total Runtime: {t:.2f} {unit}\n")
         self.save_results()
 
-    def build_graph(self, swc_pointer):
+    def build_graph(self, swcs_path):
         """
         Builds a graph from the given fragments.
 
         Parameters
         ----------
-        fragment_pointer : dict, list, str
-            Pointer to SWC files used to build an instance of FragmentGraph,
-            see "swc_util.Reader" for further documentation.
+        fragment_pointer : str
+            Path to SWC files to be loaded into graph.
         """
-        self.report("Step 1: Build Fragments Graph")
+        self.log("Step 1: Build Graph")
         t0 = time()
 
         # Initialize graph
@@ -192,11 +191,10 @@ class InferencePipeline:
             prune_depth=self.graph_config.prune_depth,
             remove_high_risk_merges=self.graph_config.remove_high_risk_merges,
             segmentation_path=self.segmentation_path,
-            smooth_bool=self.graph_config.smooth_bool,
             soma_centroids=self.soma_centroids,
             verbose=True,
         )
-        self.graph.load(swc_pointer)
+        self.graph.load(swcs_path)
 
         # Filter fragments
         if self.graph_config.remove_doubles:
@@ -209,17 +207,17 @@ class InferencePipeline:
         print("# Soma Fragments:", len(self.graph.soma_ids))
 
         t, unit = util.time_writer(time() - t0)
-        self.report_graph(prefix="\nInitial")
-        self.report(f"Module Runtime: {t:.2f} {unit}\n")
+        self.log_graph_specs(prefix="\nInitial")
+        self.log(f"Module Runtime: {t:.2f} {unit}\n")
 
     def connect_soma_fragments(self):
         # Initializations
-        self.graph.init_kdtree()
+        self.graph.set_kdtree()
 
         # Parse locations
         merge_cnt, soma_cnt = 0, 0
         for soma_xyz in self.soma_centroids:
-            node_ids = self.graph.find_fragments_near_xyz(soma_xyz, 20)
+            node_ids = self.graph.find_fragments_near_xyz(soma_xyz, 25)
             if len(node_ids) > 1:
                 # Find closest node to soma location
                 soma_cnt += 1
@@ -249,30 +247,24 @@ class InferencePipeline:
         print("# Soma Fragment Merges:", merge_cnt)
         del self.graph.kdtree
 
-    def generate_proposals(self, radius):
+    def generate_proposals(self, search_radius):
         """
         Generates proposals for the fragments graph based on the specified
         configuration.
         """
         # Main
         t0 = time()
-        self.report("Step 2: Generate Proposals")
-        self.graph.generate_proposals(
-            radius,
-            complex_bool=self.graph_config.complex_bool,
-            long_range_bool=self.graph_config.long_range_bool,
-            proposals_per_leaf=self.graph_config.proposals_per_leaf,
-            trim_endpoints_bool=self.graph_config.trim_endpoints_bool,
-        )
+        self.log("\nStep 2: Generate Proposals")
+        self.graph.generate_proposals(search_radius)
         n_proposals = format(self.graph.n_proposals(), ",")
 
         # Report results
         t, unit = util.time_writer(time() - t0)
-        self.report(f"# Proposals: {n_proposals}")
-        self.report(f"# Proposals Blocked: {self.graph.n_proposals_blocked}")
-        self.report(f"Module Runtime: {t:.2f} {unit}\n")
+        self.log(f"# Proposals: {n_proposals}")
+        self.log(f"# Proposals Blocked: {self.graph.n_proposals_blocked}")
+        self.log(f"Module Runtime: {t:.2f} {unit}\n")
 
-    def classify_proposals(self, accept_threshold):
+    def classify_proposals(self, accept_threshold, search_radius):
         """
         Classifies proposals by calling "self.inference_engine". This routine
         generates features and runs a GNN to make predictions. Proposals with
@@ -280,29 +272,32 @@ class InferencePipeline:
         graph as an edge.
         """
         # Initializations
-        self.report("Step 3: Run Inference")
-        proposals = self.graph.list_proposals()
-
-        # Main
+        self.log("Step 3: Run Inference")
         t0 = time()
-        self.inference_engine = InferenceEngine(
+
+        # Generate model predictions
+        n_proposals = self.graph.n_proposals()
+        inference_engine = InferenceEngine(
             self.graph,
             self.img_path,
             self.model_path,
             self.ml_config,
-            self.graph_config.search_radius,
-            accept_threshold=accept_threshold,
+            search_radius,
             segmentation_path=self.segmentation_path,
         )
-        accepts = self.inference_engine.run()
-        self.accepted_proposals.extend(accepts)
+        preds_dict = inference_engine.run()
+        path = os.path.join(self.output_dir, "proposal_predictions.json")
+        util.write_json(path, reformat_preds(preds_dict))
+
+        # Update graph
+        stop
 
         # Report results
         t, unit = util.time_writer(time() - t0)
-        self.report(f"# Merges Blocked: {self.graph.n_merges_blocked}")
-        self.report(f"# Accepted: {format(len(accepts), ',')}")
-        self.report(f"% Accepted: {len(accepts) / len(proposals):.4f}")
-        self.report(f"Module Runtime: {t:.4f} {unit}\n")
+        self.log(f"# Merges Blocked: {self.graph.n_merges_blocked}")
+        self.log(f"# Accepted: {format(len(accepts), ',')}")
+        self.log(f"% Accepted: {len(accepts) / n_proposals:.4f}")
+        self.log(f"Module Runtime: {t:.4f} {unit}\n")
 
     def save_results(self):
         """
@@ -371,19 +366,19 @@ class InferencePipeline:
         util.write_json(path, metadata)
 
     # --- Summaries ---
-    def report(self, txt):
+    def log(self, txt):
         print(txt)
         self.log_handle.write(txt)
         self.log_handle.write("\n")
 
     def log_experiment(self):
-        self.report("\nExperiment Overview")
-        self.report("-------------------------------------------------------")
-        self.report(f"Brain_ID: {self.brain_id}")
-        self.report(f"Segmentation_ID: {self.segmentation_id}")
-        self.report("\n")
+        self.log("\nExperiment Overview")
+        self.log("-" * len(self.segmentation_id))
+        self.log(f"Brain_ID: {self.brain_id}")
+        self.log(f"Segmentation_ID: {self.segmentation_id}")
+        self.log("\n")
 
-    def report_graph(self, prefix="\n"):
+    def log_graph_specs(self, prefix="\n"):
         """
         Prints an overview of the graph's structure and memory usage.
         """
@@ -393,12 +388,12 @@ class InferencePipeline:
         n_nodes = format(self.graph.number_of_nodes(), ",")
         n_edges = format(self.graph.number_of_edges(), ",")
 
-        # Report
-        self.report(f"{prefix} Graph")
-        self.report(f"# Connected Components: {n_components}")
-        self.report(f"# Nodes: {n_nodes}")
-        self.report(f"# Edges: {n_edges}")
-        self.report(f"Memory Consumption: {util.get_memory_usage():.2f} GBs")
+        # Report results
+        self.log(f"{prefix} Graph")
+        self.log(f"# Connected Components: {n_components}")
+        self.log(f"# Nodes: {n_nodes}")
+        self.log(f"# Edges: {n_edges}")
+        self.log(f"Memory Consumption: {util.get_memory_usage():.2f} GBs")
 
 
 class InferenceEngine:
@@ -413,8 +408,7 @@ class InferenceEngine:
         img_path,
         model_path,
         ml_config,
-        radius,
-        accept_threshold=0.9,
+        search_radius,
         segmentation_path=None,
     ):
         """
@@ -430,7 +424,7 @@ class InferenceEngine:
         ml_config : MLConfig
             Configuration object containing parameters and settings required
             for the inference.
-        radius : float
+        search_radius : float
             Search radius used to generate proposals.
         segmentation_path : str, optional
             Path to segmentation stored in GCS bucket. Default is None.
@@ -438,108 +432,64 @@ class InferenceEngine:
         # Instance attributes
         self.batch_size = ml_config.batch_size
         self.device = ml_config.device
-        self.graph = graph
-        self.ml_config = ml_config
-        self.radius = radius
-        self.threshold = accept_threshold
+        self.model = VisionHGAT(ml_config.patch_shape)
+        self.pbar = tqdm(total=graph.n_proposals(), desc="Inference")
+        self.subgraph_sampler = self.get_subgraph_sampler(graph)
 
         # Feature generator
-        self.feature_generator = FeatureGenerator(
-            self.graph,
+        self.feature_extractor = FeaturePipeline(
+            graph,
             img_path,
-            anisotropy=self.ml_config.anisotropy,
-            is_multimodal=self.ml_config.is_multimodal,
-            multiscale=self.ml_config.multiscale,
-            segmentation_path=segmentation_path,
+            search_radius,
+            brightness_clip=ml_config.brightness_clip,
+            patch_shape=ml_config.patch_shape,
+            segmentation_path=segmentation_path
         )
 
-        # Model
-        device = "cuda" if ml_config.is_multimodal else "cpu"
-        self.model = init_model(ml_config.is_multimodal)
-        ml_util.load_model(self.model, model_path, device=device)
+        # Load weights
+        ml_util.load_model(self.model, model_path, device=ml_config.device)
 
-    def init_dataloader(self):
-        if len(self.graph.soma_ids) > 0:
-            return SeededSubgraphSampler(self.graph, self.batch_size)
+    def get_subgraph_sampler(self, graph):
+        if len(graph.soma_ids) > 0:
+            return SeededSubgraphSampler(graph, self.batch_size)
         else:
-            return SubgraphSampler(self.graph, self.batch_size)
+            return SubgraphSampler(graph, self.batch_size)
 
-    def run(self, return_preds=False):
-        """
-        Runs inference by forming batches of proposals, then performing the
-        following steps for each batch: (1) generate features, (2) classify
-        proposals by running model, and (3) adding each accepted proposal as
-        an edge to "graph" if it does not create a cycle.
-
-        Parameters
-        ----------
-        graph : ProposalGraph
-            Graph that inference will be performed on.
-        proposals : list
-            Proposals to be classified as accept or reject.
-
-        Returns
-        -------
-        ProposalGraph
-            Updated graph with accepted proposals added as edges.
-        list
-            Accepted proposals.
-        """
-        # Initializations
-        dataloader = self.init_dataloader()
-        pbar = tqdm(total=self.graph.n_proposals(), desc="Inference")
-
-        # Main
-        accepts = list()
-        hat_y = dict()
-        for batch in dataloader:
-            # Feature generation
-            features = self.feature_generator.run(batch, self.radius)
-            heterograph_data = datasets.init(features, batch["graph"])
+    def run(self):
+        preds = dict()
+        for subgraph in self.subgraph_sampler:
+            # Get model inputs
+            features = self.feature_extractor(subgraph)
+            data = HeteroGraphData(features)
 
             # Run model
-            hat_y_i = self.predict(heterograph_data)
-            if return_preds:
-                hat_y.update(hat_y_i)
+            preds.update(self.predict(data))
+            self.pbar.update(subgraph.n_proposals())
+        return preds
 
-            # Determine which proposals to accept
-            accepts.extend(self.update_graph(hat_y_i))
-            pbar.update(len(batch["proposals"]))
-
-        # Return results
-        if return_preds:
-            return accepts, hat_y
-        else:
-            return accepts
-
-    def predict(self, heterograph_data):
+    def predict(self, data):
         """
-        Runs the model on the given dataset to generate and filter
-        predictions.
+        ...
 
         Parameters
         ----------
-        data : HeteroGeneousDataset
-            Dataset containing graph information, including feature matrices
-            and other relevant attributes needed for GNN input.
+        data : HeteroGraphData
+            ...
+
         Returns
         -------
-        dict
-            A dictionary that maps a proposal to the model's prediction (i.e.
-            probability).
+        Dict[Frozenset[int], float]
+            Dictionary that maps proposal IDs to model predictions.
         """
         # Generate predictions
         with torch.no_grad():
-            x, edge_index, edge_attr = ml_util.get_inputs(
-                heterograph_data.data, self.device
-            )
-            hat_y = sigmoid(self.model(x, edge_index, edge_attr))
+            x = data.get_inputs().to(self.device)
+            hat_y = sigmoid(self.model(x))
 
         # Reformat predictions
-        n_proposals = len(heterograph_data.data["proposal"]["y"])
-        hat_y = ml_util.to_cpu(hat_y[0:n_proposals, 0], to_numpy=True)
-        idxs = heterograph_data.idxs_proposals["idx_to_id"]
-        return {idxs[i]: p for i, p in enumerate(hat_y)}
+        idx_to_id = data.idxs_proposals.idx_to_id
+        hat_y = ml_util.tensor_to_list(hat_y)
+        return {idx_to_id[i]: y_i for i, y_i in enumerate(hat_y)}
 
     def update_graph(self, preds, high_threshold=0.9):
         """
@@ -628,3 +578,8 @@ class InferenceEngine:
                 self.graph.merge_proposal(proposal)
                 accepts.append(proposal)
         return accepts
+
+
+# --- Helpers ---
+def reformat_preds(preds_dict):
+    return {tuple(k): v for k, v in preds_dict.items()}
