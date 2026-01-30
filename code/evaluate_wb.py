@@ -125,7 +125,7 @@ def get_name(path):
     return name
 
 
-def remove_far_components(gt_graph, graph, threshold=5):
+def remove_far_components(gt_graph, graph, threshold=3):
     nodes = list()
     for component in nx.connected_components(graph):
         # Compute projections
@@ -156,7 +156,7 @@ def compute_metrics(gt_sites, detected_sites, name):
     tp_sites, fp_sites = classify_detections(gt_sites, detected_sites)
 
     # Compile statistical results
-    results = ["\n\n"]
+    results = ["\n"]
     results.append(len(model_name) * ".")
     results.append(f"Name: {name}")
     results.append(f"Precision: {round(precision, 4)}")
@@ -165,7 +165,7 @@ def compute_metrics(gt_sites, detected_sites, name):
     results.append(f"# Detected Merge Sites: {len(detected_sites)}")
     results.append(f"% Detected GT Merge Sites: {len(tp_sites)}/{len(gt_sites)}")
     results.append(len(model_name) * ".")
-    results = "".join(results)
+    results = "\n".join(results)
     print(results)
 
     # Save results
@@ -279,10 +279,10 @@ if __name__ == "__main__":
     # Parameters
     brain_id = "802449"
     segmentation_id = "jin_masked_mean40_stddev105"
-    model_name = "MergeDetectorCNN3D-v4-run1-newmask=False-negativebias=0-20260109-135-0.8374"
+    model_name = "MergeDetectorCNN3D-v4-run1-newmask=True-negativebias=0-20260110-132-0.8273"
 
     bucket_name = "allen-nd-goog"
-    exp_name = "V5"
+    exp_name = "V4"
 
     accept_threshold = 0.4
     anisotropy = (0.748, 0.748, 1.0)
@@ -290,10 +290,11 @@ if __name__ == "__main__":
     d_tp = 32
     device = "cuda:0"
     min_fragment_size = 40
-    min_search_size = 400
+    min_search_size = 500
     node_spacing = 5
     patch_shape = (128, 128, 128)
     step_size = 20
+    use_new_mask = True
 
     # Paths
     dataset_prefix = f"automated_proofreading_dataset/merge_detection/whole_brain_fragments_dataset/{brain_id}/{segmentation_id}"

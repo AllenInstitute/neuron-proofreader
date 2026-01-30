@@ -148,7 +148,7 @@ if __name__ == "__main__":
     # Parameters
     anisotropy = (0.748, 0.748, 1.0)
     batch_size = 16
-    brightness_clip = 300
+    brightness_clip = 400
     is_test = False
     lr = 1e-4
     max_epochs = 160
