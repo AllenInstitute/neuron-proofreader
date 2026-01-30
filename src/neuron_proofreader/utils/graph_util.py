@@ -56,7 +56,6 @@ class GraphLoader:
         prune_depth=24.0,
         remove_high_risk_merges=False,
         segmentation_path=None,
-        smooth_bool=True,
         soma_centroids=None,
         verbose=False,
     ):
@@ -83,9 +82,6 @@ class GraphLoader:
             branching points). Default is False.
         segmentation_path : str, optional
             Path to segmentation stored in GCS bucket. Default is None.
-        smooth_bool : bool, optional
-            Indication of whether to smooth xyz coordinates from SWC files.
-            Default is True.
         soma_centroids : List[Tuple[float]] or None, optional
             Physcial coordinates of soma centroids. Default is None.
         verbose : bool, optional
@@ -98,7 +94,6 @@ class GraphLoader:
         self.node_spacing = node_spacing
         self.prune_depth = prune_depth
         self.remove_high_risk_merges_bool = remove_high_risk_merges
-        self.smooth_bool = smooth_bool
         self.soma_centroids = soma_centroids
         self.verbose = verbose
 
@@ -307,14 +302,13 @@ class GraphLoader:
             if graph.degree[j] != 2:
                 path_length += edge_length
                 irreducible_nodes.add(j)
-                attrs = to_numpy(attrs)
-                if self.smooth_bool:
-                    n_pts = int(edge_length / self.node_spacing)
-                    self.resample_curve_3d(graph, attrs, (root, j), n_pts)
                 if graph.degree[j] == 1:
                     leafs.add(j)
 
-                # Finish
+                attrs = to_numpy(attrs)
+                n_pts = int(edge_length / self.node_spacing)
+                self.resample_curve_3d(graph, attrs, (root, j), n_pts)
+
                 irreducible_edges[(root, j)] = attrs
                 root = None
 

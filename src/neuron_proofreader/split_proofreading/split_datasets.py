@@ -19,7 +19,7 @@ from neuron_proofreader.machine_learning.augmentation import ImageTransforms
 from neuron_proofreader.machine_learning.subgraph_sampler import (
     SubgraphSampler
 )
-from neuron_proofreader.split_proofreading.feature_extraction import (
+from neuron_proofreader.split_proofreading.split_feature_extraction import (
     FeaturePipeline,
     HeteroGraphData
 )
@@ -132,7 +132,8 @@ class FragmentsDataset(IterableDataset):
         swc_pointer : str
             Path to SWC files to be loaded.
         metadata_path : str
-            ...
+            Patch to JSON file containing metadata on block that fragments
+            were extracted from.
 
         Returns
         -------

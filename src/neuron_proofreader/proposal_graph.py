@@ -56,7 +56,6 @@ class ProposalGraph(SkeletonGraph):
         prune_depth=20.0,
         remove_high_risk_merges=False,
         segmentation_path=None,
-        smooth_bool=True,
         soma_centroids=None,
         verbose=False,
     ):
@@ -82,9 +81,6 @@ class ProposalGraph(SkeletonGraph):
             branching points). Default is False.
         segmentation_path : str, optional
             Path to segmentation stored in GCS bucket. Default is None.
-        smooth_bool : bool, optional
-            Indication of whether to smooth xyz coordinates from SWC files.
-            Default is True.
         soma_centroids : List[Tuple[float]] or None, optional
             Phyiscal coordinates of soma centroids. Default is None.
         verbose : bool, optional
@@ -106,6 +102,7 @@ class ProposalGraph(SkeletonGraph):
         self.gt_accepts = set()
         self.merged_ids = set()
         self.n_merges_blocked = 0
+        self.n_proposals_blocked = 0
         self.node_proposals = defaultdict(set)
         self.proposals = set()
 
@@ -123,7 +120,6 @@ class ProposalGraph(SkeletonGraph):
             prune_depth=prune_depth,
             remove_high_risk_merges=remove_high_risk_merges,
             segmentation_path=segmentation_path,
-            smooth_bool=smooth_bool,
             soma_centroids=soma_centroids,
             verbose=verbose,
         )
