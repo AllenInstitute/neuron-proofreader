@@ -595,8 +595,8 @@ class SkeletonGraph(nx.Graph):
     def get_summary(self, prefix=""):
         # Compute values
         n_components = format(nx.number_connected_components(self), ",")
-        n_nodes = format(self.graph.number_of_nodes(), ",")
-        n_edges = format(self.graph.number_of_edges(), ",")
+        n_nodes = format(self.number_of_nodes(), ",")
+        n_edges = format(self.number_of_edges(), ",")
         memory = util.get_memory_usage()
 
         # Compile results

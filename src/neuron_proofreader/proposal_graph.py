@@ -196,7 +196,9 @@ class ProposalGraph(SkeletonGraph):
         self.xyz_to_edge.update({tuple(xyz): edge_id for xyz in attrs["xyz"]})
 
     def connect_soma_fragments(self, soma_centroids):
-        merge_cnt, soma_cnt = 0, 0
+        merge_cnt = 0
+        soma_cnt = 0
+        self.set_kdtree()
         for soma_xyz in soma_centroids:
             node_ids = self.find_fragments_near_xyz(soma_xyz, 25)
             if len(node_ids) > 1:
@@ -227,7 +229,7 @@ class ProposalGraph(SkeletonGraph):
         # Summarize results
         results = [f"# Somas Connected: {soma_cnt}"]
         results.append(f"# Soma Fragments Merged: {merge_cnt}")
-        return results
+        return "\n".join(results)
 
     def relabel_nodes(self):
         """
@@ -332,28 +334,6 @@ class ProposalGraph(SkeletonGraph):
             return KDTree(list(xyz_set))
         else:
             return KDTree(list(self.xyz_to_edge.keys()))
-
-    def query_kdtree(self, xyz, d, node_type=None):
-        """
-        Parameters
-        ----------
-        xyz : int
-            Node id.
-        d : float
-            Distance from "xyz" that is searched.
-
-        Returns
-        -------
-        generator[tuple]
-            Generator that generates the xyz coordinates cooresponding to all
-            nodes within a distance of "d" from "xyz".
-        """
-        if node_type == "leaf":
-            return geometry.query_ball(self.leaf_kdtree, xyz, d)
-        elif node_type == "proposal":
-            return geometry.query_ball(self.proposal_kdtree, xyz, d)
-        else:
-            return geometry.query_ball(self.kdtree, xyz, d)
 
     # --- Proposal Generation ---
     def generate_proposals(self, search_radius):
@@ -638,7 +618,7 @@ class ProposalGraph(SkeletonGraph):
             a proposal.
         """
         xyz = self.proposal_midpoint(proposal)
-        return len(self.query_kdtree(xyz, radius, "leaf")) - 1
+        return len(geometry.query_ball(self.leaf_kdtree, xyz, radius)) - 1
 
     # --- Helpers ---
     def node_attr(self, i, key):
@@ -700,7 +680,8 @@ class ProposalGraph(SkeletonGraph):
 
     def find_fragments_near_xyz(self, query_xyz, max_dist):
         hits = dict()
-        for xyz in self.query_kdtree(query_xyz, max_dist):
+        xyz_list = geometry.query_ball(self.kdtree, query_xyz, max_dist)
+        for xyz in xyz_list:
             i, j = self.xyz_to_edge[tuple(xyz)]
             dist_i = geometry.dist(self.node_xyz[i], query_xyz)
             dist_j = geometry.dist(self.node_xyz[j], query_xyz)

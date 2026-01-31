@@ -35,16 +35,11 @@ from torch.nn.functional import sigmoid
 from tqdm import tqdm
 
 import networkx as nx
-import numpy as np
 import os
 import torch
 
 from neuron_proofreader.split_proofreading.split_datasets import (
     FragmentsDataset
-)
-from neuron_proofreader.split_proofreading.split_feature_extraction import (
-    FeaturePipeline,
-    HeteroGraphData
 )
 from neuron_proofreader.machine_learning.gnn_models import VisionHGAT
 from neuron_proofreader.utils import ml_util, util
@@ -99,7 +94,7 @@ class InferencePipeline:
         self.accepted_proposals = list()
         self.config = config
         self.img_path = img_path
-        self.model_path = model_path
+        self.model = VisionHGAT(config.ml.patch_shape)
         self.output_dir = output_dir
         self.soma_centroids = soma_centroids
 
@@ -111,6 +106,7 @@ class InferencePipeline:
 
         # Load data
         self._load_data(fragments_path, img_path, segmentation_path)
+        ml_util.load_model(self.model, model_path, device=config.ml.device)
 
     def _load_data(self, fragments_path, img_path, segmentation_path):
         """
@@ -171,12 +167,17 @@ class InferencePipeline:
         """
         Generates proposals for the fragments graph based on the specified
         configuration.
+
+        Parameters
+        ----------
+        search_radius : float
+            Search radius (in microns) used to generate proposals.
         """
         # Main
         t0 = time()
         self.log("\nStep 2: Generate Proposals")
         self.dataset.graph.generate_proposals(search_radius)
-        n_proposals = format(self.graph.n_proposals(), ",")
+        n_proposals = format(self.dataset.graph.n_proposals(), ",")
         n_proposals_blocked = self.dataset.graph.n_proposals_blocked
 
         # Report results
@@ -192,32 +193,57 @@ class InferencePipeline:
         a prediction above "self.threshold" are accepted and added to the
         graph as an edge.
         """
-        # Initializations
-        self.log("Step 3: Run Inference")
         t0 = time()
+        self.log("Step 3: Run Inference")
 
-        # Generate model predictions
-        n_proposals = self.graph.n_proposals()
-        inference_engine = InferenceEngine(
-            self.graph,
-            self.img_path,
-            self.model_path,
-            self.ml_config,
-            segmentation_path=self.segmentation_path,
-        )
-        preds_dict = inference_engine.run()
-        path = os.path.join(self.output_dir, "proposal_predictions.json")
-        util.write_json(path, reformat_preds(preds_dict))
+        # Main
+        accepts = set()
+        new_threshold = 0.99
+        preds = self.predict_proposals()
+        while True:
+            # Update graph
+            cur_threshold = new_threshold
+            accepts.update(self.merge_proposals(cur_threshold))
 
-        # Update graph
-        stop
+            # Update threshold
+            new_threshold = cur_threshold - 0.025
+            if cur_threshold == new_threshold:
+                break
 
         # Report results
         t, unit = util.time_writer(time() - t0)
         self.log(f"# Merges Blocked: {self.graph.n_merges_blocked}")
         self.log(f"# Accepted: {format(len(accepts), ',')}")
-        self.log(f"% Accepted: {len(accepts) / n_proposals:.4f}")
+        self.log(f"% Accepted: {len(accepts) / len(preds):.4f}")
         self.log(f"Module Runtime: {t:.4f} {unit}\n")
+
+    def predict_proposals(self):
+        # Main
+        preds = dict()
+        pbar = tqdm(total=self.dataset.graph.n_proposals(), desc="Inference")
+        for subgraph in self.dataset:
+            data = self.dataset.get_inputs(subgraph)
+            preds.update(self.predict(data))
+            pbar.update(subgraph.n_proposals())
+
+        # Save results
+        path = os.path.join(self.output_dir, "proposal_predictions.json")
+        util.write_json(path, reformat_preds(preds))
+        return preds
+
+    def merge_proposals(self, preds, threshold):
+        accepts = list()
+        for proposal in self.dataset.graph.get_sorted_proposals():
+            # Check if proposal satifies threshold
+            i, j = tuple(proposal)
+            if preds[proposal] < threshold:
+                continue
+
+            # Check if proposal creates a loop
+            if not nx.has_path(self.graph, i, j):
+                self.graph.merge_proposal(proposal)
+                accepts.append(proposal)
+        return accepts
 
     def save_results(self):
         """
@@ -251,6 +277,35 @@ class InferencePipeline:
             )
 
     # --- Helpers ---
+    def log(self, txt):
+        print(txt)
+        self.log_handle.write(txt)
+        self.log_handle.write("\n")
+
+    def predict(self, data):
+        """
+        ...
+
+        Parameters
+        ----------
+        data : HeteroGraphData
+            ...
+
+        Returns
+        -------
+        Dict[Frozenset[int], float]
+            Dictionary that maps proposal IDs to model predictions.
+        """
+        # Generate predictions
+        with torch.no_grad():
+            x = data.get_inputs().to(self.device)
+            hat_y = sigmoid(self.model(x))
+
+        # Reformat predictions
+        idx_to_id = data.idxs_proposals.idx_to_id
+        hat_y = ml_util.tensor_to_list(hat_y)
+        return {idx_to_id[i]: y_i for i, y_i in enumerate(hat_y)}
+
     def save_connections(self, round_id=None):
         """
         Writes the accepted proposals from the graph to a text file. Each line
@@ -289,184 +344,6 @@ class InferencePipeline:
         }
         path = os.path.join(self.output_dir, "metadata.json")
         util.write_json(path, metadata)
-
-    # --- Summaries ---
-    def log(self, txt):
-        print(txt)
-        self.log_handle.write(txt)
-        self.log_handle.write("\n")
-
-
-class InferenceEngine:
-    """
-    Class that runs inference with a machine learning model that has been
-    trained to classify edge proposals.
-    """
-
-    def __init__(
-        self,
-        dataset,
-        model_path,
-        ml_config,
-    ):
-        """
-        Initializes an inference engine by loading images and setting class
-        attributes.
-
-        Parameters
-        ----------
-        img_path : str
-            Path to image.
-        model_path : str
-            Path to machine learning model weights.
-        ml_config : MLConfig
-            Configuration object containing parameters and settings required
-            for the inference.
-        segmentation_path : str, optional
-            Path to segmentation stored in GCS bucket. Default is None.
-        """
-        # Instance attributes
-        self.batch_size = ml_config.batch_size
-        self.device = ml_config.device
-        self.model = VisionHGAT(ml_config.patch_shape)
-        self.pbar = tqdm(total=graph.n_proposals(), desc="Inference")
-        self.subgraph_sampler = self.get_subgraph_sampler(graph)
-
-        # Feature generator
-        self.feature_extractor = FeaturePipeline(
-            graph,
-            img_path,
-            brightness_clip=ml_config.brightness_clip,
-            patch_shape=ml_config.patch_shape,
-            segmentation_path=segmentation_path
-        )
-
-        # Load weights
-        ml_util.load_model(self.model, model_path, device=ml_config.device)
-
-    def run(self):
-        preds = dict()
-        for subgraph in self.dataset:
-            # Get model inputs
-            features = self.feature_extractor(subgraph)
-            data = HeteroGraphData(features)
-
-            # Run model
-            preds.update(self.predict(data))
-            self.pbar.update(subgraph.n_proposals())
-        return preds
-
-    def predict(self, data):
-        """
-        ...
-
-        Parameters
-        ----------
-        data : HeteroGraphData
-            ...
-
-        Returns
-        -------
-        Dict[Frozenset[int], float]
-            Dictionary that maps proposal IDs to model predictions.
-        """
-        # Generate predictions
-        with torch.no_grad():
-            x = data.get_inputs().to(self.device)
-            hat_y = sigmoid(self.model(x))
-
-        # Reformat predictions
-        idx_to_id = data.idxs_proposals.idx_to_id
-        hat_y = ml_util.tensor_to_list(hat_y)
-        return {idx_to_id[i]: y_i for i, y_i in enumerate(hat_y)}
-
-    def update_graph(self, preds, high_threshold=0.9):
-        """
-        Determines which proposals to accept based on prediction scores and
-        the specified threshold.
-
-        Parameters
-        ----------
-        preds : dict
-            Dictionary that maps proposal ids to probability generated from
-            machine learning model.
-        high_threshold : float, optional
-            Threshold value for separating the best proposals from the rest.
-            Default is 0.9.
-
-        Returns
-        -------
-        list
-            Proposals to be added as edges to "graph".
-        """
-        # Partition proposals into best and the rest
-        preds = {k: v for k, v in preds.items() if v > self.threshold}
-        best_proposals, proposals = self.separate_best(preds, high_threshold)
-
-        # Determine which proposals to accept
-        accepts = list()
-        accepts.extend(self.add_accepts(best_proposals))
-        accepts.extend(self.add_accepts(proposals))
-        return accepts
-
-    def separate_best(self, preds, high_threshold):
-        """
-        Splits "preds" into two separate dictionaries such that one contains
-        the best proposals (i.e. simple proposals with high confidence) and
-        the other contains all other proposals.
-
-        Parameters
-        ----------
-        preds : dict
-            Dictionary that maps proposal ids to probability generated from
-            machine learning model.
-        high_threshold : float
-            Threshold on acceptance probability for proposals.
-
-        Returns
-        -------
-        list
-            Proposal IDs determined to be the best.
-        list
-            All other proposal IDs.
-        """
-        best_probs, probs = list(), list()
-        best_proposals, proposals = list(), list()
-        simple_proposals = self.graph.simple_proposals()
-        for proposal, prob in preds.items():
-            if proposal in simple_proposals and prob > high_threshold:
-                best_proposals.append(proposal)
-                best_probs.append(prob)
-            else:
-                proposals.append(proposal)
-                probs.append(prob)
-        best_idxs = np.argsort(best_probs)
-        idxs = np.argsort(probs)
-        return np.array(best_proposals)[best_idxs], np.array(proposals)[idxs]
-
-    def add_accepts(self, proposals):
-        """
-        ...
-
-        Parameters
-        ----------
-        proposals : list[frozenset]
-            Proposals with predicted probability above threshold to be added
-            to the graph.
-
-        Returns
-        -------
-        List[frozenset]
-            List of proposals that do not create a cycle when iteratively
-            added to "graph".
-        """
-        accepts = list()
-        for proposal in proposals:
-            i, j = tuple(proposal)
-            if not nx.has_path(self.graph, i, j):
-                self.graph.merge_proposal(proposal)
-                accepts.append(proposal)
-        return accepts
 
 
 # --- Helpers ---

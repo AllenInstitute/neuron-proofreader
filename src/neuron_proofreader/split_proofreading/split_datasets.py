@@ -135,7 +135,7 @@ class FragmentsDataset(IterableDataset):
     def get_inputs(self, subgraph):
         features = self.feature_extractor(subgraph)
         data = HeteroGraphData(features)
-        if self.gt_path:
+        if self.graph.gt_path:
             return data.get_inputs(), data.get_targets()
         else:
             return data.get_inputs()
