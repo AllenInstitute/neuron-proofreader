@@ -592,6 +592,21 @@ class SkeletonGraph(nx.Graph):
         _, node = self.kdtree.query(xyz)
         return node
 
+    def get_summary(self, prefix=""):
+        # Compute values
+        n_components = format(nx.number_connected_components(self), ",")
+        n_nodes = format(self.graph.number_of_nodes(), ",")
+        n_edges = format(self.graph.number_of_edges(), ",")
+        memory = util.get_memory_usage()
+
+        # Compile results
+        summary = [f"{prefix} Graph"]
+        summary.append(f"# Connected Components: {n_components}")
+        summary.append(f"# Nodes: {n_nodes}")
+        summary.append(f"# Edges: {n_edges}")
+        summary.append(f"Memory Consumption: {memory:.2f} GBs")
+        return "\n".join(summary)
+
     def path_length(self, max_depth=np.inf, root=None):
         """
         Computes the path length of the connected component that contains the

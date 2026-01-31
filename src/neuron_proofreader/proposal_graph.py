@@ -31,7 +31,9 @@ from neuron_proofreader.split_proofreading.proposal_generation import (
     trim_endpoints_at_proposal
 )
 from neuron_proofreader.utils import (
-    geometry_util as geometry, graph_util as gutil, util,
+    geometry_util as geometry,
+    graph_util as gutil,
+    util,
 )
 
 
@@ -48,7 +50,7 @@ class ProposalGraph(SkeletonGraph):
     def __init__(
         self,
         anisotropy=(1.0, 1.0, 1.0),
-        filter_transitive_proposals=False,
+        gt_path=None,
         max_proposals_per_leaf=3,
         min_size=0,
         min_size_with_proposals=0,
@@ -57,7 +59,7 @@ class ProposalGraph(SkeletonGraph):
         remove_high_risk_merges=False,
         segmentation_path=None,
         soma_centroids=None,
-        verbose=False,
+        verbose=True,
     ):
         """
         Instantiates a ProposalGraph object.
@@ -93,6 +95,7 @@ class ProposalGraph(SkeletonGraph):
         # Instance attributes - Graph
         self.anisotropy = anisotropy
         self.component_id_to_swc_id = dict()
+        self.gt_path = gt_path
         self.leaf_kdtree = None
         self.soma_ids = set()
         self.verbose = verbose
@@ -191,6 +194,40 @@ class ProposalGraph(SkeletonGraph):
         i, j = tuple(edge_id)
         self.add_edge(i, j, radius=attrs["radius"], xyz=attrs["xyz"])
         self.xyz_to_edge.update({tuple(xyz): edge_id for xyz in attrs["xyz"]})
+
+    def connect_soma_fragments(self, soma_centroids):
+        merge_cnt, soma_cnt = 0, 0
+        for soma_xyz in soma_centroids:
+            node_ids = self.find_fragments_near_xyz(soma_xyz, 25)
+            if len(node_ids) > 1:
+                # Find closest node to soma location
+                soma_cnt += 1
+                best_dist = np.inf
+                best_node = None
+                for i in node_ids:
+                    dist = geometry.dist(soma_xyz, self.node_xyz[i])
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_node = i
+                soma_component_id = self.node_component_id[best_node]
+                self.soma_ids.add(soma_component_id)
+                node_ids.remove(best_node)
+
+                # Merge fragments to soma
+                soma_xyz = self.node_xyz[best_node]
+                for i in node_ids:
+                    attrs = {
+                        "radius": np.array([2, 2]),
+                        "xyz": np.array([soma_xyz, self.node_xyz[i]]),
+                    }
+                    self._add_edge((best_node, i), attrs)
+                    self.update_component_ids(soma_component_id, i)
+                    merge_cnt += 1
+
+        # Summarize results
+        results = [f"# Somas Connected: {soma_cnt}"]
+        results.append(f"# Soma Fragments Merged: {merge_cnt}")
+        return results
 
     def relabel_nodes(self):
         """
@@ -319,7 +356,7 @@ class ProposalGraph(SkeletonGraph):
             return geometry.query_ball(self.kdtree, xyz, d)
 
     # --- Proposal Generation ---
-    def generate_proposals(self, search_radius, gt_graph=None):
+    def generate_proposals(self, search_radius):
         """
         Generates proposals from leaf nodes.
 
@@ -330,16 +367,17 @@ class ProposalGraph(SkeletonGraph):
         gt_graph : networkx.Graph, optional
             Ground truth graph. Default is None.
         """
-        # Generate proposals
+        # Proposal pipeline
         proposals = self.proposal_generator(search_radius)
+        self.search_radius = search_radius
         self.store_proposals(proposals)
         self.trim_proposals()
 
         # Set groundtruth
-        if gt_graph:
+        if self.gt_path:
+            gt_graph = ProposalGraph(anisotropy=self.anisotropy)
+            gt_graph.load(self.gt_path)
             self.gt_accepts = groundtruth_generation.run(gt_graph, self)
-        else:
-            self.gt_accepts = set()
 
     def add_proposal(self, i, j):
         """

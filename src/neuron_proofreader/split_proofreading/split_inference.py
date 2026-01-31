@@ -39,17 +39,15 @@ import numpy as np
 import os
 import torch
 
-from neuron_proofreader.proposal_graph import ProposalGraph
-from neuron_proofreader.machine_learning.subgraph_sampler import (
-    SubgraphSampler,
-    SeededSubgraphSampler
+from neuron_proofreader.split_proofreading.split_datasets import (
+    FragmentsDataset
 )
 from neuron_proofreader.split_proofreading.split_feature_extraction import (
     FeaturePipeline,
     HeteroGraphData
 )
 from neuron_proofreader.machine_learning.gnn_models import VisionHGAT
-from neuron_proofreader.utils import geometry_util, ml_util, util
+from neuron_proofreader.utils import ml_util, util
 
 
 class InferencePipeline:
@@ -63,15 +61,14 @@ class InferencePipeline:
 
     def __init__(
         self,
-        brain_id,
-        segmentation_id,
+        fragments_path,
         img_path,
         model_path,
         output_dir,
         config,
+        log_preamble="",
         segmentation_path=None,
-        soma_centroids=None,
-        s3_dict=None,
+        soma_centroids=list(),
     ):
         """
         Initializes an object that executes the full split correction
@@ -95,34 +92,61 @@ class InferencePipeline:
         segmentation_path : str, optional
             Path to segmentation stored in GCS bucket. The default is None.
         soma_centroids : List[Tuple[float]] or None, optional
-            Physcial coordinates of soma centroids. The default is None.
-        s3_dict : dict, optional
-            ...
+            Physcial coordinates of soma centroids. The default is an empty
+            list.
         """
         # Instance attributes
         self.accepted_proposals = list()
+        self.config = config
         self.img_path = img_path
         self.model_path = model_path
-        self.brain_id = brain_id
-        self.segmentation_id = segmentation_id
-        self.segmentation_path = segmentation_path
-        self.soma_centroids = soma_centroids or list()
-        self.s3_dict = s3_dict
-
-        # Extract config settings
-        self.graph_config = config.graph_config
-        self.ml_config = config.ml_config
-
-        # Set output directory
         self.output_dir = output_dir
-        util.mkdir(self.output_dir)
+        self.soma_centroids = soma_centroids
 
-        # Initialize logger
+        # Logger
+        util.mkdir(self.output_dir)
         log_path = os.path.join(self.output_dir, "runtimes.txt")
         self.log_handle = open(log_path, 'a')
+        self.log(log_preamble)
 
-    # --- Core ---
-    def run(self, swcs_path, search_radius):
+        # Load data
+        self._load_data(fragments_path, img_path, segmentation_path)
+
+    def _load_data(self, fragments_path, img_path, segmentation_path):
+        """
+        Builds a graph from the given fragments.
+
+        Parameters
+        ----------
+        fragments_path : str
+            Path to SWC files to be loaded into graph.
+        """
+        # Load data
+        t0 = time()
+        self.log("Step 1: Build Graph")
+        self.dataset = FragmentsDataset(
+            fragments_path,
+            img_path,
+            self.config,
+            segmentation_path=segmentation_path,
+            soma_centroids=self.soma_centroids
+        )
+        self.save_fragment_ids()
+
+        # Connect fragments very close to soma
+        self.log(f"# Soma Fragments: {len(self.dataset.graph.soma_ids)}")
+        if len(self.soma_centroids) > 0:
+            somas = self.soma_centroids
+            results = self.dataset.graph.connect_soma_fragments(somas)
+            self.log(results)
+
+        # Log results
+        elapsed, unit = util.time_writer(time() - t0)
+        self.log(self.dataset.graph.get_summary(prefix="\nInitial"))
+        self.log(f"Module Runtime: {elapsed:.2f} {unit}\n")
+
+    # --- Core Routines ---
+    def run(self, search_radius):
         """
         Executes the full inference pipeline.
 
@@ -132,120 +156,16 @@ class InferencePipeline:
             Path to SWC files used to build an instance of FragmentGraph,
             see "swc_util.Reader" for further documentation.
         """
-        # Initializations
-        self.log_experiment()
-        self.write_metadata()
-        t0 = time()
-
         # Main
-        self.build_graph(swcs_path)
-        self.connect_soma_fragments() if self.soma_centroids else None
+        t0 = time()
         self.generate_proposals(search_radius)
-        self.classify_proposals(self.ml_config.threshold, search_radius)
-
-        # Finish
-        t, unit = util.time_writer(time() - t0)
-        self.log_graph_specs(prefix="\nFinal")
-        self.log(f"Total Runtime: {t:.2f} {unit}\n")
-        self.save_results()
-
-    def run_schedule(self, swcs_path, radius_schedule, threshold_schedule):
-        # Initializations
-        self.log_experiment()
-        self.write_metadata()
-        t0 = time()
-
-        # Main
-        self.build_graph(swcs_path)
-        schedules = zip(radius_schedule, threshold_schedule)
-        for i, (radius, threshold) in enumerate(schedules):
-            self.log(f"\n--- Round {i + 1}:  Radius = {radius} ---")
-            self.generate_proposals(radius)
-            self.classify_proposals(threshold)
-            self.log_graph_specs(prefix="Current")
-
-        # Finish
-        t, unit = util.time_writer(time() - t0)
-        self.log_graph_specs(prefix="\nFinal")
-        self.log(f"Total Runtime: {t:.2f} {unit}\n")
-        self.save_results()
-
-    def build_graph(self, swcs_path):
-        """
-        Builds a graph from the given fragments.
-
-        Parameters
-        ----------
-        fragment_pointer : str
-            Path to SWC files to be loaded into graph.
-        """
-        self.log("Step 1: Build Graph")
-        t0 = time()
-
-        # Initialize graph
-        self.graph = ProposalGraph(
-            anisotropy=self.graph_config.anisotropy,
-            min_size=self.graph_config.min_size,
-            min_size_with_proposals=self.graph_config.min_size_with_proposals,
-            node_spacing=self.graph_config.node_spacing,
-            prune_depth=self.graph_config.prune_depth,
-            remove_high_risk_merges=self.graph_config.remove_high_risk_merges,
-            segmentation_path=self.segmentation_path,
-            soma_centroids=self.soma_centroids,
-            verbose=True,
-        )
-        self.graph.load(swcs_path)
-
-        # Filter fragments
-        if self.graph_config.remove_doubles:
-            geometry_util.remove_doubles(self.graph, 160)
+        self.classify_proposals(self.config.ml.threshold)
 
         # Report results
-        path = f"{self.output_dir}/segment_ids.txt"
-        swc_ids = list(self.graph.component_id_to_swc_id.values())
-        util.write_list(path, swc_ids)
-        print("# Soma Fragments:", len(self.graph.soma_ids))
-
         t, unit = util.time_writer(time() - t0)
-        self.log_graph_specs(prefix="\nInitial")
-        self.log(f"Module Runtime: {t:.2f} {unit}\n")
-
-    def connect_soma_fragments(self):
-        # Initializations
-        self.graph.set_kdtree()
-
-        # Parse locations
-        merge_cnt, soma_cnt = 0, 0
-        for soma_xyz in self.soma_centroids:
-            node_ids = self.graph.find_fragments_near_xyz(soma_xyz, 25)
-            if len(node_ids) > 1:
-                # Find closest node to soma location
-                soma_cnt += 1
-                best_dist = np.inf
-                best_node = None
-                for i in node_ids:
-                    dist = geometry_util.dist(soma_xyz, self.graph.node_xyz[i])
-                    if dist < best_dist:
-                        best_dist = dist
-                        best_node = i
-                soma_component_id = self.graph.node_component_id[best_node]
-                self.graph.soma_ids.add(soma_component_id)
-                node_ids.remove(best_node)
-
-                # Merge fragments to soma
-                soma_xyz = self.graph.node_xyz[best_node]
-                for i in node_ids:
-                    attrs = {
-                        "radius": np.array([2, 2]),
-                        "xyz": np.array([soma_xyz, self.graph.node_xyz[i]]),
-                    }
-                    self.graph._add_edge((best_node, i), attrs)
-                    self.graph.update_component_ids(soma_component_id, i)
-                    merge_cnt += 1
-
-        print("# Somas Connected:", soma_cnt)
-        print("# Soma Fragment Merges:", merge_cnt)
-        del self.graph.kdtree
+        self.log(self.dataset.graph.get_summary(prefix="\nFinal"))
+        self.log(f"Total Runtime: {t:.2f} {unit}\n")
+        self.save_results()
 
     def generate_proposals(self, search_radius):
         """
@@ -255,16 +175,17 @@ class InferencePipeline:
         # Main
         t0 = time()
         self.log("\nStep 2: Generate Proposals")
-        self.graph.generate_proposals(search_radius)
+        self.dataset.graph.generate_proposals(search_radius)
         n_proposals = format(self.graph.n_proposals(), ",")
+        n_proposals_blocked = self.dataset.graph.n_proposals_blocked
 
         # Report results
         t, unit = util.time_writer(time() - t0)
         self.log(f"# Proposals: {n_proposals}")
-        self.log(f"# Proposals Blocked: {self.graph.n_proposals_blocked}")
+        self.log(f"# Proposals Blocked: {n_proposals_blocked}")
         self.log(f"Module Runtime: {t:.2f} {unit}\n")
 
-    def classify_proposals(self, accept_threshold, search_radius):
+    def classify_proposals(self, accept_threshold):
         """
         Classifies proposals by calling "self.inference_engine". This routine
         generates features and runs a GNN to make predictions. Proposals with
@@ -282,7 +203,6 @@ class InferencePipeline:
             self.img_path,
             self.model_path,
             self.ml_config,
-            search_radius,
             segmentation_path=self.segmentation_path,
         )
         preds_dict = inference_engine.run()
@@ -330,7 +250,7 @@ class InferencePipeline:
                 self.s3_dict["prefix"]
             )
 
-    # --- io ---
+    # --- Helpers ---
     def save_connections(self, round_id=None):
         """
         Writes the accepted proposals from the graph to a text file. Each line
@@ -341,6 +261,11 @@ class InferencePipeline:
         with open(path, "w") as f:
             for id_1, id_2 in self.graph.merged_ids:
                 f.write(f"{id_1}, {id_2}" + "\n")
+
+    def save_fragment_ids(self):
+        path = f"{self.output_dir}/segment_ids.txt"
+        segment_ids = list(self.dataset.graph.component_id_to_swc_id.values())
+        util.write_list(path, segment_ids)
 
     def write_metadata(self):
         """
@@ -371,30 +296,6 @@ class InferencePipeline:
         self.log_handle.write(txt)
         self.log_handle.write("\n")
 
-    def log_experiment(self):
-        self.log("\nExperiment Overview")
-        self.log("-" * len(self.segmentation_id))
-        self.log(f"Brain_ID: {self.brain_id}")
-        self.log(f"Segmentation_ID: {self.segmentation_id}")
-        self.log("\n")
-
-    def log_graph_specs(self, prefix="\n"):
-        """
-        Prints an overview of the graph's structure and memory usage.
-        """
-        # Compute values
-        n_components = nx.number_connected_components(self.graph)
-        n_components = format(n_components, ",")
-        n_nodes = format(self.graph.number_of_nodes(), ",")
-        n_edges = format(self.graph.number_of_edges(), ",")
-
-        # Report results
-        self.log(f"{prefix} Graph")
-        self.log(f"# Connected Components: {n_components}")
-        self.log(f"# Nodes: {n_nodes}")
-        self.log(f"# Edges: {n_edges}")
-        self.log(f"Memory Consumption: {util.get_memory_usage():.2f} GBs")
-
 
 class InferenceEngine:
     """
@@ -404,12 +305,9 @@ class InferenceEngine:
 
     def __init__(
         self,
-        graph,
-        img_path,
+        dataset,
         model_path,
         ml_config,
-        search_radius,
-        segmentation_path=None,
     ):
         """
         Initializes an inference engine by loading images and setting class
@@ -424,8 +322,6 @@ class InferenceEngine:
         ml_config : MLConfig
             Configuration object containing parameters and settings required
             for the inference.
-        search_radius : float
-            Search radius used to generate proposals.
         segmentation_path : str, optional
             Path to segmentation stored in GCS bucket. Default is None.
         """
@@ -440,7 +336,6 @@ class InferenceEngine:
         self.feature_extractor = FeaturePipeline(
             graph,
             img_path,
-            search_radius,
             brightness_clip=ml_config.brightness_clip,
             patch_shape=ml_config.patch_shape,
             segmentation_path=segmentation_path
@@ -449,15 +344,9 @@ class InferenceEngine:
         # Load weights
         ml_util.load_model(self.model, model_path, device=ml_config.device)
 
-    def get_subgraph_sampler(self, graph):
-        if len(graph.soma_ids) > 0:
-            return SeededSubgraphSampler(graph, self.batch_size)
-        else:
-            return SubgraphSampler(graph, self.batch_size)
-
     def run(self):
         preds = dict()
-        for subgraph in self.subgraph_sampler:
+        for subgraph in self.dataset:
             # Get model inputs
             features = self.feature_extractor(subgraph)
             data = HeteroGraphData(features)
@@ -582,4 +471,4 @@ class InferenceEngine:
 
 # --- Helpers ---
 def reformat_preds(preds_dict):
-    return {tuple(k): v for k, v in preds_dict.items()}
+    return {str(k): v for k, v in preds_dict.items()}
