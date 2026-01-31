@@ -16,7 +16,7 @@ import torch
 import torch.nn.init as init
 
 from neuron_proofreader.machine_learning.vision_models import CNN3D
-from neuron_proofreader.split_proofreading import feature_extraction
+from neuron_proofreader.split_proofreading import split_feature_extraction
 from neuron_proofreader.utils.ml_util import FeedForwardNet
 
 
@@ -125,7 +125,7 @@ def init_node_embedding(output_dim):
         features.
     """
     # Get feature dimensions
-    node_input_dims = feature_extraction.get_feature_dict()
+    node_input_dims = split_feature_extraction.get_feature_dict()
     dim_b = node_input_dims["branch"]
     dim_p = node_input_dims["proposal"]
 

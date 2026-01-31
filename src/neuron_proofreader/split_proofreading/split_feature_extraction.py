@@ -29,7 +29,6 @@ class FeaturePipeline:
         self,
         graph,
         img_path,
-        search_radius,
         brightness_clip=400,
         padding=50,
         patch_shape=(96, 96, 96),
@@ -44,8 +43,6 @@ class FeaturePipeline:
             Graph to extract features from.
         img_path : str
             Path to image of whole-brain dataset.
-        search_radius : float
-            Search radius used to generate proposals.
         brightness_clip : int, optional
             ...
         padding : int, optional
@@ -58,7 +55,7 @@ class FeaturePipeline:
             Path to segmentation of whole-brain dataset.
         """
         self.extractors = [
-            SkeletonFeatureExtractor(graph, search_radius),
+            SkeletonFeatureExtractor(graph),
             ImageFeatureExtractor(
                 graph,
                 img_path,
@@ -89,7 +86,7 @@ class SkeletonFeatureExtractor:
     A class for extracting skeleton-based features.
     """
 
-    def __init__(self, graph, search_radius):
+    def __init__(self, graph):
         """
         Instantiates a SkeletonFeatureExtractor object.
 
@@ -97,12 +94,9 @@ class SkeletonFeatureExtractor:
         ----------
         graph : ProposalGraph
             Graph to extract features from.
-        search_radius : float
-            Search radius used to generate edge proposals.
         """
         # Instance attributes
         self.graph = graph
-        self.search_radius = search_radius
 
         # Build KD-tree from leaf nodes
         self.graph.set_kdtree(node_type="leaf")
@@ -184,8 +178,8 @@ class SkeletonFeatureExtractor:
         for p in subgraph.proposals:
             proposal_features[p] = np.concatenate(
                 (
-                    self.graph.proposal_length(p) / self.search_radius,
-                    self.graph.n_nearby_leafs(p, self.search_radius),
+                    self.graph.proposal_length(p) / self.graph.search_radius,
+                    self.graph.n_nearby_leafs(p, self.graph.search_radius),
                     self.graph.proposal_attr(p, "radius"),
                     self.graph.proposal_directionals(p, 16),
                     self.graph.proposal_directionals(p, 32),

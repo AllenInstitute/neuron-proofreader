@@ -8,7 +8,7 @@ This module defines a set of configuration classes used for setting up various
 aspects of a system involving graphs, proposals, and machine learning (ML).
 
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Tuple
 
 
@@ -24,13 +24,6 @@ class GraphConfig:
         Scaling factors applied to xyz coordinates to account for anisotropy
         of microscope. Note this instance of "anisotropy" is only used while
         reading SWC files. Default is (1.0, 1.0, 1.0).
-    complex_bool : bool
-        Indication of whether to generate complex proposals, meaning proposals
-        between leaf and non-leaf nodes. Default is False.
-    long_range_bool : bool, optional
-        Indication of whether to generate simple proposals within a scaled
-        distance of "search_radius" from leaves without any proposals. Default
-        is False.
     min_size : float, optional
         Minimum path length (in microns) of swc files which are stored as
         connected components in the FragmentsGraph. Default is 30.
@@ -48,27 +41,23 @@ class GraphConfig:
     remove_high_risk_merges : bool, optional
         Indication of whether to remove high risk merge sites (i.e. close
         branching points). Default is False.
-    smooth_bool : bool, optional
-        Indication of whether to smooth branches in the graph. Default is
-        True.
     trim_endpoints_bool : bool, optional
         Indication of whether to endpoints of branches with exactly one
         proposal. Default is True.
     """
 
-    anisotropy: Tuple[float] = field(default_factory=tuple)
-    complex_bool: bool = False
-    long_range_bool: bool = True
-    min_size: float = 30.0
-    min_size_with_proposals: float = 0
-    node_spacing: int = 5
+    anisotropy: Tuple[float, float, float] = (1.0, 1.0, 1.0)
+    max_proposals_per_leaf: int = 3
+    min_size: float = 40.0
+    min_size_with_proposals: float = 40.0
+    node_spacing: int = 1
     proposals_per_leaf: int = 3
     prune_depth: float = 24.0
-    remove_doubles: bool = False
+    remove_doubles: bool = True
     remove_high_risk_merges: bool = False
     search_radius: float = 20.0
-    smooth_bool: bool = True
     trim_endpoints_bool: bool = True
+    verbose: bool = True
 
 
 @dataclass
@@ -87,7 +76,9 @@ class MLConfig:
     batch_size: int = 64
     brightness_clip: int = 400
     device: str = "cuda"
-    patch_shape : tuple = (96, 96, 96)
+    patch_shape: tuple = (96, 96, 96)
+    shuffle: bool = False
+    transform: bool = False
     threshold: float = 0.8
 
 
@@ -112,5 +103,5 @@ class Config:
             An instance of the "MLConfig" class that includes configuration
             parameters for machine learning models.
         """
-        self.graph_config = graph_config
-        self.ml_config = ml_config
+        self.graph = graph_config
+        self.ml = ml_config

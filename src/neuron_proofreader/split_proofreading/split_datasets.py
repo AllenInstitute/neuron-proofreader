@@ -10,13 +10,13 @@ Routines for training machine learning models that classify proposals.
 
 from torch.utils.data import IterableDataset
 
-import numpy as np
 import os
 import pandas as pd
 
 from neuron_proofreader.proposal_graph import ProposalGraph
 from neuron_proofreader.machine_learning.augmentation import ImageTransforms
 from neuron_proofreader.machine_learning.subgraph_sampler import (
+    SeededSubgraphSampler,
     SubgraphSampler
 )
 from neuron_proofreader.split_proofreading.split_feature_extraction import (
@@ -26,7 +26,151 @@ from neuron_proofreader.split_proofreading.split_feature_extraction import (
 from neuron_proofreader.utils import geometry_util, img_util, util
 
 
+# --- Single Brain Dataset ---
 class FragmentsDataset(IterableDataset):
+
+    def __init__(
+        self,
+        fragments_path,
+        img_path,
+        config,
+        gt_path=None,
+        metadata_path=None,
+        segmentation_path=None,
+        soma_centroids=None
+    ):
+        """
+        Instantiates a FragmentsDataset object.
+
+        Parameters
+        ----------
+        fragments_path : str
+            Path to predicted SWC files to be loaded.
+        img_path : str
+            Path to the raw image associated with the fragments.
+        config : Config
+            ...
+        gt_pointer : str, optional
+            Path to ground-truth SWC files to be loaded. Default is None.
+        metadata_path : str
+            ...
+        segmentation_path : str
+            Path to the segmentation that fragments were generated from.
+            Default is None.
+        """
+        # Instance attributes
+        self.config = config
+        self.transform = ImageTransforms() if config.ml.transform else False
+        self.graph = self._load_graph(
+            fragments_path, metadata_path, segmentation_path, soma_centroids
+        )
+
+        # Feature extractor
+        self.feature_extractor = FeaturePipeline(
+            self.graph,
+            img_path,
+            brightness_clip=self.config.ml.brightness_clip,
+            patch_shape=self.config.ml.patch_shape,
+            segmentation_path=segmentation_path
+        )
+
+    def _load_graph(
+        self, fragments_path, metadata_path, segmentation_path, soma_centroids
+    ):
+        """
+        Loads a graph by reading and processing SWC files specified by the
+        given path.
+
+        Parameters
+        ----------
+        fragments_path : str
+            Path to SWC files to be loaded.
+        metadata_path : str
+            Patch to JSON file containing metadata on block that fragments
+            were extracted from.
+        soma_centroids : List[Tuple[float]]
+            List of physical coordinates that represent soma centers.
+
+        Returns
+        -------
+        graph : ProposalGraph
+            Graph constructed from SWC files.
+        """
+        # Build graph
+        graph = ProposalGraph(
+            anisotropy=self.config.graph.anisotropy,
+            min_size=self.config.graph.min_size,
+            min_size_with_proposals=self.config.graph.min_size_with_proposals,
+            node_spacing=self.config.graph.node_spacing,
+            prune_depth=self.config.graph.prune_depth,
+            remove_high_risk_merges=self.config.graph.remove_high_risk_merges,
+            segmentation_path=segmentation_path,
+            soma_centroids=soma_centroids
+        )
+        graph.load(fragments_path)
+
+        # Post process fragments
+        if metadata_path:
+            self.clip_fragments(graph, metadata_path)
+
+        if self.config.graph.remove_doubles:
+            geometry_util.remove_doubles(graph, 200)
+        return graph
+
+    # --- Get Data ---
+    def __iter__(self):
+        """
+        Iterates over the dataset and yields model-ready inputs and targets.
+
+        Yields
+        ------
+        inputs : HeteroGraphData
+            Heterogeneous graph data.
+        targets : torch.Tensor
+            Ground truth labels.
+        """
+        for subgraph in self.get_sampler():
+            yield self.get_inputs(subgraph)
+
+    def get_inputs(self, subgraph):
+        features = self.feature_extractor(subgraph)
+        data = HeteroGraphData(features)
+        if self.graph.gt_path:
+            return data.get_inputs(), data.get_targets()
+        else:
+            return data.get_inputs()
+
+    # --- Helpers ---
+    @staticmethod
+    def clip_fragments(graph, metadata_path):
+        # Extract bounding box
+        bucket_name, path = util.parse_cloud_path(metadata_path)
+        metadata = util.read_json_from_gcs(bucket_name, path)
+        origin = metadata["chunk_origin"][::-1]
+        shape = metadata["chunk_shape"][::-1]
+
+        # Clip graph
+        nodes = list()
+        for i in graph.nodes:
+            voxel = graph.get_voxel(i)
+            if not img_util.is_contained(voxel - origin, shape):
+                nodes.append(i)
+        graph.remove_nodes_from(nodes)
+        graph.relabel_nodes()
+
+    def get_sampler(self):
+        batch_size = self.config.ml.batch_size
+        if len(self.graph.soma_ids) > 0:
+            sampler = SeededSubgraphSampler(
+                self.graph, max_proposals=batch_size
+            )
+        else:
+            sampler = SubgraphSampler(self.graph, max_proposals=batch_size)
+        return iter(sampler)
+
+
+# --- Multi-Brain Dataset ---
+class MultiBrainFragmentsDataset:
     """
     A dataset class for storing graphs used to train models to perform split
     correction. Graphs are stored in the "self.graphs" attribute, which is a
@@ -43,117 +187,14 @@ class FragmentsDataset(IterableDataset):
 
     Note: This dataset supports graphs from multiple whole-brain datasets.
     """
-
-    def __init__(
-        self,
-        config,
-        brightness_clip=400,
-        patch_shape=(128, 128, 128),
-        shuffle=True,
-        transform=False
-    ):
-        """
-        Instantiates a FragmentsDataset object.
-
-        Parameters
-        ----------
-        config : GraphConfig
-            Config object that stores parameters used to build graphs.
-        patch_shape : Tuple[int], optional
-            Shape of image patch input to a vision model. Default is (128, 128,
-            128).
-        transform : bool, optional
-            Indication of whether to apply augmentation to input images.
-            Default is False.
-        """
+    def __init__(self, shuffle=True):
         # Instance attributes
-        self.brightness_clip = brightness_clip
-        self.config = config
-        self.feature_extractors = dict()
-        self.graphs = dict()
-        self.patch_shape = patch_shape
+        self.datasets = dict()
         self.shuffle = shuffle
-        self.transform = ImageTransforms() if transform else False
 
-    # --- Load Data ---
-    def add_graph(
-        self,
-        key,
-        gt_pointer,
-        pred_pointer,
-        img_path,
-        metadata_path=None,
-        segmentation_path=None
-    ):
-        """
-        Loads a fragments graph, generates proposals, and initializes feature
-        extraction.
+    def add_dataset(self, key, dataset):
+        self.datasets[key] = dataset
 
-        Parameters
-        ----------
-        key : Tuple[str]
-            Unique identifier used to register the graph and its feature
-            pipeline.
-        gt_pointer : str
-            Path to ground-truth SWC files to be loaded.
-        pred_pointer : str
-            Path to predicted SWC files to be loaded.
-        img_path : str
-            Path to the raw image associated with the graph.
-        metadata_path : str
-            ...
-        segmentation_path : str
-            Path to the segmentation mask associated with the graph.
-        """
-        # Add graph
-        gt_graph = self.load_graph(gt_pointer, is_gt=True)
-        self.graphs[key] = self.load_graph(pred_pointer, metadata_path)
-        self.graphs[key].generate_proposals(
-            self.config.search_radius, gt_graph=gt_graph
-        )
-
-        # Generate features
-        self.feature_extractors[key] = FeaturePipeline(
-            self.graphs[key],
-            img_path,
-            self.config.search_radius,
-            brightness_clip=self.brightness_clip,
-            patch_shape=self.patch_shape,
-            segmentation_path=segmentation_path
-        )
-
-    def load_graph(self, swc_pointer, is_gt=False, metadata_path=None):
-        """
-        Loads a graph by reading and processing SWC files specified by
-        "swc_pointer".
-
-        Parameters
-        ----------
-        swc_pointer : str
-            Path to SWC files to be loaded.
-        metadata_path : str
-            Patch to JSON file containing metadata on block that fragments
-            were extracted from.
-
-        Returns
-        -------
-        graph : ProposalGraph
-            Graph constructed from SWC files.
-        """
-        # Build graph
-        graph = ProposalGraph(
-            anisotropy=self.config.anisotropy,
-            min_size=self.config.min_size
-        )
-        graph.load(swc_pointer)
-
-        # Post process fragments
-        if not is_gt:
-            self.clip_fragments(graph, metadata_path)
-            geometry_util.remove_doubles(graph, 200)
-        return graph
-
-    # --- Get Data ---
     def __iter__(self):
         """
         Iterates over the dataset and yields model-ready inputs and targets.
@@ -165,27 +206,16 @@ class FragmentsDataset(IterableDataset):
         targets : torch.Tensor
             Ground truth labels.
         """
-        # Initialize subgraph samplers
-        samplers = dict()
-        for key, graph in self.graphs.items():
-            samplers[key] = iter(SubgraphSampler(graph, max_proposals=32))
-
-        # Iterate over dataset
+        samplers = self.init_samplers()
         while len(samplers) > 0:
             key = self.get_next_key(samplers)
             try:
-                # Feature extraction
                 subgraph = next(samplers[key])
-                features = self.feature_extractors[key](subgraph)
-
-                # Get model inputs
-                data = HeteroGraphData(features)
-                inputs = data.get_inputs()
-                targets = data.get_targets()
-                yield inputs, targets
+                yield self.datasets.get_inputs(subgraph)
             except StopIteration:
                 del samplers[key]
 
+    # --- Helpers ---
     def get_next_key(self, samplers):
         """
         Gets the next key to sample from a dictionary of samplers.
@@ -206,23 +236,14 @@ class FragmentsDataset(IterableDataset):
             keys = sorted(samplers.keys())
             return keys[0]
 
-    # --- Helpers ---
-    @staticmethod
-    def clip_fragments(graph, metadata_path):
-        # Extract bounding box
-        bucket_name, path = util.parse_cloud_path(metadata_path)
-        metadata = util.read_json_from_gcs(bucket_name, path)
-        origin = metadata["chunk_origin"][::-1]
-        shape = metadata["chunk_shape"][::-1]
-
-        # Clip graph
-        nodes = list()
-        for i in graph.nodes:
-            voxel = graph.get_voxel(i)
-            if not img_util.is_contained(voxel - origin, shape):
-                nodes.append(i)
-        graph.remove_nodes_from(nodes)
-        graph.relabel_nodes()
+    def init_samplers(self):
+        samplers = dict()
+        for key, dataset in self.datasets.items():
+            batch_size = dataset.config.ml.batch_size
+            samplers[key] = iter(
+                SubgraphSampler(dataset.graph, max_proposals=batch_size)
+            )
+        return samplers
 
     def n_proposals(self):
         """
@@ -233,7 +254,10 @@ class FragmentsDataset(IterableDataset):
         int
             Number of proposals.
         """
-        return np.sum([graph.n_proposals() for graph in self.graphs.values()])
+        cnt = 0
+        for dataset in self.datasets.values():
+            cnt += dataset.graph.n_proposals()
+        return cnt
 
     def p_accepts(self):
         """
@@ -244,8 +268,10 @@ class FragmentsDataset(IterableDataset):
         float
             Percentage of accepted proposals in ground truth.
         """
-        cnts = [len(graph.gt_accepts) for graph in self.graphs.values()]
-        return np.sum(cnts) / self.n_proposals()
+        accepts_cnt = 0
+        for dataset in self.datasets.values():
+            accepts_cnt += len(dataset.graph.gt_accepts)
+        return accepts_cnt / self.n_proposals()
 
     def save_examples_summary(self, path):
         """
@@ -257,8 +283,9 @@ class FragmentsDataset(IterableDataset):
             Output path for the CSV file.
         """
         examples_summary = list()
-        for key in sorted(self.graphs.keys()):
-            examples_summary.extend([key] * self.graphs[key].n_proposals())
+        for key in sorted(self.datasets.keys()):
+            n_proposals = self.datasets[key].graph.n_proposals()
+            examples_summary.extend([key] * n_proposals)
         pd.DataFrame(examples_summary).to_csv(path)
 
 
