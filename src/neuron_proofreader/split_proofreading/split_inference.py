@@ -186,7 +186,7 @@ class InferencePipeline:
         self.log(f"# Proposals Blocked: {n_proposals_blocked}")
         self.log(f"Module Runtime: {t:.2f} {unit}\n")
 
-    def classify_proposals(self, accept_threshold):
+    def classify_proposals(self, accept_threshold, search_radius):
         """
         Classifies proposals by calling "self.inference_engine". This routine
         generates features and runs a GNN to make predictions. Proposals with
