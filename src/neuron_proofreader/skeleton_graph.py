@@ -365,9 +365,20 @@ class SkeletonGraph(nx.Graph):
         return tuple([v - o for v, o in zip(voxel, offset)])
 
     def get_node_segment_id(self, node):
-        component_id = self.node_component_id[node]
-        swc_id = self.component_id_to_swc_id[component_id]
-        return swc_id.split(".")[0]
+        """
+        Gets the segment ID corresponding to the given node.
+
+        Parameters
+        ----------
+        node : int
+            Node ID.
+
+        Returns
+        -------
+        str
+            Segment ID corresponding to the given node.
+        """
+        return self.get_swc_id(node).split(".")[0]
 
     def get_nodes_with_component_id(self, component_id):
         """
@@ -386,6 +397,19 @@ class SkeletonGraph(nx.Graph):
         return set(np.where(self.node_component_id == component_id)[0])
 
     def get_nodes_with_segment_id(self, segment_id):
+        """
+        Gets all nodes with the given segment ID.
+
+        Parameters
+        ----------
+        segment_id : int
+            Unique identifier of a segment to be queried.
+
+        Returns
+        -------
+        Set[int]
+            Nodes with the given segment ID.
+        """
         nodes = set()
         query_id = f"{segment_id}."
         for swc_id in self.get_swc_ids():
@@ -556,6 +580,22 @@ class SkeletonGraph(nx.Graph):
             zip_writer.writestr(filename, text_buffer.getvalue())
 
     # --- Helpers ---
+    def clip_skeletons(self, metadata_path):
+        # Extract bounding box
+        bucket_name, path = util.parse_cloud_path(metadata_path)
+        metadata = util.read_json_from_gcs(bucket_name, path)
+        origin = metadata["chunk_origin"][::-1]
+        shape = metadata["chunk_shape"][::-1]
+
+        # Clip graph
+        nodes = list()
+        for i in self.nodes:
+            voxel = self.get_voxel(i)
+            if not img_util.is_contained(voxel - origin, shape):
+                nodes.append(i)
+        self.remove_nodes_from(nodes)
+        self.relabel_nodes()
+
     def dist(self, i, j):
         """
         Computes the Euclidean distance between nodes "i" and "j".

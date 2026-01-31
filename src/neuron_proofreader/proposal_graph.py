@@ -450,7 +450,7 @@ class ProposalGraph(SkeletonGraph):
 
     def n_proposals(self):
         """
-        Counts the number of proposals.
+        Counts the number of proposals in the graph.
 
         Returns
         -------

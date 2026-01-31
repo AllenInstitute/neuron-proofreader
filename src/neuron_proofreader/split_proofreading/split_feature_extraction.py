@@ -854,6 +854,17 @@ class HeteroGraphData(HeteroData):
         """
         return self.y_dict["proposal"]
 
+    def n_proposals(self):
+        """
+        Counts the number of proposals in this data object.
+
+        Returns
+        -------
+        int
+            Number of proposals in the graph.
+        """
+        return len(self["proposal"].y)
+
     def set_edge_index(self, edge_index, edge_type):
         """
         Sets the edge index for a given heterogeneous edge type.

@@ -24,8 +24,7 @@ Code that executes the full GraphTrace inference pipeline.
                 Add accepted proposals to the fragments graph as edges.
 
 Note: Steps 2 and 3 of the inference pipeline can be iterated in a loop that
-      repeats multiple times by calling the routine "run_schedule" within the
-      InferencePipeline class.
+      repeats multiple times by calling the pipeline in a loop
 
 """
 
@@ -142,7 +141,7 @@ class InferencePipeline:
         self.log(f"Module Runtime: {elapsed:.2f} {unit}\n")
 
     # --- Core Routines ---
-    def run(self, search_radius):
+    def __call__(self, search_radius):
         """
         Executes the full inference pipeline.
 
@@ -186,13 +185,7 @@ class InferencePipeline:
         self.log(f"# Proposals Blocked: {n_proposals_blocked}")
         self.log(f"Module Runtime: {t:.2f} {unit}\n")
 
-    def classify_proposals(self, accept_threshold):
-        """
-        Classifies proposals by calling "self.inference_engine". This routine
-        generates features and runs a GNN to make predictions. Proposals with
-        a prediction above "self.threshold" are accepted and added to the
-        graph as an edge.
-        """
+    def classify_proposals(self, accept_threshold, dt=0.05):
         t0 = time()
         self.log("Step 3: Run Inference")
 
@@ -203,16 +196,16 @@ class InferencePipeline:
         while True:
             # Update graph
             cur_threshold = new_threshold
-            accepts.update(self.merge_proposals(cur_threshold))
+            accepts.update(self.merge_proposals(preds, cur_threshold))
 
             # Update threshold
-            new_threshold = cur_threshold - 0.025
+            new_threshold = max(cur_threshold - dt, accept_threshold)
             if cur_threshold == new_threshold:
                 break
 
         # Report results
         t, unit = util.time_writer(time() - t0)
-        self.log(f"# Merges Blocked: {self.graph.n_merges_blocked}")
+        self.log(f"# Merges Blocked: {self.dataset.graph.n_merges_blocked}")
         self.log(f"# Accepted: {format(len(accepts), ',')}")
         self.log(f"% Accepted: {len(accepts) / len(preds):.4f}")
         self.log(f"Module Runtime: {t:.4f} {unit}\n")
@@ -221,10 +214,9 @@ class InferencePipeline:
         # Main
         preds = dict()
         pbar = tqdm(total=self.dataset.graph.n_proposals(), desc="Inference")
-        for subgraph in self.dataset:
-            data = self.dataset.get_inputs(subgraph)
+        for data in self.dataset:
             preds.update(self.predict(data))
-            pbar.update(subgraph.n_proposals())
+            pbar.update(data.n_proposals())
 
         # Save results
         path = os.path.join(self.output_dir, "proposal_predictions.json")
@@ -234,15 +226,20 @@ class InferencePipeline:
     def merge_proposals(self, preds, threshold):
         accepts = list()
         for proposal in self.dataset.graph.get_sorted_proposals():
+            # Check if proposal has been visited
+            if proposal not in preds:
+                continue
+
             # Check if proposal satifies threshold
             i, j = tuple(proposal)
             if preds[proposal] < threshold:
                 continue
 
             # Check if proposal creates a loop
-            if not nx.has_path(self.graph, i, j):
-                self.graph.merge_proposal(proposal)
+            if not nx.has_path(self.dataset.graph, i, j):
+                self.dataset.graph.merge_proposal(proposal)
                 accepts.append(proposal)
+            del preds[proposal]
         return accepts
 
     def save_results(self):
@@ -252,7 +249,7 @@ class InferencePipeline:
         """
         # Save temp result on local machine
         temp_dir = os.path.join(self.output_dir, "temp")
-        self.graph.to_zipped_swcs(temp_dir, sampling_rate=2)
+        self.dataset.graph.to_zipped_swcs(temp_dir, sampling_rate=2)
 
         # Merge ZIPs
         swc_dir = os.path.join(self.output_dir, "corrected-swcs")
@@ -298,7 +295,8 @@ class InferencePipeline:
         """
         # Generate predictions
         with torch.no_grad():
-            x = data.get_inputs().to(self.device)
+            device = self.config.ml.device
+            x = data.get_inputs().to(device)
             hat_y = sigmoid(self.model(x))
 
         # Reformat predictions
@@ -328,19 +326,15 @@ class InferencePipeline:
         """
         metadata = {
             "date": datetime.today().strftime("%Y-%m-%d"),
-            "brain_id": self.brain_id,
-            "segmentation_id": self.segmentation_id,
-            "min_fragment_size": f"{self.graph_config.min_size}um",
-            "min_fragment_size_with_proposals": f"{self.graph_config.min_size_with_proposals}um",
-            "node_spacing": self.graph_config.node_spacing,
-            "remove_doubles": self.graph_config.remove_doubles,
+            "min_fragment_size": f"{self.config.graph.min_size}um",
+            "min_fragment_size_with_proposals": f"{self.config.graph.min_size_with_proposals}um",
+            "node_spacing": self.config.graph.node_spacing,
+            "remove_doubles": self.config.graph.remove_doubles,
             "use_somas": len(self.soma_centroids) > 0,
-            "complex_proposals": self.graph_config.complex_bool,
-            "long_range_bool": self.graph_config.long_range_bool,
-            "proposals_per_leaf": self.graph_config.proposals_per_leaf,
-            "search_radius": f"{self.graph_config.search_radius}um",
+            "proposals_per_leaf": self.config.graph.proposals_per_leaf,
+            "search_radius": f"{self.config.graph.search_radius}um",
             "model_name": os.path.basename(self.model_path),
-            "accept_threshold": self.ml_config.threshold,
+            "accept_threshold": self.config.ml.threshold,
         }
         path = os.path.join(self.output_dir, "metadata.json")
         util.write_json(path, metadata)
