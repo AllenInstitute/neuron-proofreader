@@ -229,12 +229,8 @@ class RandomContrast3D:
             Image with the shape (2, H, W, D), where the zeroth channel is
             from the raw image and first channel is from the segmentation.
         """
-        p_low = np.random.uniform(*self.p_low)
-        p_high = np.random.uniform(*self.p_high)
-        print("precentiles:", p_low, p_high)
-        lo = np.percentile(patches[0], p_low)
-        hi = np.percentile(patches[0], p_high)
-        print("intensities:", lo, hi)
+        lo = np.percentile(patches[0], np.random.uniform(*self.p_low))
+        hi = np.percentile(patches[0], np.random.uniform(*self.p_high))
         patches[0] = (patches[0] - lo) / (hi - lo + 1e-5)
         patches[0] = np.clip(patches[0], 0, 1)
         return patches
