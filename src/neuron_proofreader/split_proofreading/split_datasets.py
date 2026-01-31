@@ -4,7 +4,8 @@ Created on Fri April 11 11:00:00 2024
 @author: Anna Grim
 @email: anna.grim@alleninstitute.org
 
-Routines for training machine learning models that classify proposals.
+Implementation of dataset objects that contain graphs and facilitate feature
+generation for training and inference in split-correction tasks.
 
 """
 
@@ -23,11 +24,16 @@ from neuron_proofreader.split_proofreading.split_feature_extraction import (
     FeaturePipeline,
     HeteroGraphData
 )
-from neuron_proofreader.utils import geometry_util, img_util, util
+from neuron_proofreader.utils import geometry_util, util
 
 
 # --- Single Brain Dataset ---
 class FragmentsDataset(IterableDataset):
+    """
+    A dataset object that contains a graph built from fragments corresponding
+    to a single brain. Note that this dataset supports fragments extracted
+    from either a block or whole-brain.
+    """
 
     def __init__(
         self,
@@ -49,20 +55,28 @@ class FragmentsDataset(IterableDataset):
         img_path : str
             Path to the raw image associated with the fragments.
         config : Config
-            ...
-        gt_pointer : str, optional
+            Configuration object containing parameters and settings.
+        gt_path : str, optional
             Path to ground-truth SWC files to be loaded. Default is None.
-        metadata_path : str
-            ...
-        segmentation_path : str
+        metadata_path : str, optional
+            Patch to JSON file containing metadata on block that fragments
+            were extracted from. Default is None.
+        segmentation_path : str, optional
             Path to the segmentation that fragments were generated from.
             Default is None.
+        soma_centroids : List[Tuple[int]], optional
+            Phyiscal coordinates of soma centroids. Default is None.
         """
         # Instance attributes
         self.config = config
         self.transform = ImageTransforms() if config.ml.transform else False
+
+        # Build graph
         self.graph = self._load_graph(
-            fragments_path, metadata_path, segmentation_path, soma_centroids
+            fragments_path,
+            metadata_path=metadata_path,
+            segmentation_path=segmentation_path,
+            soma_centroids=soma_centroids
         )
 
         # Feature extractor
@@ -75,7 +89,11 @@ class FragmentsDataset(IterableDataset):
         )
 
     def _load_graph(
-        self, fragments_path, metadata_path, segmentation_path, soma_centroids
+        self,
+        fragments_path,
+        metadata_path=None,
+        segmentation_path=None,
+        soma_centroids=None
     ):
         """
         Loads a graph by reading and processing SWC files specified by the
@@ -85,11 +103,15 @@ class FragmentsDataset(IterableDataset):
         ----------
         fragments_path : str
             Path to SWC files to be loaded.
-        metadata_path : str
+        metadata_path : str, optional
             Patch to JSON file containing metadata on block that fragments
-            were extracted from.
-        soma_centroids : List[Tuple[float]]
-            List of physical coordinates that represent soma centers.
+            were extracted from. Default is None
+        segmentation_path : str, optional
+            Path to the segmentation that fragments were generated from.
+            Default is None.
+        soma_centroids : List[Tuple[float]], optional
+            List of physical coordinates that represent soma centers. Default
+            is None.
 
         Returns
         -------
@@ -111,7 +133,7 @@ class FragmentsDataset(IterableDataset):
 
         # Post process fragments
         if metadata_path:
-            self.clip_fragments(graph, metadata_path)
+            graph.clip_skeletons(metadata_path)
 
         if self.config.graph.remove_doubles:
             geometry_util.remove_doubles(graph, 200)
@@ -125,40 +147,24 @@ class FragmentsDataset(IterableDataset):
         Yields
         ------
         inputs : HeteroGraphData
-            Heterogeneous graph data.
+            Input data.
         targets : torch.Tensor
             Ground truth labels.
         """
         for subgraph in self.get_sampler():
-            yield self.get_inputs(subgraph)
-
-    def get_inputs(self, subgraph):
-        features = self.feature_extractor(subgraph)
-        data = HeteroGraphData(features)
-        if self.graph.gt_path:
-            return data.get_inputs(), data.get_targets()
-        else:
-            return data.get_inputs()
+            features = self.feature_extractor(subgraph)
+            yield HeteroGraphData(features)
 
     # --- Helpers ---
-    @staticmethod
-    def clip_fragments(graph, metadata_path):
-        # Extract bounding box
-        bucket_name, path = util.parse_cloud_path(metadata_path)
-        metadata = util.read_json_from_gcs(bucket_name, path)
-        origin = metadata["chunk_origin"][::-1]
-        shape = metadata["chunk_shape"][::-1]
-
-        # Clip graph
-        nodes = list()
-        for i in graph.nodes:
-            voxel = graph.get_voxel(i)
-            if not img_util.is_contained(voxel - origin, shape):
-                nodes.append(i)
-        graph.remove_nodes_from(nodes)
-        graph.relabel_nodes()
-
     def get_sampler(self):
+        """
+        Gets a subgraph sampler that is used to iterate over dataset.
+
+        Returns
+        -------
+        sampler : SubgraphSampler
+            Subgraph sampler that is used to iterate over dataset.
+        """
         batch_size = self.config.ml.batch_size
         if len(self.graph.soma_ids) > 0:
             sampler = SeededSubgraphSampler(
@@ -170,38 +176,46 @@ class FragmentsDataset(IterableDataset):
 
 
 # --- Multi-Brain Dataset ---
-class MultiBrainFragmentsDataset:
+class FragmentsDatasetCollection(IterableDataset):
     """
-    A dataset class for storing graphs used to train models to perform split
-    correction. Graphs are stored in the "self.graphs" attribute, which is a
-    dictionary containing the followin items:
-        - Key: (brain_id, segmentation_id, example_id)
-        - Value: graph that is an instance of ProposalGraph
-
-    This dataset is populated using the "self.add_graph" method, which
-    requires the following inputs:
-        (1) key: Unique identifier of graph.
-        (2) gt_pointer: Path to ground truth SWC files.
-        (2) pred_pointer: Path to predicted SWC files.
-        (3) img_path: Path to whole-brain image stored in cloud bucket.
-
-    Note: This dataset supports graphs from multiple whole-brain datasets.
+    A dataset class for storing a set of FragmentDataset objects corresponding
+    to different whole-brain images.
     """
+
     def __init__(self, shuffle=True):
+        """
+        Instantiates a FragmentsDatasetCollection object.
+
+        Parameters
+        ----------
+        shuffle : bool, optional
+            Indication of whether to shuffle examples. Default is True.
+        """
         # Instance attributes
         self.datasets = dict()
         self.shuffle = shuffle
 
     def add_dataset(self, key, dataset):
+        """
+        Adds a dataset to the collection of datasets.
+
+        Parameters
+        ----------
+        key : hashable
+            Unique identifier of the dataset to be added.
+        dataset : FragmentsDataset
+            Dataset to be added to the collection of datasets.
+        """
+        assert key not in self.datasets, "Key has been used!"
         self.datasets[key] = dataset
 
     def __iter__(self):
         """
-        Iterates over the dataset and yields model-ready inputs and targets.
+        Iterates over the datasets and yields model-ready inputs and targets.
 
         Yields
         ------
-        inputs : HeteroGraphData
+        inputs : TensorDict
             Heterogeneous graph data.
         targets : torch.Tensor
             Ground truth labels.
@@ -210,8 +224,15 @@ class MultiBrainFragmentsDataset:
         while len(samplers) > 0:
             key = self.get_next_key(samplers)
             try:
+                # Extract features
                 subgraph = next(samplers[key])
-                yield self.datasets.get_inputs(subgraph)
+                features = self.datasets[key].feature_extractor(subgraph)
+                data = HeteroGraphData(features)
+
+                # Get training inputs
+                inputs = data.get_inputs()
+                targets = data.get_targets()
+                yield inputs, targets
             except StopIteration:
                 del samplers[key]
 
@@ -237,6 +258,14 @@ class MultiBrainFragmentsDataset:
             return keys[0]
 
     def init_samplers(self):
+        """
+        Initializes subgraph samplers for each dataset.
+
+        Returns
+        -------
+        samplers : Dict[hashable, SubgraphSampler]
+            Subgraph samplers used to iterate over the datasets.
+        """
         samplers = dict()
         for key, dataset in self.datasets.items():
             batch_size = dataset.config.ml.batch_size
