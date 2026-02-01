@@ -570,7 +570,7 @@ def get_storage_driver(img_path):
 
 def is_contained(voxel, shape, buffer=0):
     """
-    Check whether a voxel is within bounds of a given shape, considering a
+    Checks if the given voxel is within bounds of a given shape, considering a
     buffer.
 
     Parameters
@@ -592,6 +592,37 @@ def is_contained(voxel, shape, buffer=0):
     contained_above = all(0 <= v + buffer < s for v, s in zip(voxel, shape))
     contained_below = all(0 <= v - buffer < s for v, s in zip(voxel, shape))
     return contained_above and contained_below
+
+
+def is_patch_contained(center, patch_shape, image_shape):
+    """
+    Checks if the given image patch defined by "center" and "patch_shape" is
+    contained in the image defined by "image_shape".
+
+    Parameters
+    ----------
+    voxel : Tuple[int]
+        Voxel coordinates to be checked.
+    patch_shape : Tuple[int]
+        Shape of patch.
+    image_shape : Tuple[int], optional
+        Shape of image containing the patch.
+
+    Returns
+    -------
+    bool
+        True if the patch is contained in the image.
+    """
+    # Convert to arrays
+    center = np.asarray(center)
+    patch_shape = np.asarray(patch_shape)
+    image_shape = np.asarray(image_shape)
+
+    # Compute patch vertices
+    half = patch_shape // 2
+    start = center - half
+    end = start + patch_shape
+    return np.all(start >= 0) and np.all(end <= image_shape)
 
 
 def is_precomputed(img_path):

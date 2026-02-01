@@ -1,12 +1,12 @@
 """
-Created on Sat November 04 15:30:00 2023
+Created on Fri November 03 15:30:00 2023
 
 @author: Anna Grim
 @email: anna.grim@alleninstitute.org
 
-Code that executes the full GraphTrace inference pipeline.
+Code that executes the full split correction pipeline.
 
-    Inference Algorithm:
+    Inference Pipeline:
         1. Graph Construction
             Build graph from neuron fragments.
 
@@ -84,10 +84,10 @@ class InferencePipeline:
             String to be added to the beginning of log. Default is an empty
             string.
         segmentation_path : str, optional
-            Path to segmentation stored in GCS bucket. Default is None.
-        soma_centroids : List[Tuple[float]] or None, optional
-            Physcial coordinates of soma centroids. Default is an empty
-            list.
+            Path to segmentation corresponding to the given fragments. Default
+            is None.
+        soma_centroids : List[Tuple[float]], optional
+            Physcial coordinates of soma centroids. Default is an empty list.
         """
         # Instance attributes
         self.accepted_proposals = list()
@@ -115,6 +115,10 @@ class InferencePipeline:
         ----------
         fragments_path : str
             Path to SWC files to be loaded into graph.
+        img_path : str
+            Path to whole-brain image corresponding to the given fragments.
+        segmentation_path : str
+            Path to segmentation corresponding to the given fragments.
         """
         # Load data
         t0 = time()
@@ -186,6 +190,18 @@ class InferencePipeline:
         self.log(f"Module Runtime: {t:.2f} {unit}\n")
 
     def classify_proposals(self, accept_threshold, dt=0.05):
+        """
+        Classifies and iteratively merges accepted proposals using a
+        decreasing confidence threshold.
+
+        Parameters
+        ----------
+        accept_threshold : float
+            Minimum confidence threshold for accepting proposals.
+        dt : float, optional
+            Step size for decreasing the confidence threshold at each
+            iteration. Default is 0.05.
+        """
         t0 = time()
         self.log("Step 3: Run Inference")
 
@@ -211,6 +227,14 @@ class InferencePipeline:
         self.log(f"Module Runtime: {t:.4f} {unit}\n")
 
     def predict_proposals(self):
+        """
+        Runs inference over all proposals and saves model predictions.
+
+        Returns
+        -------
+        preds : Dict[Frozenset[int], float]
+            Dictionary that maps proposals to the model prediction.
+        """
         # Main
         preds = dict()
         pbar = tqdm(total=self.dataset.graph.n_proposals(), desc="Inference")
@@ -266,7 +290,7 @@ class InferencePipeline:
     def log(self, txt):
         """
         Logs and prints the given text.
-    
+
         Parameters
         ----------
         txt : str

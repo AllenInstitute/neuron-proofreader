@@ -219,49 +219,6 @@ def path_length(path):
     return np.sum([dist(a, b) for a, b in zip(path[:-1], path[1:])])
 
 
-def resample_path(pts, n_pts):
-    """
-    Uniformly samples points from a curve represented as an array.
-
-    Parameters
-    ----------
-    pts : np.ndarray
-        xyz coordinates that form a continuous path.
-    n_pts : int
-        Number of points to be sampled.
-
-    Returns
-    -------
-    numpy.ndarray
-        Resampled points along curve.
-    """
-    k = 1 if len(pts) <= 3 else 3
-    t = np.linspace(0, 1, n_pts)
-    spline_x, spline_y, spline_z = fit_spline_3d(pts, k=k, s=0)
-    pts = np.column_stack((spline_x(t), spline_y(t), spline_z(t)))
-    return pts.astype(int)
-
-
-def shift_path(pts, offset):
-    """
-    Shifts "voxels" by subtracting the min coordinate in "bbox".
-
-    Parameters
-    ----------
-    pts : ArrayLike
-        Coordinates to be shifted.
-    offset : ArrayLike
-        ...
-
-    Returns
-    -------
-    numpy.ndarray
-        Voxels shifted by min coordinate in "bbox".
-    """
-    offset = np.array(offset)
-    return [tuple(xyz - offset) for xyz in map(np.array, pts)]
-
-
 def resample_curve_1d(pts, n_pts=None, s=None):
     """
     Smooths a 1D curve by fitting a spline and resampling it.
@@ -282,6 +239,10 @@ def resample_curve_1d(pts, n_pts=None, s=None):
     # Fit spline
     dt = max(n_pts or len(pts), 5)
     k = min(3, len(pts) - 1)
+
+    # Check for degenerate case
+    if k == 0:
+        return np.repeat(pts, n_pts, axis=0)
 
     # Resample points
     t = np.linspace(0, 1, dt)
@@ -309,9 +270,15 @@ def resample_curve_3d(pts, n_pts=None, s=None):
     pts : numpy.ndarray
         Smoothed points.
     """
-    # Fit spline
+    # Compute spline parameters
     dt = max(n_pts or len(pts), 5)
     k = min(3, len(pts) - 1)
+
+    # Check for degenerate case
+    if k == 0:
+        return np.repeat(pts, n_pts, axis=0)
+
+    # Fit spline
     spline_x, spline_y, spline_z = fit_spline_3d(pts, k=k, s=s)
 
     # Resample points
@@ -322,6 +289,26 @@ def resample_curve_3d(pts, n_pts=None, s=None):
         spline_z(t).astype(np.float32)
     ))
     return pts
+
+
+def shift_path(pts, offset):
+    """
+    Shifts the given points by subtracting "offset".
+
+    Parameters
+    ----------
+    pts : ArrayLike
+        Coordinates to be shifted.
+    offset : ArrayLike
+        Offset to shift points by.
+
+    Returns
+    -------
+    List[Tuple[float]]
+        Voxels shifted by the given offset.
+    """
+    offset = np.array(offset)
+    return [tuple(xyz - offset) for xyz in map(np.array, pts)]
 
 
 def truncate_path(xyz_path, depth):

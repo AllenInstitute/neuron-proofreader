@@ -54,6 +54,11 @@ class FeaturePipeline:
         segmentation_path : str, optional
             Path to segmentation of whole-brain dataset.
         """
+        # check proposals
+        for proposal in graph.proposals:
+            for i in tuple(proposal):
+                if not img_util.is_contained(graph.get_voxel(i), buffer=50):
+                    print(proposal, graph.get_voxel(i))
         self.extractors = [
             SkeletonFeatureExtractor(graph),
             ImageFeatureExtractor(
@@ -288,10 +293,11 @@ class ImageFeatureExtractor:
             Feature extractor configured with the cropped image, segmentation
             mask, spatial offset, and patch shape.
         """
-        # Read images
+        # Compute patch specs
         center, shape = self.compute_crop(proposal)
         offset = img_util.get_offset(center, shape)
 
+        # Read images
         img = self.read_image(center, shape)
         mask = self.read_segmentation(center, shape)
 
@@ -459,15 +465,24 @@ class PatchFeatureExtractor:
         profile : numpy.ndarray
             Intensity profile along the branch containing the given node.
         """
+        def check_emptiness():
+            """
+            Checks if voxels is empty.
+            """
+            if len(voxels) < 2:
+                voxels.append(self.graph.get_local_voxel(node, self.offset))
+
         # Get branch voxel coordinates
         voxels = self.get_branch_voxels(node)
         voxels = geometry_util.make_voxels_connected(voxels)
         voxels = img_util.get_contained_voxels(voxels, self.mask.shape)
+        check_emptiness()
 
         # Resample voxels
         voxels = np.array(voxels)
         voxels = geometry_util.resample_curve_3d(voxels, 16).astype(int)
         voxels = img_util.get_contained_voxels(voxels, self.mask.shape)
+        check_emptiness()
         return self._extract_profile(voxels)
 
     def _extract_profile(self, voxels):
@@ -485,11 +500,7 @@ class PatchFeatureExtractor:
             Image with shape (2, H, W, D) containing a raw image and proposal
             mask channels.
         """
-        # Check for correct number of voxels
-        while len(voxels) < 16:
-            voxels.append(voxels[-1])
-
-        # Extract profile
+        check_list_length(voxels, min_length=16)
         profile = np.array([self.img[tuple(voxel)] for voxel in voxels])
         profile = np.append(profile, [profile.mean(), profile.std()])
         return profile
@@ -921,6 +932,21 @@ class IndexMapping:
 
 
 # --- Helpers ---
+def check_list_length(my_list, min_length=2):
+    """
+    Checks that the list contains at least "min_length" items.
+
+    Parameters
+    ----------
+    my_list : list
+        List to be checked.
+    min_length : int
+        Minimum items that must be contained in the list
+    """
+    while len(my_list) < min_length:
+        my_list.append(my_list[-1])
+
+
 def get_feature_dict():
     """
     Gets a dictionary that contains the number of features for branchs and
