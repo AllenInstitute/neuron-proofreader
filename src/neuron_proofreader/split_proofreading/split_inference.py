@@ -220,7 +220,7 @@ class InferencePipeline:
 
         # Save results
         path = os.path.join(self.output_dir, "proposal_predictions.json")
-        util.write_json(path, reformat_preds(preds))
+        util.write_json(path, self.reformat_preds(preds))
         return preds
 
     def merge_proposals(self, preds, threshold):
@@ -301,6 +301,15 @@ class InferencePipeline:
         hat_y = ml_util.tensor_to_list(hat_y)
         return {idx_to_id[i]: y_i for i, y_i in enumerate(hat_y)}
 
+    def reformat_preds(self, preds_dict):
+        id_to_pred = dict()
+        for proposal, pred in preds_dict.items():
+            node1, node2 = tuple(proposal)
+            id1 = self.dataset.graph.get_swc_id(node1)
+            id2 = self.dataset.graph.get_swc_id(node2)
+            id_to_pred[str((id1, id2))] = pred
+        return id_to_pred
+
     def save_connections(self, round_id=None):
         """
         Writes the accepted proposals from the graph to a text file. Each line
@@ -316,8 +325,3 @@ class InferencePipeline:
         path = f"{self.output_dir}/segment_ids.txt"
         segment_ids = list(self.dataset.graph.component_id_to_swc_id.values())
         util.write_list(path, segment_ids)
-
-
-# --- Helpers ---
-def reformat_preds(preds_dict):
-    return {str(k): v for k, v in preds_dict.items()}
