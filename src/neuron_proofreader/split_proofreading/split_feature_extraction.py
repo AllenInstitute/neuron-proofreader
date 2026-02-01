@@ -54,11 +54,6 @@ class FeaturePipeline:
         segmentation_path : str, optional
             Path to segmentation of whole-brain dataset.
         """
-        # check proposals
-        for proposal in graph.proposals:
-            for i in tuple(proposal):
-                if not img_util.is_contained(graph.get_voxel(i), buffer=50):
-                    print(proposal, graph.get_voxel(i))
         self.extractors = [
             SkeletonFeatureExtractor(graph),
             ImageFeatureExtractor(
