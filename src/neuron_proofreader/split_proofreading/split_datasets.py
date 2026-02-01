@@ -174,6 +174,9 @@ class FragmentsDataset(IterableDataset):
             sampler = SubgraphSampler(self.graph, max_proposals=batch_size)
         return iter(sampler)
 
+    def remove_proposals_near_boundary(self):
+        pass
+
 
 # --- Multi-Brain Dataset ---
 class FragmentsDatasetCollection(IterableDataset):
