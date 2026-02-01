@@ -102,6 +102,7 @@ class ProposalGraph(SkeletonGraph):
         self.xyz_to_edge = dict()
 
         # Instance attributes - Proposals
+        self.accepts = set()
         self.gt_accepts = set()
         self.merged_ids = set()
         self.n_merges_blocked = 0
@@ -335,7 +336,23 @@ class ProposalGraph(SkeletonGraph):
         else:
             return KDTree(list(self.xyz_to_edge.keys()))
 
-    # --- Proposal Generation ---
+    # --- Proposal Operations ---
+    def add_proposal(self, i, j):
+        """
+        Adds proposal between nodes "i" and "j".
+
+        Parameters
+        ----------
+        i : int
+            Node ID.
+        j : int
+            Node ID
+        """
+        proposal = frozenset({i, j})
+        self.node_proposals[i].add(j)
+        self.node_proposals[j].add(i)
+        self.proposals.add(proposal)
+
     def generate_proposals(self, search_radius):
         """
         Generates proposals from leaf nodes.
@@ -359,48 +376,41 @@ class ProposalGraph(SkeletonGraph):
             gt_graph.load(self.gt_path)
             self.gt_accepts = groundtruth_generation.run(gt_graph, self)
 
-    def add_proposal(self, i, j):
+    def get_sorted_proposals(self):
         """
-        Adds proposal between nodes "i" and "j".
+        Return proposals sorted by physical length.
 
-        Parameters
-        ----------
-        i : int
-            Node ID.
-        j : int
-            Node ID
+        Returns
+        -------
+        List[Frozenset[int]]
+            List of proposals sorted by phyiscal length.
         """
-        proposal = frozenset({i, j})
-        self.node_proposals[i].add(j)
-        self.node_proposals[j].add(i)
-        self.proposals.add(proposal)
+        proposals = self.list_proposals()
+        lengths = [self.proposal_length(p) for p in proposals]
+        return [proposals[i] for i in np.argsort(lengths)]
 
-    def store_proposals(self, proposals):
-        self.node_proposals = defaultdict(set)
-        for proposal in proposals:
-            i, j = tuple(proposal)
-            self.add_proposal(i, j)
+    def is_mergeable(self, i, j):
+        one_leaf = self.degree[i] == 1 or self.degree[j] == 1
+        branching = self.degree[i] > 2 or self.degree[j] > 2
+        somas_check = not (self.is_soma(i) and self.is_soma(j))
+        return somas_check and (one_leaf and not branching)
 
-    def remove_proposal(self, proposal):
+    def is_simple(self, proposal):
         """
-        Removes an existing proposal between two nodes.
+        Checks if both nodes in a proposal are leafs.
 
         Parameters
         ----------
         proposal : Frozenset[int]
-            Pair of node IDs corresponding to a proposal.
+            Pair of nodes that form a proposal.
+
+        Returns
+        -------
+        bool
+            Indication of whether both nodes in a proposal are leafs.
         """
         i, j = tuple(proposal)
-        self.node_proposals[i].remove(j)
-        self.node_proposals[j].remove(i)
-        self.proposals.remove(proposal)
-
-    def trim_proposals(self):
-        for proposal in self.list_proposals():
-            is_simple = self.is_simple(proposal)
-            is_single = self.is_single_proposal(proposal)
-            if is_simple and is_single:
-                trim_endpoints_at_proposal(self, proposal)
+        return True if self.degree[i] == 1 and self.degree[j] == 1 else False
 
     def is_single_proposal(self, proposal):
         """
@@ -434,19 +444,30 @@ class ProposalGraph(SkeletonGraph):
         """
         return list(self.proposals)
 
-    # --- Proposal Helpers ---
-    def get_sorted_proposals(self):
-        """
-        Return proposals sorted by physical length.
+    def merge_proposal(self, proposal):
+        i, j = tuple(proposal)
+        if self.is_mergeable(i, j):
+            # Update attributes
+            attrs = {
+                "radius": self.node_radius[np.array([i, j], dtype=int)],
+                "xyz": self.node_xyz[np.array([i, j], dtype=int)]
+            }
 
-        Returns
-        -------
-        List[Frozenset[int]]
-            List of proposals sorted by phyiscal length.
-        """
-        proposals = self.list_proposals()
-        lengths = [self.proposal_length(p) for p in proposals]
-        return [proposals[i] for i in np.argsort(lengths)]
+            # Update component_ids
+            self.merged_ids.add((self.get_swc_id(i), self.get_swc_id(j)))
+            if self.is_soma(i):
+                component_id = self.node_component_id[i]
+                self.update_component_ids(component_id, j)
+            else:
+                component_id = self.node_component_id[j]
+                self.update_component_ids(component_id, i)
+
+            # Update graph
+            self._add_edge((i, j), attrs)
+            self.accepts.add(proposal)
+            self.proposals.remove(proposal)
+        else:
+            self.n_merges_blocked += 1
 
     def n_proposals(self):
         """
@@ -459,36 +480,34 @@ class ProposalGraph(SkeletonGraph):
         """
         return len(self.proposals)
 
-    def is_simple(self, proposal):
+    def remove_proposal(self, proposal):
         """
-        Checks if both nodes in a proposal are leafs.
+        Removes an existing proposal between two nodes.
 
         Parameters
         ----------
         proposal : Frozenset[int]
-            Pair of nodes that form a proposal.
-
-        Returns
-        -------
-        bool
-            Indication of whether both nodes in a proposal are leafs.
+            Pair of node IDs corresponding to a proposal.
         """
         i, j = tuple(proposal)
-        return True if self.degree[i] == 1 and self.degree[j] == 1 else False
+        self.node_proposals[i].remove(j)
+        self.node_proposals[j].remove(i)
+        self.proposals.remove(proposal)
 
-    def simple_proposals(self):
-        return set([p for p in self.proposals if self.is_simple(p)])
+    def store_proposals(self, proposals):
+        self.node_proposals = defaultdict(set)
+        for proposal in proposals:
+            i, j = tuple(proposal)
+            self.add_proposal(i, j)
 
-    def complex_proposals(self):
-        return set([p for p in self.proposals if not self.is_simple(p)])
+    def trim_proposals(self):
+        for proposal in self.list_proposals():
+            is_simple = self.is_simple(proposal)
+            is_single = self.is_single_proposal(proposal)
+            if is_simple and is_single:
+                trim_endpoints_at_proposal(self, proposal)
 
-    def proposal_length(self, proposal):
-        return self.dist(*tuple(proposal))
-
-    def proposal_midpoint(self, proposal):
-        i, j = tuple(proposal)
-        return geometry.midpoint(self.node_xyz[i], self.node_xyz[j])
-
+    # --- Proposal Feature Generation ---
     def proposal_attr(self, proposal, key):
         """
         Gets the attributes of nodes in "proposal".
@@ -543,61 +562,16 @@ class ProposalGraph(SkeletonGraph):
                 dot_ij = max(dot_ij, -dot_ij)
         return np.array([dot_i, dot_j, dot_ij])
 
+    def proposal_length(self, proposal):
+        return self.dist(*tuple(proposal))
+
+    def proposal_midpoint(self, proposal):
+        i, j = tuple(proposal)
+        return geometry.midpoint(self.node_xyz[i], self.node_xyz[j])
+
     def truncated_edge_attr_xyz(self, i, depth):
         xyz_path_list = self.edge_attr(i, "xyz")
         return [geometry.truncate_path(path, depth) for path in xyz_path_list]
-
-    def merge_proposal(self, proposal):
-        i, j = tuple(proposal)
-        if self.is_mergeable(i, j):
-            # Update attributes
-            attrs = {
-                "radius": self.node_radius[np.array([i, j], dtype=int)],
-                "xyz": self.node_xyz[np.array([i, j], dtype=int)]
-            }
-            self.node_radius[i] = 5.3141592
-            self.node_radius[j] = 5.3141592
-
-            # Update component_ids
-            self.merged_ids.add((self.get_swc_id(i), self.get_swc_id(j)))
-            if self.is_soma(i):
-                component_id = self.node_component_id[i]
-                self.update_component_ids(component_id, j)
-            else:
-                component_id = self.node_component_id[j]
-                self.update_component_ids(component_id, i)
-
-            # Update graph
-            self._add_edge((i, j), attrs)
-            self.proposals.remove(proposal)
-        else:
-            self.n_merges_blocked += 1
-
-    def is_mergeable(self, i, j):
-        one_leaf = self.degree[i] == 1 or self.degree[j] == 1
-        branching = self.degree[i] > 2 or self.degree[j] > 2
-        somas_check = not (self.is_soma(i) and self.is_soma(j))
-        return somas_check and (one_leaf and not branching)
-
-    def update_component_ids(self, component_id, root):
-        """
-        Updates the component_id of all nodes connected to "root".
-
-        Parameters
-        ----------
-        component_id : str
-            Connected component id.
-        root : int
-            Node ID
-        """
-        queue = [root]
-        visited = set(queue)
-        while len(queue) > 0:
-            i = queue.pop()
-            self.node_component_id[i] = component_id
-            visited.add(i)
-            for j in [j for j in self.neighbors(i) if j not in visited]:
-                queue.append(j)
 
     def n_nearby_leafs(self, proposal, radius):
         """
@@ -712,6 +686,26 @@ class ProposalGraph(SkeletonGraph):
         else:
             return np.flip(self.edges[edge][key], axis=0)
 
+    def update_component_ids(self, component_id, root):
+        """
+        Updates the component_id of all nodes connected to "root".
+
+        Parameters
+        ----------
+        component_id : str
+            Connected component id.
+        root : int
+            Node ID
+        """
+        queue = [root]
+        visited = set(queue)
+        while len(queue) > 0:
+            i = queue.pop()
+            self.node_component_id[i] = component_id
+            visited.add(i)
+            for j in [j for j in self.neighbors(i) if j not in visited]:
+                queue.append(j)
+
     def xyz_to_component_id(self, xyz, return_node=False):
         if tuple(xyz) in self.xyz_to_edge.keys():
             edge = self.xyz_to_edge[tuple(xyz)]
@@ -787,10 +781,7 @@ class ProposalGraph(SkeletonGraph):
                 if len(node_to_idx) == 0:
                     # Get attributes
                     x, y, z = tuple(self.node_xyz[i])
-                    if preserve_radius:
-                        r = self.node_radius[i]
-                    else:
-                        r = 6 if self.node_radius[i] == 5.3141592 else 2
+                    r = self.node_radius[i] if preserve_radius else 2
 
                     # Write entry
                     text_buffer.write(f"\n1 2 {x} {y} {z} {r} -1")
@@ -832,10 +823,9 @@ class ProposalGraph(SkeletonGraph):
             node_id = n_entries + 1
             parent = n_entries if k > 1 else parent
             x, y, z = tuple(branch_xyz[k])
-            if preserve_radius:
-                r = branch_radius[k]
-            else:
-                r = 6 if branch_radius[k] == 5.3141592 else 2
+            r = branch_radius[k] if preserve_radius else 2
+            if frozenset({i, j}) in self.accepts:
+                r = 6
 
             # Write entry
             text_buffer.write(f"\n{node_id} 2 {x} {y} {z} {r} {parent}")
