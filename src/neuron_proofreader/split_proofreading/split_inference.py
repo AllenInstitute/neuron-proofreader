@@ -248,6 +248,18 @@ class InferencePipeline:
         return preds
 
     def merge_proposals(self, preds, threshold):
+        """
+        Merges nodes corresponding to for proposals that satify the threshold
+        and no loop creation requirements.
+
+        Parameters
+        ----------
+        preds : Dict[Frozenset[int], float]
+            Dictionary that maps proposals to the model prediction.
+        threshold : float
+            Threshold used to determine which proposals to accept based on
+            model prediction.
+        """
         for proposal in self.dataset.graph.get_sorted_proposals():
             # Check if proposal has been visited
             if proposal not in preds:
