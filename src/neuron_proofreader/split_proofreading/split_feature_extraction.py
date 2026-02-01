@@ -883,12 +883,13 @@ class HeteroGraphData(HeteroData):
             Heterogeneous edge type of the form:
                 (src_node_type, relation, dst_node_type).
         """
-        # Check if edge index is empty
-        if len(edge_index) == 0:
-            edge_index = torch.empty((0, 2), dtype=torch.long)
+        if edge_index is None or len(edge_index) == 0:
+            edge_index = torch.empty((2, 0), dtype=torch.long)
+        else:
+            edge_index = torch.as_tensor(edge_index, dtype=torch.long)
+            edge_index = edge_index.t().contiguous()
+            assert edge_index.shape[0] == 2, edge_index.shape
 
-        # Store edge index
-        edge_index = torch.Tensor(edge_index).t().contiguous().long()
         self[edge_type].edge_index = edge_index
 
 
