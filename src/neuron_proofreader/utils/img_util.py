@@ -674,7 +674,7 @@ def normalize(img):
     img : numpy.ndarray
         Normalized image.
     """
-    mn, mx = np.percentile(img, [1, 99.5])
+    mn, mx = np.percentile(img, [1, 99.9])
     return np.clip((img - mn) / (mx - mn + 1e-5), 0, 1)
 
 
