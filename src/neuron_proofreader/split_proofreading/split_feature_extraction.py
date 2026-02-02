@@ -889,7 +889,6 @@ class HeteroGraphData(HeteroData):
             edge_index = torch.as_tensor(edge_index, dtype=torch.long)
             edge_index = edge_index.t().contiguous()
             assert edge_index.shape[0] == 2, edge_index.shape
-
         self[edge_type].edge_index = edge_index
 
 

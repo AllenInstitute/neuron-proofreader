@@ -198,7 +198,17 @@ class FragmentsDatasetCollection(IterableDataset):
         self.datasets = dict()
         self.shuffle = shuffle
 
-    def add_dataset(self, key, dataset):
+    def add_dataset(
+        self,
+        key,
+        fragments_path,
+        img_path,
+        config,
+        gt_path=None,
+        metadata_path=None,
+        segmentation_path=None,
+        soma_centroids=None
+    ):
         """
         Adds a dataset to the collection of datasets.
 
@@ -206,11 +216,33 @@ class FragmentsDatasetCollection(IterableDataset):
         ----------
         key : hashable
             Unique identifier of the dataset to be added.
-        dataset : FragmentsDataset
-            Dataset to be added to the collection of datasets.
+        fragments_path : str
+            Path to predicted SWC files to be loaded.
+        img_path : str
+            Path to the raw image associated with the fragments.
+        config : Config
+            Configuration object containing parameters and settings.
+        gt_path : str, optional
+            Path to ground-truth SWC files to be loaded. Default is None.
+        metadata_path : str, optional
+            Patch to JSON file containing metadata on block that fragments
+            were extracted from. Default is None.
+        segmentation_path : str, optional
+            Path to the segmentation that fragments were generated from.
+            Default is None.
+        soma_centroids : List[Tuple[int]], optional
+            Phyiscal coordinates of soma centroids. Default is None.
         """
         assert key not in self.datasets, "Key has been used!"
-        self.datasets[key] = dataset
+        self.datasets[key] = FragmentsDataset(
+            fragments_path,
+            img_path,
+            config,
+            gt_path=gt_path,
+            metadata_path=metadata_path,
+            segmentation_path=segmentation_path,
+            soma_centroids=soma_centroids
+        )
 
     def __iter__(self):
         """
