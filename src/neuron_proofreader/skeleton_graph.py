@@ -581,20 +581,21 @@ class SkeletonGraph(nx.Graph):
 
     # --- Helpers ---
     def clip_skeletons(self, metadata_path):
-        # Extract bounding box
         bucket_name, path = util.parse_cloud_path(metadata_path)
-        metadata = util.read_json_from_gcs(bucket_name, path)
-        origin = metadata["chunk_origin"][::-1]
-        shape = metadata["chunk_shape"][::-1]
+        if util.check_gcs_file_exists(bucket_name, path):
+            # Extract bounding box
+            metadata = util.read_json_from_gcs(bucket_name, path)
+            origin = metadata["chunk_origin"][::-1]
+            shape = metadata["chunk_shape"][::-1]
 
-        # Clip graph
-        nodes = list()
-        for i in self.nodes:
-            voxel = self.get_voxel(i)
-            if not img_util.is_contained(voxel - origin, shape):
-                nodes.append(i)
-        self.remove_nodes_from(nodes)
-        self.relabel_nodes()
+            # Clip graph
+            nodes = list()
+            for i in self.nodes:
+                voxel = np.array(self.get_voxel(i))
+                if not img_util.is_contained(voxel - origin, shape):
+                    nodes.append(i)
+            self.remove_nodes_from(nodes)
+            self.relabel_nodes()
 
     def dist(self, i, j):
         """
