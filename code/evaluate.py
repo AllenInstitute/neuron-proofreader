@@ -141,7 +141,7 @@ def save_detections(brain_id, gt_sites, detected_sites):
     save_points(sites_path, fn_sites, "1.0 1.0 1.0", "false_negative")
 
 
-def plot_precision_vs_recall(brain_id, merge_detector, gt_sites, dt=0.05):
+def plot_precision_vs_recall(brain_id, gt_sites, merge_detector, dt=0.05):
     # Compute error rates
     precision_list = list()
     recall_list = list()
