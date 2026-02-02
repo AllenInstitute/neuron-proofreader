@@ -102,7 +102,7 @@ class SubgraphSampler:
         while self.proposals:
             # Run BFS
             subgraph = self.init_subgraph()
-            while self.is_subgraph_full(subgraph) and self.proposals:
+            while not self.is_subgraph_full(subgraph) and self.proposals:
                 root = util.sample_once(self.proposals)
                 self.populate_via_bfs(subgraph, root)
 
@@ -199,7 +199,7 @@ class SubgraphSampler:
         return subgraph
 
     def is_subgraph_full(self, subgraph):
-        return subgraph.n_proposals() < self.max_proposals
+        return subgraph.n_proposals() >= self.max_proposals
 
 
 class SeededSubgraphSampler(SubgraphSampler):
@@ -216,7 +216,7 @@ class SeededSubgraphSampler(SubgraphSampler):
         while soma_connected_proposals_exist:
             # Run BFS
             subgraph = self.init_subgraph()
-            while self.is_subgraph_full(subgraph) and self.proposals:
+            while not self.is_subgraph_full(subgraph) and self.proposals:
                 root = self.find_bfs_root()
                 if root:
                     self.populate_via_seeded_bfs(subgraph, root)
