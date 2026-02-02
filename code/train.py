@@ -83,7 +83,7 @@ def main():
     )
 
     # Train
-    print("\nModel Family:", model_name)
+    print("\nModel Name:", model_name)
     save_experiment_parameters()
     trainer.run(train_dataloader, val_dataloader)
 
@@ -148,7 +148,7 @@ if __name__ == "__main__":
     # Parameters
     anisotropy = (0.748, 0.748, 1.0)
     batch_size = 16
-    brightness_clip = 400
+    brightness_clip = 300  # 400
     is_test = False
     lr = 1e-4
     max_epochs = 160
@@ -167,7 +167,7 @@ if __name__ == "__main__":
     output_dir = "/root/capsule/results"
 
     # Model
-    model_name = f"MergeDetector{model_class}-v5-run2-newmask={use_new_mask}-negativebias={negative_bias}"
+    model_name = f"MergeDetector{model_class}-v5-run2-newmask={use_new_mask}-negativebias={negative_bias}-brightness_clip={brightness_clip}"
     if model_class == "CNN3D":
         print("Model Class: CNN3D")
         is_multimodal = False

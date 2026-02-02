@@ -77,6 +77,7 @@ def load_data(gt_path, fragments_path):
         img_path,
         patch_shape,
         batch_size=batch_size,
+        brightness_clip=brightness_clip,
         is_multimodal=is_multimodal,
         min_search_size=min_search_size,
         step_size=step_size,
@@ -159,9 +160,9 @@ def compute_metrics(gt_sites, detected_sites, name):
     results = ["\n"]
     results.append(len(model_name) * ".")
     results.append(f"Name: {name}")
-    results.append(f"Precision: {round(precision, 4)}")
-    results.append(f"Recall: {round(recall, 4)}")
-    results.append(f"F1: {round(f1, 4)}\n")
+    results.append(f"Precision: {precision:.4f}")
+    results.append(f"Recall: {recall:.4f}")
+    results.append(f"F1: {f1:.4f}\n")
     results.append(f"# Detected Merge Sites: {len(detected_sites)}")
     results.append(f"% Detected GT Merge Sites: {len(tp_sites)}/{len(gt_sites)}")
     results.append(len(model_name) * ".")
@@ -279,14 +280,15 @@ if __name__ == "__main__":
     # Parameters
     brain_id = "802449"
     segmentation_id = "jin_masked_mean40_stddev105"
-    model_name = "MergeDetectorCNN3D-v4-run1-newmask=True-negativebias=0-20260110-132-0.8273"
+    model_name = "MergeDetectorCNN3D-v5-run2-newmask=False-negativebias=0-20260201-127-0.8601"
 
     bucket_name = "allen-nd-goog"
-    exp_name = "V4"
+    exp_name = "V5"
 
     accept_threshold = 0.4
     anisotropy = (0.748, 0.748, 1.0)
     batch_size = 24
+    brightness_clip = 400
     d_tp = 32
     device = "cuda:0"
     min_fragment_size = 40
@@ -294,7 +296,7 @@ if __name__ == "__main__":
     node_spacing = 5
     patch_shape = (128, 128, 128)
     step_size = 20
-    use_new_mask = True
+    use_new_mask = False
 
     # Paths
     dataset_prefix = f"automated_proofreading_dataset/merge_detection/whole_brain_fragments_dataset/{brain_id}/{segmentation_id}"

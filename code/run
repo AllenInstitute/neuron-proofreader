@@ -21,4 +21,4 @@ setup_google_creds
 export AWS_REGION=us-west-2
 
 # This is the master script for the capsule. When you click "Reproducible Run", the code in this file will execute.
-python -u train.py "$@"
+python -u evaluate_wb.py "$@"
