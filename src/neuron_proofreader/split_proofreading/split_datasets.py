@@ -275,6 +275,14 @@ class FragmentsDatasetCollection(IterableDataset):
                 del samplers[key]
 
     def generate_proposals(self, search_radius):
+        """
+        Generates proposals for each dataset.
+
+        Parameters
+        ----------
+        search_radius : float
+            Search radius used to generate proposals.
+        """
         # Proposal generation
         for key in self.datasets:
             self.datasets[key].graph.generate_proposals(search_radius)
