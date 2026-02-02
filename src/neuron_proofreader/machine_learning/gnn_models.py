@@ -84,34 +84,28 @@ class VisionHGAT(torch.nn.Module):
         x_img = self.patch_embedding(x_img)
         for key, f in self.node_embedding.items():
             x_dict[key] = f(x_dict[key])
+
+        if x_img.dim() != 2:
+            print("gnn_models - 89:", x_img.shape)
+            x_img = x_img.unsqueeze(0)
+        if x_dict["proposal"].dim() != 2:
+            print("gnn_models - 92:", x_dict["proposal"].shape)
+            x_dict["proposal"] = x_dict["proposal"].unsqueeze(0)
+
         x_dict["proposal"] = torch.cat((x_dict["proposal"], x_img), dim=1)
 
-        for edge_type, edge_index in edge_index_dict.items():
-            src, rel, dst = edge_type
-
-            if edge_index.dim() != 2 or edge_index.shape[0] != 2:
-                print(
-                    f"Edge type {edge_type}: shape={tuple(edge_index.shape)}, "
-                    f"dtype={edge_index.dtype}, numel={edge_index.numel()}"
-                )
-
-                print(f"❌ BAD SHAPE for {edge_type}: {edge_index.shape}")
-
         # Message passing
-        edge_index_dict = _filter_empty(edge_index_dict)
-        x_dict = self.gat1(x_dict, edge_index_dict)
-        x_dict = self.gat2(x_dict, edge_index_dict)
+        try:
+            x_dict = self.gat1(x_dict, edge_index_dict)
+            x_dict = self.gat2(x_dict, edge_index_dict)
+        except:
+            print("x_dict:", x_dict)
+            print("edge_index_dict:", edge_index_dict)
+            stop
         return self.output(x_dict["proposal"])
 
 
 # --- Helpers ---
-def _filter_empty(edge_index_dict):
-    return {
-        k: v for k, v in edge_index_dict.items()
-        if v.numel() > 0
-    }
-
-
 def init_gat_same(hidden_dim, edge_dim, heads):
     gat = nn_geometric.GATv2Conv(
         -1, hidden_dim, dropout=0.1, edge_dim=edge_dim, heads=heads
