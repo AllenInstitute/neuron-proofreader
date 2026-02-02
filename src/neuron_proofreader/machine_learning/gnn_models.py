@@ -86,6 +86,25 @@ class VisionHGAT(torch.nn.Module):
             x_dict[key] = f(x_dict[key])
         x_dict["proposal"] = torch.cat((x_dict["proposal"], x_img), dim=1)
 
+        for edge_type, edge_index in edge_index_dict.items():
+            src, rel, dst = edge_type
+    
+            if edge_index.numel() == 0:
+                print(
+                    f"Edge type {edge_type}: shape={tuple(edge_index.shape)}, "
+                    f"dtype={edge_index.dtype}, numel={edge_index.numel()}"
+                )
+
+                print(f"⚠️ EMPTY edge_index for {edge_type}")
+    
+            if edge_index.dim() != 2 or edge_index.shape[0] != 2:
+                print(
+                    f"Edge type {edge_type}: shape={tuple(edge_index.shape)}, "
+                    f"dtype={edge_index.dtype}, numel={edge_index.numel()}"
+                )
+
+                print(f"❌ BAD SHAPE for {edge_type}: {edge_index.shape}")
+
         # Message passing
         x_dict = self.gat1(x_dict, edge_index_dict)
         x_dict = self.gat2(x_dict, edge_index_dict)
