@@ -105,6 +105,13 @@ class VisionHGAT(torch.nn.Module):
 
 
 # --- Helpers ---
+def _filter_empty(edge_index_dict):
+    return {
+        k: v for k, v in edge_index_dict.items()
+        if v.numel() > 0
+    }
+
+
 def init_gat_same(hidden_dim, edge_dim, heads):
     gat = nn_geometric.GATv2Conv(
         -1, hidden_dim, dropout=0.1, edge_dim=edge_dim, heads=heads
