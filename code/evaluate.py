@@ -214,20 +214,20 @@ def save_points(zip_path, pts, color, prefix):
 
 if __name__ == "__main__":
     # Parameters
-    model_name = "MergeDetectorCNN3D-v4-run1-newmask=True-negativebias=0-20260110-132-0.8273"
-    exp_name = "V4"
+    model_name = "MergeDetectorCNN3D-v5-run1-newmask=False-negativebias=0-20260201-125-0.8581"
+    exp_name = "V5"
 
     accept_threshold = 0.4
     anisotropy = (0.748, 0.748, 1.0)
     batch_size = 24
-    brightness_clip = 300
+    brightness_clip = 400
     d_tp = 32
     device = "cuda"
     is_test = False
     node_spacing = 5
     patch_shape = (128, 128, 128)
     step_size = 20
-    use_new_mask = True
+    use_new_mask = False
 
     # Paths
     bucket_name = "allen-nd-goog"
