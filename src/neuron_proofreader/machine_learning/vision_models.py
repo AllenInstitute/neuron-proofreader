@@ -15,7 +15,7 @@ from einops import rearrange
 import torch
 import torch.nn as nn
 
-from neuron_proofreader.utils.ml_util import FeedForwardNet, init_mlp
+from neuron_proofreader.utils import ml_util
 
 
 # --- CNNs ---
@@ -59,12 +59,12 @@ class CNN3D(nn.Module):
 
         # Convolutional layers
         self.conv_layers = init_cnn3d(
-            2, n_feat_channels, n_conv_layers, use_double_conv=use_double_conv
+            1, n_feat_channels, n_conv_layers, use_double_conv=use_double_conv
         )
 
         # Output layer
         flat_size = self._get_flattened_size()
-        self.output = FeedForwardNet(flat_size, output_dim, 3)
+        self.output = ml_util.init_feedforward(flat_size, output_dim, 3)
 
         # Initialize weights
         self.apply(self.init_weights)
@@ -82,7 +82,7 @@ class CNN3D(nn.Module):
             pooling.
         """
         with torch.no_grad():
-            x = torch.zeros(1, 2, *self.patch_shape)
+            x = torch.zeros(1, 1, *self.patch_shape)
             x = self.conv_layers(x)
             return x.view(1, -1).size(1)
 
@@ -218,7 +218,7 @@ class ViT3D(nn.Module):
         self.norm = nn.LayerNorm(emb_dim)
 
         # Output layer
-        self.output = FeedForwardNet(emb_dim, output_dim, 2)
+        self.output = ml_util.init_feedforward(emb_dim, output_dim, 2)
 
         # Initialize weights
         self._init_weights()
