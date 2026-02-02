@@ -292,6 +292,17 @@ class FragmentsDatasetCollection(IterableDataset):
         print("% Accepts:", self.p_accepts())
 
     # --- Helpers ---
+    def __len__(self):
+        """
+        Returns the number of datasets in self.
+
+        Returns
+        -------
+        float
+            Number of datasets in self.
+        """
+        return len(self.datasets)
+
     def get_next_key(self, samplers):
         """
         Gets the next key to sample from a dictionary of samplers.
@@ -355,7 +366,7 @@ class FragmentsDatasetCollection(IterableDataset):
         accepts_cnt = 0
         for dataset in self.datasets.values():
             accepts_cnt += len(dataset.graph.gt_accepts)
-        return accepts_cnt / self.n_proposals()
+        return accepts_cnt / (self.n_proposals() + 1e-5)
 
     def save_examples_summary(self, path):
         """
