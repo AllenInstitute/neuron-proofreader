@@ -350,7 +350,7 @@ class GraphDataset(IterableDataset, ABC):
         superchunk = img_util.normalize(superchunk)
         return superchunk, start.astype(int)
 
-    def is_near_leaf(self, node, threshold=50):
+    def is_near_leaf(self, node, threshold=20):
         # Check if node is branching
         if self.graph.degree[node] > 2:
             return False
@@ -374,7 +374,7 @@ class GraphDataset(IterableDataset, ABC):
 
     def is_node_valid(self, node):
         is_contained = self.is_contained(node)
-        is_nonleaf = self.is_near_leaf(node)
+        is_nonleaf = not self.is_near_leaf(node)
         return is_contained and is_nonleaf
 
 
