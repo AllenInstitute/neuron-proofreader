@@ -69,6 +69,7 @@ class FragmentsDataset(IterableDataset):
         """
         # Instance attributes
         self.config = config
+        self.gt_path = gt_path
         self.transform = ImageTransforms() if config.ml.transform else False
 
         # Build graph
@@ -121,13 +122,15 @@ class FragmentsDataset(IterableDataset):
         # Build graph
         graph = ProposalGraph(
             anisotropy=self.config.graph.anisotropy,
+            gt_path=self.gt_path,
             min_size=self.config.graph.min_size,
             min_size_with_proposals=self.config.graph.min_size_with_proposals,
             node_spacing=self.config.graph.node_spacing,
             prune_depth=self.config.graph.prune_depth,
             remove_high_risk_merges=self.config.graph.remove_high_risk_merges,
             segmentation_path=segmentation_path,
-            soma_centroids=soma_centroids
+            soma_centroids=soma_centroids,
+            verbose=self.config.graph.verbose
         )
         graph.load(fragments_path)
 
@@ -270,6 +273,23 @@ class FragmentsDatasetCollection(IterableDataset):
                 yield inputs, targets
             except StopIteration:
                 del samplers[key]
+
+    def generate_proposals(self, search_radius):
+        """
+        Generates proposals for each dataset.
+
+        Parameters
+        ----------
+        search_radius : float
+            Search radius used to generate proposals.
+        """
+        # Proposal generation
+        for key in self.datasets:
+            self.datasets[key].graph.generate_proposals(search_radius)
+
+        # Report results
+        print("# Proposals:", self.n_proposals())
+        print("% Accepts:", self.p_accepts())
 
     # --- Helpers ---
     def get_next_key(self, samplers):
