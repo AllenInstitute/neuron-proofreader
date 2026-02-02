@@ -108,7 +108,6 @@ class SubgraphSampler:
 
             # Yield batch
             self.populate_attributes(subgraph)
-            print("Batch Size:", subgraph.n_proposals())
             yield subgraph
 
     def populate_via_bfs(self, subgraph, root):
@@ -200,7 +199,7 @@ class SubgraphSampler:
         return subgraph
 
     def is_subgraph_full(self, subgraph):
-        return subgraph.n_proposals() < self.max_proposals
+        return subgraph.n_proposals() >= self.max_proposals
 
 
 class SeededSubgraphSampler(SubgraphSampler):
