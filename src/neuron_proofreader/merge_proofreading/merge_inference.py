@@ -347,7 +347,7 @@ class GraphDataset(IterableDataset, ABC):
         center = (start + shape // 2).astype(int)
         superchunk = self.img_reader.read(center, shape)
         superchunk = np.minimum(superchunk, self.brightness_clip)
-        superchunk = img_util.normalize(superchunk)
+        #superchunk = img_util.normalize(superchunk)
         return superchunk, start.astype(int)
 
     def is_near_leaf(self, node, threshold=20):
@@ -516,7 +516,7 @@ class DenseGraphDataset(GraphDataset):
         point_clouds = np.empty((len(nodes), 3, 3600), dtype=np.float32)
         for i, (node, center) in enumerate(zip(nodes, patch_centers)):
             s = img_util.get_slices(center, self.patch_shape)
-            patches[i, 0, ...] = img[s]
+            patches[i, 0, ...] = np.normalize(img[s])
             patches[i, 1, ...] = label_mask[s]
 
             subgraph = self.graph.get_rooted_subgraph(
