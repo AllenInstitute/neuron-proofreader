@@ -168,7 +168,7 @@ def load_model(model, model_path, device="cuda"):
 
 def tensor_to_list(tensor):
     """
-    Converts a tensor to a list.
+    Converts the given tensor to a list.
 
     Parameters
     ----------
