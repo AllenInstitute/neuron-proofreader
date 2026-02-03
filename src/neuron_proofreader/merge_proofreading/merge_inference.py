@@ -501,20 +501,8 @@ class DenseGraphDataset(GraphDataset):
         batch = np.empty((len(nodes), 2,) + self.patch_shape)
         for i, center in enumerate(patch_centers):
             s = img_util.get_slices(center, self.patch_shape)
-<<<<<<< HEAD
             batch[i, 0, ...] = img_util.normalize(img[s])
             batch[i, 1, ...] = label_mask[s]
-=======
-            try:
-                batch[i, 0, ...] = img[s]
-                batch[i, 1, ...] = label_mask[s]
-            except:
-                print("center:", center)
-                print("img.shape:", img.shape)
-                print("\noffset:", offset)
-                print("patch_centers:", patch_centers)
-                stop
->>>>>>> 6c98e4d1a99e00129c798e43efaf78a9563a4de7
         return nodes, torch.tensor(batch, dtype=torch.float)
 
     def _get_multimodal_batch(self, nodes, img, offset):
@@ -527,11 +515,7 @@ class DenseGraphDataset(GraphDataset):
         point_clouds = np.empty((len(nodes), 3, 3600), dtype=np.float32)
         for i, (node, center) in enumerate(zip(nodes, patch_centers)):
             s = img_util.get_slices(center, self.patch_shape)
-<<<<<<< HEAD
             patches[i, 0, ...] = img_util.normalize(img[s])
-=======
-            patches[i, 0, ...] = img[s]
->>>>>>> 6c98e4d1a99e00129c798e43efaf78a9563a4de7
             patches[i, 1, ...] = label_mask[s]
 
             subgraph = self.graph.get_rooted_subgraph(
