@@ -37,12 +37,13 @@ class FeedForwardNet(nn.Module):
         super().__init__()
 
         # Instance attributes
+        assert n_layers > 1
         self.net = self.build_network(input_dim, output_dim, n_layers)
 
     def build_network(self, input_dim, output_dim, n_layers):
         # Set input/output dimensions
         input_dim_i = input_dim
-        output_dim_i = input_dim // 2
+        output_dim_i = max(input_dim // 2, 4)
 
         # Build architecture
         layers = []
@@ -50,9 +51,9 @@ class FeedForwardNet(nn.Module):
             mlp = init_mlp(input_dim_i, input_dim_i * 2, output_dim_i)
             layers.append(mlp)
 
-            input_dim_i = input_dim_i // 2
+            input_dim_i = output_dim_i
             output_dim_i = (
-                output_dim_i // 2 if i < n_layers - 2 else output_dim
+                max(output_dim_i // 2, 4) if i < n_layers - 2 else output_dim
             )
 
         # Initialize weights
@@ -167,7 +168,7 @@ def load_model(model, model_path, device="cuda"):
 
 def tensor_to_list(tensor):
     """
-    Converts a tensor to a list.
+    Converts the given tensor to a list.
 
     Parameters
     ----------
