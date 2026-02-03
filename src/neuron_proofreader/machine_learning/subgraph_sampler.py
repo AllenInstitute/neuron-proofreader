@@ -107,7 +107,6 @@ class SubgraphSampler:
                 self.populate_via_bfs(subgraph, root)
 
             # Yield batch
-            self.populate_attributes(subgraph)
             yield subgraph
 
     def populate_via_bfs(self, subgraph, root):
@@ -178,10 +177,6 @@ class SubgraphSampler:
             if not (v in visited and v in nodes_added):
                 queue.append((v, 0))
 
-    def populate_attributes(self, subgraph):
-        # TO DO
-        pass
-
     # --- Helpers ---
     def init_subgraph(self):
         """
@@ -204,10 +199,10 @@ class SubgraphSampler:
 
 class SeededSubgraphSampler(SubgraphSampler):
 
-    def __init__(self, graph, max_proposals=200, gnn_depth=2):
+    def __init__(self, graph, gnn_depth=2, max_proposals=64):
         # Call parent class
         super(SeededSubgraphSampler, self).__init__(
-            graph, max_proposals, gnn_depth
+            graph, gnn_depth, max_proposals
         )
 
     # --- Batch Generation ---
