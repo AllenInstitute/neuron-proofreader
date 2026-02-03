@@ -659,22 +659,25 @@ def is_precomputed(img_path):
         return False
 
 
-def normalize(img):
+def normalize(img, percentiles=(1, 99.5)):
     """
-    Normalizes an image so that the minimum and maximum intensity values are 0
-    and 1.
+    Normalizes an image using a percentile-based scheme and clips values to
+    [0, 1].
 
     Parameters
     ----------
     img : numpy.ndarray
         Image to be normalized.
+    percentiles : Tuple[float], optional
+        Upper and lower percentiles used to normalize the given image. Default
+        is (1, 99.5).
 
     Returns
     -------
     img : numpy.ndarray
         Normalized image.
     """
-    mn, mx = np.percentile(img, [1, 99.9])
+    mn, mx = np.percentile(img, percentiles)
     return np.clip((img - mn) / (mx - mn + 1e-5), 0, 1)
 
 
