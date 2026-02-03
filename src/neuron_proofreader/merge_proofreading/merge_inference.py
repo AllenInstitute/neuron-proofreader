@@ -103,7 +103,7 @@ class MergeDetector:
         numpy.ndarray
             Predicted merge site likelihoods.
         """
-        with torch.no_grad():
+        with torch.inference_mode():
             x_nodes = x_nodes.to(self.device)
             y_nodes = sigmoid(self.model(x_nodes))
             return np.squeeze(ml_util.to_cpu(y_nodes, to_numpy=True), axis=1)
