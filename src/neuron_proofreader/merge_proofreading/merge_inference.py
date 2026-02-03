@@ -347,7 +347,6 @@ class GraphDataset(IterableDataset, ABC):
         center = (start + shape // 2).astype(int)
         superchunk = self.img_reader.read(center, shape)
         superchunk = np.minimum(superchunk, self.brightness_clip)
-        #superchunk = img_util.normalize(superchunk)
         return superchunk, start.astype(int)
 
     def is_near_leaf(self, node, threshold=20):
