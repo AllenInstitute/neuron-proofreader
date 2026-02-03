@@ -78,7 +78,7 @@ class FeaturePipeline:
             Subgraph of "graph" attribute to extract features for.
         """
         features = FeatureSet(subgraph)
-        for name, extractor in zip(["skel", "img"], self.extractors):
+        for extractor in self.extractors:
             extractor(subgraph, features)
         return features
 
