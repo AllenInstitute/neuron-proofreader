@@ -29,7 +29,6 @@ Note: Steps 2 and 3 of the inference pipeline can be iterated in a loop that
 """
 
 from time import time
-from torch.nn.functional import sigmoid
 from tqdm import tqdm
 
 import networkx as nx
@@ -327,10 +326,11 @@ class InferencePipeline:
             Dictionary that maps proposal IDs to model predictions.
         """
         # Generate predictions
-        with torch.no_grad():
+        with torch.inference_mode():
             device = self.config.ml.device
             x = data.get_inputs().to(device)
-            hat_y = sigmoid(self.model(x))
+            with torch.cuda.amp.autocast(enabled=True):
+                hat_y = torch.sigmoid(self.model(x))
 
         # Reformat predictions
         idx_to_id = data.idxs_proposals.idx_to_id

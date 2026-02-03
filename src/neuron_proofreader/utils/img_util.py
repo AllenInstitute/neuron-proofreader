@@ -730,7 +730,7 @@ def remove_small_segments(segmentation, min_size):
     return segmentation
 
 
-def resize(img, new_shape, is_segmentation=False):
+def resize(img, new_shape):
     """
     Resize a 3D image to the specified new shape using linear interpolation.
 
@@ -740,22 +740,14 @@ def resize(img, new_shape, is_segmentation=False):
         Input 3D image array with shape (depth, height, width).
     new_shape : Tuple[int]
         Desired output shape as (new_depth, new_height, new_width).
-    is_segmentation : bool, optional
-        Indication of whether the image represents a segmentation mask.
 
     Returns
     -------
     numpy.ndarray
         Resized 3D image with shape equal to "new_shape".
     """
-    # Set parameters
-    order = 0 if is_segmentation else 3
-    multiplier = 4 if is_segmentation else 1
     zoom_factors = np.array(new_shape) / np.array(img.shape)
-
-    # Resize image
-    img = zoom(multiplier * img, zoom_factors, order=order)
-    return img / multiplier
+    return zoom(img, zoom_factors, order=1, prefilter=False)
 
 
 def to_physical(voxel, anisotropy, offset=(0, 0, 0)):

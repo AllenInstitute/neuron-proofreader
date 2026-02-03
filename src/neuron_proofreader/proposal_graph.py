@@ -645,12 +645,11 @@ class ProposalGraph(SkeletonGraph):
         return attrs
 
     def edge_length(self, edge):
-        length = 0
-        for i in range(1, len(self.edges[edge]["xyz"])):
-            length += geometry.dist(
-                self.edges[edge]["xyz"][i], self.edges[edge]["xyz"][i - 1]
-            )
-        return length
+        xyz = self.edges[edge]["xyz"]
+        if len(xyz) < 2:
+            return 0.0
+        else:
+            return np.linalg.norm(xyz[1:] - xyz[:-1], axis=1).sum()
 
     def find_fragments_near_xyz(self, query_xyz, max_dist):
         hits = dict()
