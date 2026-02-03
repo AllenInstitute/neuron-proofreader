@@ -9,7 +9,7 @@ NeuronProofreader pipelines.
 
 """
 
-#from neurobase.finetune import finetune_model
+# from neurobase.finetune import finetune_model
 from einops import rearrange
 
 import torch
@@ -147,7 +147,7 @@ class MAE3D(nn.Module):
 
         # Instance attributes
         self.encoder = full_model.encoder
-        self.output = ml_util.init_feedforward(384, 1, 2)
+        self.output = FeedForwardNet(384, 1, 3)
 
     def forward(self, x):
         latent0 = self.encoder(x[:, 0:1, ...])

@@ -179,6 +179,5 @@ class Config:
         dir_path : str
             Path to directory to save JSON file.
         """
-        
         self.graph.save(os.path.join(dir_path, "metadata_graph.json"))
         self.ml.save(os.path.join(dir_path, "metadata_ml.json"))

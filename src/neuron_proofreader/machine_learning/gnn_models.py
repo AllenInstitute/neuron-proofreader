@@ -91,16 +91,8 @@ class VisionHGAT(torch.nn.Module):
         x_dict["proposal"] = torch.cat((x_dict["proposal"], x_img), dim=1)
 
         # Message passing
-        try:
-            x_dict = self.gat1(x_dict, edge_index_dict)
-            x_dict = self.gat2(x_dict, edge_index_dict)
-        except:
-            print("Before...")
-            print("\n".join(before))
-            print("After...")
-            for key, x in x_dict.items():
-                print(key, x.size())
-            stop
+        x_dict = self.gat1(x_dict, edge_index_dict)
+        x_dict = self.gat2(x_dict, edge_index_dict)
         return self.output(x_dict["proposal"])
 
 
