@@ -774,7 +774,7 @@ def to_physical(voxel, anisotropy, offset=(0, 0, 0)):
     return tuple([voxel[i] * anisotropy[i] - offset[i] for i in range(3)])
 
 
-def to_voxels(xyz, anisotropy, multiscale=0):
+def to_voxels(xyz, anisotropy):
     """
     Converts coordinate from a physical to voxel space.
 
@@ -785,15 +785,11 @@ def to_voxels(xyz, anisotropy, multiscale=0):
     anisotropy : ArrayLike
         Image to physical coordinates scaling factors to account for the
         anisotropy of the microscope.
-    multiscale : int, optional
-        Level in the image pyramid that the voxel coordinate must index into.
-        Default is 0.
 
     Returns
     -------
     Tuple[int]
         Voxel coordinate.
     """
-    scaling_factor = 1.0 / 2 ** multiscale
-    voxel = [int(scaling_factor * xyz[i] / anisotropy[i]) for i in range(3)]
+    voxel = [int(xyz[i] / anisotropy[i]) for i in range(3)]
     return tuple(voxel[::-1])

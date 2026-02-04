@@ -284,10 +284,7 @@ class InferencePipeline:
         self.dataset.graph.to_zipped_swcs(temp_dir, sampling_rate=2)
 
         # Merge ZIPs
-        swc_dir = os.path.join(self.output_dir, "corrected-swcs")
-        swc_path = os.path.join(swc_dir, "corrected-swcs.zip")
-        util.mkdir(swc_dir)
-
+        swc_path = os.path.join(self.output_dir, "corrected-swcs.zip")
         zip_paths = util.list_paths(temp_dir, extension=".zip")
         util.combine_zips(zip_paths, swc_path)
         util.rmdir(temp_dir)
