@@ -10,6 +10,8 @@ correction.
 """
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from skimage.transform import resize
+from time import time
 from torch_geometric.data import HeteroData
 
 import numpy as np
@@ -264,6 +266,7 @@ class ImageFeatureExtractor:
             for thread in as_completed(pending.keys()):
                 proposal = pending.pop(thread)
                 extractor = thread.result()
+
                 profiles[proposal] = extractor.get_intensity_profile()
                 patches[proposal] = extractor.get_input_patch()
 
@@ -399,7 +402,7 @@ class PatchFeatureExtractor:
         node1, node2 = tuple(self.proposal)
         self.annotate_edge(node1)
         self.annotate_edge(node2)
-        self.annotate_proposal()
+        self.annotate_proposal()        
 
     # --- Core Routines ---
     def get_input_patch(self):
@@ -413,7 +416,7 @@ class PatchFeatureExtractor:
             raw image data and channel 1 contains segmentation data.
         """
         img = img_util.resize(self.img, self.patch_shape)
-        mask = img_util.resize(self.mask, self.patch_shape, True)
+        mask = resize_segmentation(self.mask, self.patch_shape)
         return np.stack([img, mask], axis=0)
 
     def get_intensity_profile(self):
@@ -954,3 +957,29 @@ def get_feature_dict():
         proposals.
     """
     return {"branch": 2, "proposal": 70}
+
+
+def resize_segmentation(mask, new_shape):
+    """
+    Resizes a segmentation mask to the given new shape.
+
+    Parameters
+    ----------
+    mask : numpy.ndarray
+        Segmentation mask to be resized.
+    new_shape : Tuple[int]
+        New shape of segmentation mask.
+
+    Returns
+    -------
+    mask : numpy.ndarray
+        Resized segmentation mask.
+    """
+    mask = resize(
+        mask,
+        new_shape,
+        order=0,
+        preserve_range=True,
+        anti_aliasing=False,
+    ).astype(mask.dtype)
+    return mask

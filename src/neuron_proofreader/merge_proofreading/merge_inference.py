@@ -103,7 +103,7 @@ class MergeDetector:
         numpy.ndarray
             Predicted merge site likelihoods.
         """
-        with torch.no_grad():
+        with torch.inference_mode():
             x_nodes = x_nodes.to(self.device)
             y_nodes = sigmoid(self.model(x_nodes))
             return np.squeeze(ml_util.to_cpu(y_nodes, to_numpy=True), axis=1)
@@ -347,7 +347,6 @@ class GraphDataset(IterableDataset, ABC):
         center = (start + shape // 2).astype(int)
         superchunk = self.img_reader.read(center, shape)
         superchunk = np.minimum(superchunk, self.brightness_clip)
-        superchunk = img_util.normalize(superchunk)
         return superchunk, start.astype(int)
 
     def is_near_leaf(self, node, threshold=20):
@@ -502,7 +501,7 @@ class DenseGraphDataset(GraphDataset):
         batch = np.empty((len(nodes), 2,) + self.patch_shape)
         for i, center in enumerate(patch_centers):
             s = img_util.get_slices(center, self.patch_shape)
-            batch[i, 0, ...] = img[s]
+            batch[i, 0, ...] = img_util.normalize(img[s])
             batch[i, 1, ...] = label_mask[s]
         return nodes, torch.tensor(batch, dtype=torch.float)
 
@@ -516,7 +515,7 @@ class DenseGraphDataset(GraphDataset):
         point_clouds = np.empty((len(nodes), 3, 3600), dtype=np.float32)
         for i, (node, center) in enumerate(zip(nodes, patch_centers)):
             s = img_util.get_slices(center, self.patch_shape)
-            patches[i, 0, ...] = img[s]
+            patches[i, 0, ...] = img_util.normalize(img[s])
             patches[i, 1, ...] = label_mask[s]
 
             subgraph = self.graph.get_rooted_subgraph(

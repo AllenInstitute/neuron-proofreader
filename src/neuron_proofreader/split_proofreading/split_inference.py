@@ -29,7 +29,6 @@ Note: Steps 2 and 3 of the inference pipeline can be iterated in a loop that
 """
 
 from time import time
-from torch.nn.functional import sigmoid
 from tqdm import tqdm
 
 import networkx as nx
@@ -285,10 +284,7 @@ class InferencePipeline:
         self.dataset.graph.to_zipped_swcs(temp_dir, sampling_rate=2)
 
         # Merge ZIPs
-        swc_dir = os.path.join(self.output_dir, "corrected-swcs")
-        swc_path = os.path.join(swc_dir, "corrected-swcs.zip")
-        util.mkdir(swc_dir)
-
+        swc_path = os.path.join(self.output_dir, "corrected-swcs.zip")
         zip_paths = util.list_paths(temp_dir, extension=".zip")
         util.combine_zips(zip_paths, swc_path)
         util.rmdir(temp_dir)
@@ -327,10 +323,11 @@ class InferencePipeline:
             Dictionary that maps proposal IDs to model predictions.
         """
         # Generate predictions
-        with torch.no_grad():
+        with torch.inference_mode():
             device = self.config.ml.device
             x = data.get_inputs().to(device)
-            hat_y = sigmoid(self.model(x))
+            with torch.cuda.amp.autocast(enabled=True):
+                hat_y = torch.sigmoid(self.model(x))
 
         # Reformat predictions
         idx_to_id = data.idxs_proposals.idx_to_id
