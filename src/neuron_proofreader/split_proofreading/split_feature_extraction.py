@@ -402,7 +402,7 @@ class PatchFeatureExtractor:
         node1, node2 = tuple(self.proposal)
         self.annotate_edge(node1)
         self.annotate_edge(node2)
-        self.annotate_proposal()
+        self.annotate_proposal()        
 
     # --- Core Routines ---
     def get_input_patch(self):
