@@ -18,7 +18,9 @@ import networkx as nx
 import numpy as np
 import os
 import pandas as pd
+import queue
 import random
+import threading
 import torch
 
 from neuron_proofreader.machine_learning.augmentation import ImageTransforms
@@ -1106,3 +1108,72 @@ class MergeSiteDataLoader(DataLoader):
             }
         )
         return batch, ml_util.to_tensor(targets)
+
+
+class PrefetchingDataLoader:
+    """
+    Wraps a DataLoader to prefetch batches in a background thread.
+    """
+
+    def __init__(self, dataloader, prefetch_count=2):
+        """
+        Parameters
+        ----------
+        dataloader : MergeSiteDataLoader
+            The underlying dataloader to wrap.
+        prefetch_count : int, optional
+            Number of batches to prefetch ahead. Default is 2.
+        """
+        self.dataloader = dataloader
+        self.prefetch_count = prefetch_count
+
+    def __iter__(self):
+        return _PrefetchIterator(self.dataloader, self.prefetch_count)
+
+    def __len__(self):
+        return len(self.dataloader)
+
+
+class _PrefetchIterator:
+    """Background prefetching iterator using a queue and worker thread."""
+
+    def __init__(self, dataloader, prefetch_count):
+        self.dataloader = dataloader
+        self.prefetch_count = prefetch_count
+        self.queue = queue.Queue(maxsize=prefetch_count)
+        self.iterator = None
+        self.worker = None
+        self.stop_event = threading.Event()
+        self._start()
+
+    def _start(self):
+        self.iterator = iter(self.dataloader)
+        self.worker = threading.Thread(target=self._prefetch_worker, daemon=True)
+        self.worker.start()
+
+    def _prefetch_worker(self):
+        """Worker thread that loads batches into the queue."""
+        try:
+            for batch in self.iterator:
+                if self.stop_event.is_set():
+                    break
+                self.queue.put(batch)
+            self.queue.put(None)  # Sentinel to signal end
+        except Exception as e:
+            self.queue.put(e)  # Pass exception to main thread
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        item = self.queue.get()
+        if item is None:
+            self.stop_event.set()
+            raise StopIteration
+        if isinstance(item, Exception):
+            self.stop_event.set()
+            raise item
+        return item
+
+    def __del__(self):
+        self.stop_event.set()

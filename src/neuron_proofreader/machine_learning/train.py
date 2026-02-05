@@ -16,6 +16,7 @@ from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data.distributed import DistributedSampler
+from tqdm import tqdm
 
 import numpy as np
 import os
@@ -108,9 +109,13 @@ class Trainer:
 
         self.criterion = nn.BCEWithLogitsLoss()
         self.model = model.to(device)
-        self.optimizer = optim.AdamW(self.model.parameters(), lr=lr)
+        # Only pass trainable parameters to optimizer (handles frozen encoder)
+        self.optimizer = optim.AdamW(
+            filter(lambda p: p.requires_grad, self.model.parameters()),
+            lr=lr,
+        )
         self.scaler = torch.cuda.amp.GradScaler(enabled=True)
-        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=25)
+        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=max_epochs)
         self.writer = SummaryWriter(log_dir=log_dir)
 
     # --- Core Routines ---
@@ -159,7 +164,9 @@ class Trainer:
         """
         self.model.train()
         loss, y, hat_y = list(), list(), list()
-        for x_i, y_i in train_dataloader:
+        rank = getattr(self, "rank", 0)
+        pbar = tqdm(train_dataloader, desc="Training", unit="batch", disable=rank != 0)
+        for x_i, y_i in pbar:
             # Forward pass
             self.optimizer.zero_grad()
             hat_y_i, loss_i = self.forward_pass(x_i, y_i)
@@ -177,6 +184,8 @@ class Trainer:
             y.extend(ml_util.to_cpu(y_i, True).flatten().tolist())
             hat_y.extend(ml_util.to_cpu(hat_y_i, True).flatten().tolist())
             loss.append(float(ml_util.to_cpu(loss_i)))
+            if rank == 0:
+                pbar.set_postfix(loss=f"{loss[-1]:.4f}")
 
         # Write stats to tensorboard
         stats = self.compute_stats(y, hat_y)
@@ -207,13 +216,15 @@ class Trainer:
         loss_accum = 0
         y_accum = list()
         hat_y_accum = list()
-        if self.save_mistake_mips:
+        rank = getattr(self, "rank", 0)
+        if self.save_mistake_mips and rank == 0:
             util.mkdir(self.mistakes_dir, True)
 
         # Iterate over dataset
         self.model.eval()
         with torch.no_grad():
-            for x, y in val_dataloader:
+            pbar = tqdm(val_dataloader, desc="Validating", unit="batch", disable=rank != 0)
+            for x, y in pbar:
                 # Run model
                 hat_y, loss = self.forward_pass(x, y)
 
@@ -225,9 +236,12 @@ class Trainer:
                 y_accum.extend(y)
                 hat_y_accum.extend(hat_y)
                 loss_accum += float(ml_util.to_cpu(loss))
+                if rank == 0:
+                    pbar.set_postfix(loss=f"{loss_accum / len(y_accum):.4f}")
 
-                # Save MIPs of mistakes
-                self._save_mistake_mips(x, y, hat_y, idx_offset)
+                # Save MIPs of mistakes (only rank 0 in distributed mode)
+                if rank == 0:
+                    self._save_mistake_mips(x, y, hat_y, idx_offset)
                 idx_offset += len(y)
 
         # Write stats to tensorboard
@@ -343,14 +357,40 @@ class Trainer:
         """
         Loads a pretrained model weights from a checkpoint file.
 
+        Handles checkpoints saved with or without DDP 'module.' prefix,
+        ensuring compatibility regardless of how the checkpoint was saved.
+
         Parameters
         ----------
         model_path : str
             Path to the checkpoint file containing the saved weights.
         """
-        self.model.load_state_dict(
-            torch.load(model_path, map_location=self.device)
+        state_dict = torch.load(model_path, map_location=self.device)
+
+        # Get the model to load into (handle DDP wrapping)
+        model_to_load = (
+            self.model.module if hasattr(self.model, "module") else self.model
         )
+
+        # Check if state_dict has 'module.' prefix but model doesn't need it
+        # or vice versa, and adjust accordingly
+        model_keys = set(model_to_load.state_dict().keys())
+        ckpt_keys = set(state_dict.keys())
+
+        # If checkpoint has 'module.' prefix but model doesn't
+        if any(k.startswith("module.") for k in ckpt_keys) and not any(
+            k.startswith("module.") for k in model_keys
+        ):
+            state_dict = {
+                k.replace("module.", "", 1): v for k, v in state_dict.items()
+            }
+        # If model expects 'module.' prefix but checkpoint doesn't have it
+        elif any(k.startswith("module.") for k in model_keys) and not any(
+            k.startswith("module.") for k in ckpt_keys
+        ):
+            state_dict = {f"module.{k}": v for k, v in state_dict.items()}
+
+        model_to_load.load_state_dict(state_dict)
 
     def _save_mistake_mips(self, x, y, hat_y, idx_offset):
         """
@@ -386,6 +426,9 @@ class Trainer:
         """
         Saves the current model state to a file.
 
+        Handles DDP wrapping by extracting the underlying module before saving,
+        ensuring checkpoints are compatible with both DDP and non-DDP loading.
+
         Parameters
         ----------
         epoch : int
@@ -394,7 +437,12 @@ class Trainer:
         date = datetime.today().strftime("%Y%m%d")
         filename = f"{self.model_name}-{date}-{epoch}-{self.best_f1:.4f}.pth"
         path = os.path.join(self.log_dir, filename)
-        torch.save(self.model.state_dict(), path)
+
+        # Unwrap DDP model if necessary for checkpoint compatibility
+        model_to_save = (
+            self.model.module if hasattr(self.model, "module") else self.model
+        )
+        torch.save(model_to_save.state_dict(), path)
 
     def update_tensorboard(self, stats, epoch, prefix):
         """
@@ -409,6 +457,8 @@ class Trainer:
         prefix : str
             Prefix to prepend to each metric name when logging.
         """
+        if self.writer is None:
+            return
         for key, value in stats.items():
             self.writer.add_scalar(prefix + key, stats[key], epoch)
 
@@ -417,6 +467,93 @@ class DistributedTrainer(Trainer):
     """
     A subclass of Trainer that uses DistributedDataParallel to train a model.
     """
+
+    def _gather_predictions(self, y_local, hat_y_local):
+        """
+        Gather predictions from all ranks for accurate metric computation.
+
+        Parameters
+        ----------
+        y_local : list
+            Local ground truth labels.
+        hat_y_local : list
+            Local predictions.
+
+        Returns
+        -------
+        tuple
+            (y_gathered, hat_y_gathered) - combined lists from all ranks.
+        """
+        if not dist.is_initialized():
+            return y_local, hat_y_local
+
+        # Convert to tensors for gathering
+        y_tensor = torch.tensor(y_local, dtype=torch.float32, device=self.device)
+        hat_y_tensor = torch.tensor(
+            hat_y_local, dtype=torch.float32, device=self.device
+        )
+
+        # Gather sizes from all ranks (they may differ)
+        local_size = torch.tensor([len(y_local)], dtype=torch.float32, device=self.device)
+        sizes = [torch.zeros(1, device=self.device) for _ in range(self.world_size)]
+        dist.all_gather(sizes, local_size)
+        sizes = [int(s.item()) for s in sizes]
+        max_size = max(sizes)
+
+        # Pad tensors to max size for gathering
+        y_padded = torch.zeros(max_size, device=self.device)
+        hat_y_padded = torch.zeros(max_size, device=self.device)
+        y_padded[: len(y_local)] = y_tensor
+        hat_y_padded[: len(hat_y_local)] = hat_y_tensor
+
+        # Gather from all ranks
+        y_gathered_list = [
+            torch.zeros(max_size, device=self.device)
+            for _ in range(self.world_size)
+        ]
+        hat_y_gathered_list = [
+            torch.zeros(max_size, device=self.device)
+            for _ in range(self.world_size)
+        ]
+        dist.all_gather(y_gathered_list, y_padded)
+        dist.all_gather(hat_y_gathered_list, hat_y_padded)
+
+        # Concatenate and trim to actual sizes
+        y_gathered = []
+        hat_y_gathered = []
+        for i, size in enumerate(sizes):
+            y_gathered.extend(y_gathered_list[i][:size].cpu().tolist())
+            hat_y_gathered.extend(hat_y_gathered_list[i][:size].cpu().tolist())
+
+        return y_gathered, hat_y_gathered
+
+    def _gather_loss(self, loss_accum, n_samples_local):
+        """
+        Gather and properly normalize loss across all ranks.
+
+        Parameters
+        ----------
+        loss_accum : float
+            Accumulated loss on this rank.
+        n_samples_local : int
+            Number of samples processed on this rank.
+
+        Returns
+        -------
+        float
+            Properly normalized global loss.
+        """
+        if not dist.is_initialized():
+            return loss_accum / n_samples_local
+
+        # Gather total loss and sample counts from all ranks
+        loss_tensor = torch.tensor([loss_accum], device=self.device)
+        count_tensor = torch.tensor([n_samples_local], device=self.device)
+
+        dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM)
+        dist.all_reduce(count_tensor, op=dist.ReduceOp.SUM)
+
+        return loss_tensor.item() / count_tensor.item()
 
     def __init__(
         self,
@@ -444,44 +581,86 @@ class DistributedTrainer(Trainer):
         max_epochs : int, optional
             Maximum number of training epochs. Default is 200.
         """
-        # Call parent class
-        super().__init__(
-            model,
-            model_name,
-            output_dir,
-            device=device,
-            lr=lr,
-            max_epochs=max_epochs,
-            save_mistake_mips=save_mistake_mips
-        )
-
         # Check that multiple GPUs are available
         msg = "Error: only a single GPU detected in environment!"
         assert "RANK" in os.environ and "WORLD_SIZE" in os.environ, msg
 
-        # Instance attributes
+        # Get rank info before calling parent (needed for directory creation)
         self.local_rank = int(os.environ["LOCAL_RANK"])
         self.rank = int(os.environ["RANK"])
         self.world_size = int(os.environ["WORLD_SIZE"])
 
-        # Set up DDP
-        self._setup_ddp()
-
-    def _setup_ddp(self):
-        """
-        Initialize torch.distributed and wrap model in DDP.
-        """
-        # Set device
+        # Initialize process group first so we can use barriers
         torch.cuda.set_device(self.local_rank)
-        self.device = torch.device(f"cuda:{self.local_rank}")
-
-        # Initialize process group
         dist.init_process_group(
             backend="nccl",
             init_method="env://",
             world_size=self.world_size,
             rank=self.rank,
         )
+
+        # Generate consistent session name across all ranks
+        # Rank 0 generates the name and broadcasts to others
+        if self.rank == 0:
+            exp_name = "session-" + datetime.today().strftime("%Y%m%d_%H%M")
+            exp_name_tensor = torch.tensor(
+                [ord(c) for c in exp_name] + [0] * (64 - len(exp_name)),
+                dtype=torch.int64,
+                device=f"cuda:{self.local_rank}"
+            )
+        else:
+            exp_name_tensor = torch.zeros(64, dtype=torch.int64, device=f"cuda:{self.local_rank}")
+
+        dist.broadcast(exp_name_tensor, src=0)
+        exp_name = "".join(chr(c) for c in exp_name_tensor.tolist() if c != 0)
+        log_dir = os.path.join(output_dir, exp_name)
+        mistakes_dir = os.path.join(log_dir, "mistakes")
+
+        # Only rank 0 creates directories
+        if self.rank == 0:
+            util.mkdir(log_dir)
+            if save_mistake_mips:
+                util.mkdir(mistakes_dir)
+
+        # Barrier to ensure directories are created before other ranks proceed
+        dist.barrier()
+
+        # Now initialize parent class attributes without creating directories
+        self.best_f1 = 0
+        self.device = device
+        self.log_dir = log_dir
+        self.max_epochs = max_epochs
+        self.min_recall = 0
+        self.mistakes_dir = mistakes_dir
+        self.model_name = model_name
+        self.save_mistake_mips = save_mistake_mips
+
+        self.criterion = nn.BCEWithLogitsLoss()
+        self.model = model.to(device)
+        self.scaler = torch.cuda.amp.GradScaler(enabled=True)
+
+        # Only rank 0 writes to TensorBoard to avoid file contention
+        if self.rank == 0:
+            self.writer = SummaryWriter(log_dir=log_dir)
+        else:
+            self.writer = None
+
+        # Store lr for optimizer creation after DDP setup
+        self._lr = lr
+
+        # Set up DDP (process group already initialized)
+        # Optimizer and scheduler are created after DDP wrapping
+        self._setup_ddp()
+
+    def _setup_ddp(self):
+        """
+        Wrap model in DDP and create optimizer/scheduler.
+
+        The optimizer must be created after DDP wrapping to ensure it
+        references the correct parameters for gradient synchronization.
+        """
+        # Set device
+        self.device = torch.device(f"cuda:{self.local_rank}")
 
         # Move model to local rank device
         self.model = self.model.to(self.device)
@@ -494,6 +673,15 @@ class DistributedTrainer(Trainer):
             output_device=self.local_rank,
             find_unused_parameters=False,
         )
+
+        # Create optimizer and scheduler AFTER DDP wrapping
+        # Only pass trainable parameters to optimizer
+        self.optimizer = optim.AdamW(
+            filter(lambda p: p.requires_grad, self.model.parameters()),
+            lr=self._lr,
+        )
+        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=self.max_epochs)
+
         print(f"Initialized rank {self.rank}/{self.world_size}")
 
     def set_contiguous_model(self):
@@ -503,6 +691,72 @@ class DistributedTrainer(Trainer):
         for p in self.model.parameters():
             if not p.is_contiguous():
                 p.data = p.contiguous()
+
+    def validate_step(self, val_dataloader, epoch):
+        """
+        Performs a full validation loop with proper metric aggregation across
+        all ranks.
+
+        Parameters
+        ----------
+        val_dataloader : torch.utils.data.DataLoader
+            DataLoader for the validation dataset.
+        epoch : int
+            Current training epoch.
+
+        Returns
+        -------
+        stats : Dict[str, float]
+            Dictionary of aggregated validation metrics.
+        """
+        # Initializations
+        idx_offset = 0
+        loss_accum = 0
+        y_accum = list()
+        hat_y_accum = list()
+        if self.save_mistake_mips and self.rank == 0:
+            util.mkdir(self.mistakes_dir, True)
+
+        # Iterate over dataset
+        self.model.eval()
+        with torch.no_grad():
+            pbar = tqdm(val_dataloader, desc="Validating", unit="batch", disable=self.rank != 0)
+            for x, y in pbar:
+                # Run model
+                hat_y, loss = self.forward_pass(x, y)
+
+                # Move to CPU
+                y = ml_util.tensor_to_list(y)
+                hat_y = ml_util.tensor_to_list(hat_y)
+
+                # Store predictions
+                y_accum.extend(y)
+                hat_y_accum.extend(hat_y)
+                loss_accum += float(ml_util.to_cpu(loss))
+                if self.rank == 0:
+                    pbar.set_postfix(loss=f"{loss_accum / len(y_accum):.4f}")
+
+                # Save MIPs of mistakes (only rank 0)
+                if self.rank == 0:
+                    self._save_mistake_mips(x, y, hat_y, idx_offset)
+                idx_offset += len(y)
+
+        # Gather predictions from all ranks for accurate metrics
+        y_gathered, hat_y_gathered = self._gather_predictions(y_accum, hat_y_accum)
+
+        # Compute properly normalized loss across all ranks
+        global_loss = self._gather_loss(loss_accum, len(y_accum))
+
+        # Compute stats on gathered predictions (only meaningful on rank 0,
+        # but all ranks compute to stay synchronized)
+        stats = self.compute_stats(y_gathered, hat_y_gathered)
+        stats["loss"] = global_loss
+
+        # Only rank 0 writes to tensorboard
+        if self.rank == 0:
+            self.update_tensorboard(stats, epoch, "val_")
+
+        return stats
 
     def run(self, train_dataloader, val_dataloader):
         """
@@ -533,12 +787,20 @@ class DistributedTrainer(Trainer):
             train_stats = self.train_step(train_dataloader, epoch)
             val_stats = self.validate_step(val_dataloader, epoch)
 
-            # Report results
+            # Synchronize before model saving to ensure all ranks have
+            # completed validation
+            dist.barrier()
+
+            # Report results and save model (rank 0 only)
             if rank == 0:
                 new_best = self.check_model_performance(val_stats, epoch)
                 print(f"\nEpoch {epoch}: ", "New Best!" if new_best else "")
                 self.report_stats(train_stats, is_train=True)
                 self.report_stats(val_stats, is_train=False)
+
+            # Barrier after saving to ensure checkpoint is written before
+            # proceeding to next epoch
+            dist.barrier()
 
             # Step scheduler
             self.scheduler.step()
