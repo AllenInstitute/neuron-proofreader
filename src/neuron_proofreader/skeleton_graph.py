@@ -111,7 +111,7 @@ class SkeletonGraph(nx.Graph):
 
         # Initialize node attribute data structures
         self.node_component_id = np.zeros((n), dtype=int)
-        self.node_radius = np.zeros((n), dtype=np.float16)
+        self.node_radius = np.zeros((n), dtype=np.float32)
         self.node_xyz = np.zeros((n, 3), dtype=np.float32)
 
         # Add irreducibles to graph
