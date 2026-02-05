@@ -10,11 +10,14 @@ NeuronProofreader pipelines.
 """
 
 #from neurobase.finetune import finetune_model
+from neurobase.model.taskheads import BinaryClassifier
+
 from einops import rearrange
 
 import torch
 import torch.nn as nn
 
+from neuron_proofreader.utils import ml_util
 from neuron_proofreader.utils.ml_util import FeedForwardNet, init_mlp
 
 
@@ -133,32 +136,36 @@ class CNN3D(nn.Module):
 # --- Transformers ---
 class MAE3D(nn.Module):
 
-    def __init__(self, checkpoint_path, model_config):
+    def __init__(self, checkpoint_path, model_config, freeze_encoder=True):
         # Call parent closs
         super().__init__()
 
         # Load model
-        full_model = finetune_model(
+        self.model = BinaryClassifier(
             checkpoint_path=checkpoint_path,
             model_config=model_config,
-            task_head_config="binary_classifier",
-            freeze_encoder=True
+            freeze_encoder=freeze_encoder
         )
 
         # Instance attributes
-        self.encoder = full_model.encoder
-        self.output = ml_util.init_feedforward(384, 1, 2)
+#        self.encoder = full_model.encoder
+#        self.output = ml_util.init_feedforward(384, 1, 2)
 
     def forward(self, x):
-        latent0 = self.encoder(x[:, 0:1, ...])
-        latent1 = self.encoder(x[:, 1:2, ...])
+#       latent0 = self.encoder(x[:, 0:1, ...])
+#       latent1 = self.encoder(x[:, 1:2, ...])
+#        x0 = latent0["latents"][:, 0, :]
+#        x1 = latent1["latents"][:, 0, :]
+#        x = torch.cat((x0, x1), dim=1)
+#        x = self.output(x)
+#        return x
 
-        x0 = latent0["latents"][:, 0, :]
-        x1 = latent1["latents"][:, 0, :]
+        img = x[:, 0:1, ...]
+        mask = x[:, 1:2, ...]
 
-        x = torch.cat((x0, x1), dim=1)
-        x = self.output(x)
-        return x
+        combined_input = img + mask
+
+        return self.model(combined_input)
 
 
 class ViT3D(nn.Module):

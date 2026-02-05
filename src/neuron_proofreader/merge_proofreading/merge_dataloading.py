@@ -22,7 +22,7 @@ TEST_BRAIN = "653159"
 
 
 # --- Load Skeletons ---
-def load_fragments(dataset, is_test=False, max_workers=8):
+def load_fragments(dataset, is_test=False, max_workers=2):
     """
     Loads neuron fragments for a selected set of merge-site indices into
     dataset.
@@ -68,7 +68,7 @@ def load_fragments(dataset, is_test=False, max_workers=8):
                 print(f"Error loading fragments for {brain_id}: {e}")
 
 
-def load_groundtruth(dataset, is_test=False, max_workers=8):
+def load_groundtruth(dataset, is_test=False, max_workers=2):
     """
     Loads ground truth skeletons into dataset.
 
@@ -102,7 +102,7 @@ def load_groundtruth(dataset, is_test=False, max_workers=8):
 
 
 def load_images(
-    dataset, img_prefixes_path, segmentation_prefixes_path, is_test=False, max_workers=8
+    dataset, img_prefixes_path, segmentation_prefixes_path, is_test=False, max_workers=2
 ):
     """
     Loads images into dataset.

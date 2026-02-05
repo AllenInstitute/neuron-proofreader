@@ -155,8 +155,8 @@ class TensorStoreReader(ImageReader):
                     "path": path,
                 },
                 "context": {
-                    "cache_pool": {"total_bytes_limit": 1000000000},
-                    "cache_pool#remote": {"total_bytes_limit": 1000000000},
+                    "cache_pool": {"total_bytes_limit": 100000000},
+                    "cache_pool#remote": {"total_bytes_limit": 100000000},
                     "data_copy_concurrency": {"limit": 8},
                 },
                 "recheck_cached_data": "open",
@@ -659,7 +659,7 @@ def is_precomputed(img_path):
         return False
 
 
-def normalize(img, percentiles=(1, 99.9)):
+def normalize(img, eps=1e-8, percentiles=(1, 99.9)):
     """
     Normalizes an image so that the minimum and maximum intensity values are 0
     and 1.
@@ -674,8 +674,9 @@ def normalize(img, percentiles=(1, 99.9)):
     img : numpy.ndarray
         Normalized image.
     """
-    mn, mx = np.percentile(img, percentiles)
-    return np.clip((img - mn) / (mx - mn + 1e-5), 0, 1)
+    #mn, mx = np.percentile(img, percentiles)
+    #return np.clip((img - mn) / (mx - mn + 1e-5), 0, 1)
+    return (img - img.mean()) / (img.std() + eps)
 
 
 def pad_to_shape(img, target_shape, pad_value=0):

@@ -471,7 +471,7 @@ class Reader:
         content, offset = self.process_content(content)
         swc_dict = {
             "id": np.zeros((len(content)), dtype=int),
-            "radius": np.zeros((len(content)), dtype=np.float16),
+            "radius": np.zeros((len(content)), dtype=np.float32),
             "pid": np.zeros((len(content)), dtype=int),
             "xyz": np.zeros((len(content), 3), dtype=np.float32),
             "soma_nodes": set(),

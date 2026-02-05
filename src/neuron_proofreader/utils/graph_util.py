@@ -942,5 +942,5 @@ def to_numpy(attrs):
         Updated edge attribute dictionary.
     """
     attrs["xyz"] = np.array(attrs["xyz"], dtype=np.float32)
-    attrs["radius"] = np.array(attrs["radius"], dtype=np.float16)
+    attrs["radius"] = np.array(attrs["radius"], dtype=np.float32)
     return attrs
