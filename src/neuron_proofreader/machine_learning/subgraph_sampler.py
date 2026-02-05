@@ -202,7 +202,7 @@ class SeededSubgraphSampler(SubgraphSampler):
     def __init__(self, graph, gnn_depth=2, max_proposals=64):
         # Call parent class
         super(SeededSubgraphSampler, self).__init__(
-            graph, gnn_depth, max_proposals
+            graph, gnn_depth=gnn_depth, max_proposals=max_proposals
         )
 
     # --- Batch Generation ---
