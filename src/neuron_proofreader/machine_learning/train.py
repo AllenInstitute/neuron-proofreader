@@ -650,13 +650,15 @@ class DistributedTrainer(Trainer):
         self.world_size = int(os.environ["WORLD_SIZE"])
 
         # Initialize process group first so we can use barriers
+        # (skip if already initialized, e.g., for dataset broadcasting)
         torch.cuda.set_device(self.local_rank)
-        dist.init_process_group(
-            backend="nccl",
-            init_method="env://",
-            world_size=self.world_size,
-            rank=self.rank,
-        )
+        if not dist.is_initialized():
+            dist.init_process_group(
+                backend="nccl",
+                init_method="env://",
+                world_size=self.world_size,
+                rank=self.rank,
+            )
 
         # Generate consistent session name across all ranks
         # Rank 0 generates the name and broadcasts to others
