@@ -13,7 +13,7 @@ from datetime import datetime
 from sklearn.metrics import precision_score, recall_score, accuracy_score
 from torch.nn.parallel import DistributedDataParallel
 from torch.nn.utils import clip_grad_norm_
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
@@ -69,6 +69,8 @@ class Trainer:
         lr=1e-3,
         max_epochs=200,
         min_recall=0,
+        patience=8,
+        warmup_epochs=5,
         save_mistake_mips=False
     ):
         """
@@ -89,6 +91,11 @@ class Trainer:
         min_recall : float, optional
             Minimum recall required for model checkpoints to be saved. Default
             is 0.
+        patience : int, optional
+            Number of epochs without improvement before early stopping. Default
+            is 8.
+        warmup_epochs : int, optional
+            Number of epochs for linear learning rate warmup. Default is 5.
         save_mistake_mips : bool, optional
             Indication of whether to save MIPs of mistakes. Default is False.
         """
@@ -103,6 +110,9 @@ class Trainer:
         self.log_dir = log_dir
         self.max_epochs = max_epochs
         self.min_recall = min_recall
+        self.patience = patience
+        self.warmup_epochs = warmup_epochs
+        self.epochs_without_improvement = 0
         self.mistakes_dir = os.path.join(log_dir, "mistakes")
         self.model_name = model_name
         self.save_mistake_mips = save_mistake_mips
@@ -115,8 +125,41 @@ class Trainer:
             lr=lr,
         )
         self.scaler = torch.cuda.amp.GradScaler(enabled=True)
-        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=max_epochs)
+        self.scheduler = self._create_scheduler(max_epochs, warmup_epochs)
         self.writer = SummaryWriter(log_dir=log_dir)
+
+    def _create_scheduler(self, max_epochs, warmup_epochs):
+        """
+        Creates a learning rate scheduler with linear warmup and cosine
+        annealing.
+
+        Parameters
+        ----------
+        max_epochs : int
+            Total number of training epochs.
+        warmup_epochs : int
+            Number of epochs for linear warmup.
+
+        Returns
+        -------
+        torch.optim.lr_scheduler.SequentialLR
+            Combined scheduler with warmup and cosine annealing phases.
+        """
+        warmup_scheduler = LinearLR(
+            self.optimizer,
+            start_factor=0.1,
+            end_factor=1.0,
+            total_iters=warmup_epochs
+        )
+        cosine_scheduler = CosineAnnealingLR(
+            self.optimizer,
+            T_max=max_epochs - warmup_epochs
+        )
+        return SequentialLR(
+            self.optimizer,
+            schedulers=[warmup_scheduler, cosine_scheduler],
+            milestones=[warmup_epochs]
+        )
 
     # --- Core Routines ---
     def run(self, train_dataloader, val_dataloader):
@@ -138,10 +181,19 @@ class Trainer:
             val_stats = self.validate_step(val_dataloader, epoch)
             new_best = self.check_model_performance(val_stats, epoch)
 
-            # Report reuslts
+            # Report results
             print(f"\nEpoch {epoch}: " + ("New Best!" if new_best else " "))
             self.report_stats(train_stats, is_train=True)
             self.report_stats(val_stats, is_train=False)
+
+            # Early stopping check
+            if new_best:
+                self.epochs_without_improvement = 0
+            else:
+                self.epochs_without_improvement += 1
+                if self.epochs_without_improvement >= self.patience:
+                    print(f"Early stopping: no improvement for {self.patience} epochs")
+                    break
 
             # Step scheduler
             self.scheduler.step()
@@ -563,6 +615,8 @@ class DistributedTrainer(Trainer):
         device="cuda",
         lr=1e-3,
         max_epochs=200,
+        patience=8,
+        warmup_epochs=5,
         save_mistake_mips=False
     ):
         """
@@ -580,6 +634,11 @@ class DistributedTrainer(Trainer):
             Learning rate. Default is 1e-3.
         max_epochs : int, optional
             Maximum number of training epochs. Default is 200.
+        patience : int, optional
+            Number of epochs without improvement before early stopping. Default
+            is 8.
+        warmup_epochs : int, optional
+            Number of epochs for linear learning rate warmup. Default is 5.
         """
         # Check that multiple GPUs are available
         msg = "Error: only a single GPU detected in environment!"
@@ -631,6 +690,9 @@ class DistributedTrainer(Trainer):
         self.log_dir = log_dir
         self.max_epochs = max_epochs
         self.min_recall = 0
+        self.patience = patience
+        self.warmup_epochs = warmup_epochs
+        self.epochs_without_improvement = 0
         self.mistakes_dir = mistakes_dir
         self.model_name = model_name
         self.save_mistake_mips = save_mistake_mips
@@ -680,7 +742,7 @@ class DistributedTrainer(Trainer):
             filter(lambda p: p.requires_grad, self.model.parameters()),
             lr=self._lr,
         )
-        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=self.max_epochs)
+        self.scheduler = self._create_scheduler(self.max_epochs, self.warmup_epochs)
 
         print(f"Initialized rank {self.rank}/{self.world_size}")
 
@@ -792,11 +854,26 @@ class DistributedTrainer(Trainer):
             dist.barrier()
 
             # Report results and save model (rank 0 only)
+            should_stop = torch.tensor([0], device=self.device)
             if rank == 0:
                 new_best = self.check_model_performance(val_stats, epoch)
                 print(f"\nEpoch {epoch}: ", "New Best!" if new_best else "")
                 self.report_stats(train_stats, is_train=True)
                 self.report_stats(val_stats, is_train=False)
+
+                # Early stopping check
+                if new_best:
+                    self.epochs_without_improvement = 0
+                else:
+                    self.epochs_without_improvement += 1
+                    if self.epochs_without_improvement >= self.patience:
+                        print(f"Early stopping: no improvement for {self.patience} epochs")
+                        should_stop[0] = 1
+
+            # Broadcast early stopping decision to all ranks
+            dist.broadcast(should_stop, src=0)
+            if should_stop[0] == 1:
+                break
 
             # Barrier after saving to ensure checkpoint is written before
             # proceeding to next epoch
