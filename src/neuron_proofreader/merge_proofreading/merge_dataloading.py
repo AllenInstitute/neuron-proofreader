@@ -8,6 +8,9 @@ Code for loading merge site dataset.
 
 """
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from tqdm import tqdm
+
 import ast
 import numpy as np
 import os
@@ -19,7 +22,7 @@ TEST_BRAIN = "653159"
 
 
 # --- Load Skeletons ---
-def load_fragments(dataset, is_test=False):
+def load_fragments(dataset, is_test=False, max_workers=8):
     """
     Loads neuron fragments for a selected set of merge-site indices into
     dataset.
@@ -31,25 +34,41 @@ def load_fragments(dataset, is_test=False):
     is_test : bool, optional
         Indication of whether this is a test run so only fragments from a
         single brain should be loaded. Default is False.
+    max_workers : int, optional
+        Maximum number of parallel workers. Default is 8.
     """
     # Initializations
     merge_sites_df = dataset.merge_sites_df
     target_pairs = get_brain_segmentation_pairs(merge_sites_df)
     root = "gs://allen-nd-goog/automated_proofreading_dataset/raw_merge_sites"
 
-    # Main
-    print("\nLoading Fragments")
+    # Build list of (brain_id, swc_pointer) pairs to load
+    load_tasks = []
     for brain_id in get_brain_ids(merge_sites_df, is_test):
         sub_df = merge_sites_df.loc[merge_sites_df["brain_id"] == brain_id]
         for segmentation_id in sub_df["segmentation_id"].unique():
             if (brain_id, segmentation_id) in target_pairs:
                 swc_pointer = f"{root}/{brain_id}/{segmentation_id}/merged_fragments.zip"
-                dataset.load_fragment_graphs(
-                    brain_id, swc_pointer, use_anisotropy=False
-                )
+                load_tasks.append((brain_id, swc_pointer))
+
+    # Load in parallel
+    print(f"\nLoading Fragments ({len(load_tasks)} brains, {max_workers} workers)")
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(
+                dataset.load_fragment_graphs, brain_id, swc_pointer, False
+            ): brain_id
+            for brain_id, swc_pointer in load_tasks
+        }
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Fragments"):
+            brain_id = futures[future]
+            try:
+                future.result()
+            except Exception as e:
+                print(f"Error loading fragments for {brain_id}: {e}")
 
 
-def load_groundtruth(dataset, is_test=False):
+def load_groundtruth(dataset, is_test=False, max_workers=8):
     """
     Loads ground truth skeletons into dataset.
 
@@ -60,16 +79,30 @@ def load_groundtruth(dataset, is_test=False):
     is_test : bool, optional
         Indication of whether this is a test run so only fragments from a
         single brain should be loaded. Default is False.
+    max_workers : int, optional
+        Maximum number of parallel workers. Default is 8.
     """
-    print("\nLoading Ground Truth")
     root = "gs://allen-nd-goog/ground_truth_tracings"
-    for brain_id in get_brain_ids(dataset.merge_sites_df, is_test):
-        swc_pointer = f"{root}/{brain_id}/voxel"
-        dataset.load_gt_graphs(brain_id, swc_pointer)
+    brain_ids = get_brain_ids(dataset.merge_sites_df, is_test)
+
+    print(f"\nLoading Ground Truth ({len(brain_ids)} brains, {max_workers} workers)")
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(
+                dataset.load_gt_graphs, brain_id, f"{root}/{brain_id}/voxel"
+            ): brain_id
+            for brain_id in brain_ids
+        }
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Ground Truth"):
+            brain_id = futures[future]
+            try:
+                future.result()
+            except Exception as e:
+                print(f"Error loading ground truth for {brain_id}: {e}")
 
 
 def load_images(
-    dataset, img_prefixes_path, segmentation_prefixes_path, is_test=False
+    dataset, img_prefixes_path, segmentation_prefixes_path, is_test=False, max_workers=8
 ):
     """
     Loads images into dataset.
@@ -86,13 +119,30 @@ def load_images(
     is_test : bool, optional
         Indication of whether this is a test run so only fragments from a
         single brain should be loaded. Default is False.
+    max_workers : int, optional
+        Maximum number of parallel workers. Default is 8.
     """
     img_prefixes = util.read_json(img_prefixes_path)
     segmentation_prefixes = util.read_json(segmentation_prefixes_path)
-    for brain_id in get_brain_ids(dataset.merge_sites_df, is_test):
-        img_path = os.path.join(img_prefixes[brain_id], "0")
-        segmentation_path = segmentation_prefixes[brain_id]
-        dataset.load_images(brain_id, img_path, segmentation_path)
+    brain_ids = get_brain_ids(dataset.merge_sites_df, is_test)
+
+    print(f"\nLoading Images ({len(brain_ids)} brains, {max_workers} workers)")
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(
+                dataset.load_images,
+                brain_id,
+                os.path.join(img_prefixes[brain_id], "0"),
+                segmentation_prefixes[brain_id]
+            ): brain_id
+            for brain_id in brain_ids
+        }
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Images"):
+            brain_id = futures[future]
+            try:
+                future.result()
+            except Exception as e:
+                print(f"Error loading images for {brain_id}: {e}")
 
 
 # --- Process Merge Site DataFrame ---
