@@ -57,6 +57,7 @@ class InferencePipeline:
         img_path,
         model_path,
         output_dir,
+        model,
         config,
         log_preamble="",
         segmentation_path=None,
@@ -92,7 +93,7 @@ class InferencePipeline:
         self.accepted_proposals = list()
         self.config = config
         self.img_path = img_path
-        self.model = VisionHGAT(config.ml.patch_shape)
+        self.model = model
         self.output_dir = output_dir
         self.soma_centroids = soma_centroids
 

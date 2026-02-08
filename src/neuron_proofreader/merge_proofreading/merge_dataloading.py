@@ -15,7 +15,7 @@ import pandas as pd
 
 from neuron_proofreader.utils import util
 
-TEST_BRAIN = "653159"
+TEST_BRAIN = "747807"
 
 
 # --- Load Skeletons ---
