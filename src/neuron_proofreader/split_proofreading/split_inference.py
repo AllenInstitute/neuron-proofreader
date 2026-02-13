@@ -269,7 +269,6 @@ class InferencePipeline:
             # Check if proposal creates a loop
             if not nx.has_path(self.dataset.graph, i, j):
                 self.dataset.graph.merge_proposal(proposal)
-                print(self.dataset.graph.proposal_midpoint(proposal))
             del preds[proposal]
 
     def save_results(self):
