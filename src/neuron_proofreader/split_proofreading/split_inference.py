@@ -55,7 +55,6 @@ class InferencePipeline:
         self,
         fragments_path,
         img_path,
-        model_path,
         output_dir,
         model,
         config,
@@ -73,8 +72,6 @@ class InferencePipeline:
             Path to SWC files to be loaded into graph.
         img_path : str
             Path to whole-brain image corresponding to the given fragments.
-        model_path : str
-            Path to checkpoint file containing model weights.
         output_dir : str
             Directory where the results of the inference will be saved.
         config : Config
@@ -93,7 +90,7 @@ class InferencePipeline:
         self.accepted_proposals = list()
         self.config = config
         self.img_path = img_path
-        self.model = model
+        self.model = model.to(config.ml.device)
         self.output_dir = output_dir
         self.soma_centroids = soma_centroids
 
@@ -105,7 +102,6 @@ class InferencePipeline:
 
         # Load data
         self._load_data(fragments_path, img_path, segmentation_path)
-        ml_util.load_model(self.model, model_path, device=config.ml.device)
 
     def _load_data(self, fragments_path, img_path, segmentation_path):
         """
@@ -273,6 +269,7 @@ class InferencePipeline:
             # Check if proposal creates a loop
             if not nx.has_path(self.dataset.graph, i, j):
                 self.dataset.graph.merge_proposal(proposal)
+                print(self.dataset.graph.proposal_midpoint(proposal))
             del preds[proposal]
 
     def save_results(self):
