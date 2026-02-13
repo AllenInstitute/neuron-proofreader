@@ -88,7 +88,9 @@ class ExaspimDataset(IterableDataset):
         self.skeletons = dict()
 
     # --- Ingest Data ---
-    def ingest_brain(self, brain_id, img_path, segmentation_path, swc_path):
+    def ingest_brain(
+        self, brain_id, img_path, segmentation_path=None, swc_path=None
+    ):
         """
         Loads a brain image, label mask, and skeletons, then stores each in
         internal dictionaries.
@@ -99,20 +101,24 @@ class ExaspimDataset(IterableDataset):
             Unique identifier for the brain corresponding to the image.
         img_path : str
             Path to whole-brain image to be read.
-        segmentation_path : str
-            Path to segmentation.
-        swc_path : str
-            Path to SWC files.
+        segmentation_path : str, optional
+            Path to segmentation. Default is None.
+        swc_path : str, optional
+            Path to SWC files. Default is None.
         """
         # Load data
         self.imgs[brain_id] = TensorStoreReader(img_path)
-        self.segmentations[brain_id] = TensorStoreReader(segmentation_path)
+        self._load_segmentation(brain_id, segmentation_path)
         self._load_swcs(brain_id, swc_path)
 
         # Check image shapes
         shape1 = self.imgs[brain_id].shape()[2::]
         shape2 = self.segmentations[brain_id].shape()
         assert shape1 == shape2, f"img_shape={shape1}, mask_shape={shape2}"
+
+    def _load_segmentation(self, brain_id, path):
+        if path:
+            self.segmentations[brain_id] = TensorStoreReader(path)
 
     def _load_swcs(self, brain_id, swc_path):
         if swc_path:
