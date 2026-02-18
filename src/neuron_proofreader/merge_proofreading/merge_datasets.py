@@ -798,19 +798,19 @@ class MergeSiteValDataset(MergeSiteDataset):
         for brain_id, graph in self.graphs.items():
             # Filter branching nodes near other branching nodes
             nodes = list()
-            for u in graph.get_branchings():
-                is_branchy = self.check_nearby_branching(brain_id, u)
-                if not is_branchy and graph.degree[u] == 3:
-                    nodes.append(u)
+            for i in graph.get_branchings():
+                is_branchy = self.check_nearby_branching(brain_id, i)
+                if not is_branchy and graph.degree[i] == 3:
+                    nodes.append(i)
 
             # Add nodes to examples
-            n_examples = min(len(nodes), 80)
+            n_examples = min(len(nodes), 100)
             add_examples()
 
         # Add non-branching points
         for brain_id, graph in self.graphs.items():
-            nodes = [u for u in graph.nodes if graph.degree[u] < 3]
-            n_examples = min(len(nodes), 40)
+            nodes = [i for i in graph.nodes if graph.degree[i] < 3]
+            n_examples = min(len(nodes), 100)
             add_examples()
         return negative_examples
 
