@@ -236,13 +236,21 @@ class Reader:
             List of dictionaries whose keys and values are the attribute
             names and values from an SWC file.
         """
-        swc_dicts = deque()
-        with ZipFile(zip_path, "r") as zip_file:
-            swc_files = [f for f in zip_file.namelist() if f.endswith(".swc")]
-            for f in swc_files:
-                swc_dict = self.read_from_zipped_file(zip_file, f)
-                if swc_dict:
-                    swc_dicts.append(swc_dict)
+        with ThreadPoolExecutor() as executor:
+            with ZipFile(zip_path, "r") as zf:
+                # Submit threads
+                threads = list()
+                for f in [f for f in zf.namelist() if f.endswith(".swc")]:
+                    threads.append(
+                        executor.submit(self.read_from_zipped_file, zf, f)
+                    )
+
+                # Store results
+                swc_dicts = deque()
+                for thread in as_completed(threads):
+                    swc_dict = thread.result()
+                    if swc_dict:
+                        swc_dicts.append(swc_dict)
         return swc_dicts
 
     def read_from_zipped_file(self, zip_file, path):
@@ -607,7 +615,7 @@ def get_segment_id(swc_name):
     Parameters
     ----------
     swc_name : str
-        SWC filename, expected to be in the format "<segment_id>.swc".
+        SWC filename, expected to be in the format "{segment_id}.swc".
 
     Returns
     -------
