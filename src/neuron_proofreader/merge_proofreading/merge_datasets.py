@@ -586,7 +586,6 @@ class MergeSiteDataset(Dataset):
         graph : SkeletonGraph
             Fragment graph to be clipped.
         """
-        # Compute projection distances
         assert brain_id in self.gt_graphs, "Must load GT before fragments!"
         d_gt, _ = self.gt_graphs[brain_id].kdtree.query(graph.node_xyz)
         nodes = np.where(d_gt > 100)[0]
@@ -620,6 +619,37 @@ class MergeSiteDataset(Dataset):
         xyz = self.graphs[brain_id].node_xyz[node]
         dist, _ = self.merge_site_kdtrees[brain_id].query(xyz)
         return dist < 100
+
+    def relabel_nodes(self):
+        """
+        Reassigns contiguous node IDs and update all dependent structures.
+        """
+        # Set node ids
+        old_node_ids = np.array(self.nodes, dtype=int)
+        new_node_ids = np.arange(len(old_node_ids))
+
+        # Set edge ids
+        old_to_new = dict(zip(old_node_ids, new_node_ids))
+        old_edge_ids = list(self.edges)
+        old_irr_edge_ids = self.irreducible.edges
+        edge_attrs = {(i, j): data for i, j, data in self.edges(data=True)}
+
+        # Reset graph
+        self.clear()
+        for (i, j) in old_edge_ids:
+            self.add_edge(old_to_new[i], old_to_new[j], **edge_attrs[(i, j)])
+
+        self.irreducible.clear()
+        for (i, j) in old_irr_edge_ids:
+            self.irreducible.add_edge(old_to_new[i], old_to_new[j])
+
+        # Update attributes
+        self.node_radius = self.node_radius[old_node_ids]
+        self.node_xyz = self.node_xyz[old_node_ids]
+        self.node_component_id = self.node_component_id[old_node_ids]
+
+        self.reassign_component_ids()
+        self.set_kdtree()
 
     def sample_node_nearby_soma(self, brain_id):
         subgraph = self.gt_graphs[brain_id].get_rooted_subgraph(0, 600)
