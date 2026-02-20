@@ -79,6 +79,7 @@ class SkeletonGraph(nx.Graph):
         self.anisotropy = anisotropy
         self.component_id_to_swc_id = dict()
         self.irreducible = nx.Graph()
+        self.kdtree = None
         self.node_spacing = node_spacing
 
         # Graph Loader
@@ -259,7 +260,8 @@ class SkeletonGraph(nx.Graph):
         self.node_component_id = self.node_component_id[old_node_ids]
 
         self.reassign_component_ids()
-        self.set_kdtree()
+        if self.kdtree:
+            self.set_kdtree()
 
     def remove_nodes(self, nodes, relabel_nodes=True):
         """
@@ -632,6 +634,29 @@ class SkeletonGraph(nx.Graph):
         assert self.kdtree, "KD-Tree attribute has not be set!"
         _, node = self.kdtree.query(xyz)
         return node
+
+    def get_irreducible_edge(self, node):
+        # Check node is non-branhching
+        assert self.degree[node] < 3
+
+        # Search
+        edge = list()
+        queue = [node]
+        visited = set(queue)
+        while queue:
+            # Visit node
+            i = queue.pop()
+            if self.degree[i] != 2:
+                edge.append(i)
+                continue
+
+            # Update queue
+            for j in self.neighbors(i):
+                if j not in visited:
+                    queue.append(j)
+                    visited.add(j)
+        assert len(edge) == 2
+        return edge
 
     def get_summary(self, prefix=""):
         # Compute values

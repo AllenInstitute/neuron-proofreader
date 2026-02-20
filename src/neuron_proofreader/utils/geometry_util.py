@@ -505,10 +505,10 @@ def remove_doubles(graph, max_length):
     max_length : int
         Maximum size of connected components to be searched.
     """
+    # MUST BE UPDATED
     # Initializations
     components = [c for c in nx.connected_components(graph) if len(c) == 2]
     iterator = np.argsort([len(c) for c in components])
-    kdtree = graph.get_kdtree()
     if graph.verbose:
         iterator = tqdm(iterator, desc="Filter Doubled Fragments")
 
@@ -519,7 +519,7 @@ def remove_doubles(graph, max_length):
             if graph.edge_length((i, j)) < max_length:
                 # Check doubles criteria
                 n_pts = len(graph.edges[i, j]["xyz"])
-                hits = compute_projections(graph, kdtree, (i, j))
+                hits = compute_projections(graph, (i, j))
                 if is_double(hits, n_pts):
                     graph.remove_line_fragment(i, j)
     graph.relabel_nodes()
@@ -554,7 +554,7 @@ def compute_projections(graph, kdtree, edge):
         # Compute projections
         best_id = None
         best_dist = np.inf
-        for hit_xyz in query_ball(kdtree, xyz, 15):
+        for hit_xyz in query_ball(graph.kdtree, xyz, 15):
             hit_id = graph.xyz_to_component_id(hit_xyz)
             if hit_id is not None and hit_id != query_id:
                 if dist(hit_xyz, xyz) < best_dist:

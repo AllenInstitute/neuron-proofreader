@@ -8,6 +8,7 @@ Code that generates edge proposals for a given graph.
 
 """
 
+from scipy.spatial import KDTree
 from tqdm import tqdm
 
 import numpy as np
@@ -101,7 +102,7 @@ class ProposalGenerator:
                 # Parse candidates
                 for i in node_candidates:
                     # Candidate info
-                    pair_id = frozenset({leaf, i})
+                    pair_id = frozenset({int(leaf), int(i)})
                     leaf_component_id = self.graph.node_component_id[leaf]
                     node_component_id = self.graph.node_component_id[i]
                     pair_component_id = frozenset(
@@ -141,13 +142,13 @@ class ProposalGenerator:
             Node IDs that are valid proposal candidates for the given leaf.
         """
         node_candidates = list()
-        for xyz in self.get_nearby_points(leaf, radius):
-            i = self.get_connecting_node(leaf, radius, xyz)
-            if self.is_valid_proposal(leaf, i):
-                node_candidates.append(i)
+        for node in self.get_nearby_nodes(leaf, radius):
+            # check whether to move to leaf if allowing leaf-branch connections
+            if self.is_valid_proposal(leaf, node):
+                node_candidates.append(node)
         return node_candidates
 
-    def get_nearby_points(self, leaf, radius):
+    def get_nearby_nodes(self, leaf, radius):
         """
         Get nearby spatial points for a leaf node within a given radius.
 
@@ -163,67 +164,22 @@ class ProposalGenerator:
         List[int]
             Node IDs that are valid proposal candidates for the given leaf.
         """
-        pts_dict = self.query_closest_points_per_component(leaf, radius)
+        # Search for nearby nodes
+        pts_dict = dict()
+        for node in self.query_nbhd(leaf, radius):
+            component_id = self.graph.node_component_id[node]
+            if component_id != self.graph.node_component_id[leaf]:
+                dist = self.graph.dist(leaf, node)
+                if component_id not in pts_dict:
+                    pts_dict[component_id] = {"dist": dist, "node": node}
+                elif dist < pts_dict[component_id]["dist"]:
+                    pts_dict[component_id] = {"dist": dist, "node": node}
+
+        # Choose best proposals wrt proposal limit
         pts_dict = self.select_closest_components(pts_dict)
-        return [val["xyz"] for val in pts_dict.values()]
+        return [val["node"] for val in pts_dict.values()]
 
     # --- Helpers ---
-    def get_closer_endpoint(self, edge, xyz):
-        """
-        Gets node from "edge" that is closer to "xyz".
-
-        Parameters
-        ----------
-        edge : Tuple[int]
-            Edge to be checked.
-        xyz : numpy.ndarray
-            xyz coordinate.
-
-        Returns
-        -------
-        int
-            Node closer to "xyz".
-        """
-        i, j = tuple(edge)
-        d_i = geometry_util.dist(self.graph.node_xyz[i], xyz)
-        d_j = geometry_util.dist(self.graph.node_xyz[j], xyz)
-        return i if d_i < d_j else j
-
-    def get_connecting_node(self, leaf, radius, xyz):
-        """
-        Gets node that proposal emanating from "leaf" will connect to.
-
-        Parameters
-        ----------
-        leaf : int
-            Leaf node to generate proposals from.
-        radius : float
-            Search radius used to generate proposals.
-        xyz : numpy.ndarray
-            Coordinate of potential proposal
-
-        Returns
-        -------
-        int
-            Node id that proposal will connect to.
-        """
-        # Check if edge exists
-        try:
-            edge = self.graph.xyz_to_edge[xyz]
-        except KeyError:
-            return None
-
-        # Find connecting node
-        node = self.get_closer_endpoint(edge, xyz)
-        if self.graph.dist(leaf, node) < radius:
-            return node
-        elif self.allow_nonleaf_targets:
-            attrs = self.graph.get_edge_data(*edge)
-            idx = np.where(np.all(attrs["xyz"] == xyz, axis=1))[0][0]
-            if type(idx) is int:
-                return self.graph.split_edge(edge, attrs, idx)
-        return None
-
     def is_valid_proposal(self, leaf, i):
         """
         Determines whether a pair of nodes satisfies the following:
@@ -250,29 +206,18 @@ class ProposalGenerator:
         else:
             return False
 
-    def query_closest_points_per_component(self, leaf, radius):
-        """
-        Finds the closest points on other connected components within the
-        search radius
-
-        Parameters
-        ----------
-        leaf : int
-            Leaf node to generate proposals from.
-        radius : float
-            Search radius used to generate proposals.
-        """
-        pts_dict = dict()
-        leaf_xyz = self.graph.node_xyz[leaf]
-        for xyz in geometry_util.query_ball(self.kdtree, leaf_xyz, radius):
-            component_id = self.graph.xyz_to_component_id(xyz)
-            if component_id != self.graph.node_component_id[leaf]:
-                dist = geometry_util.dist(leaf_xyz, xyz)
-                if component_id not in pts_dict:
-                    pts_dict[component_id] = {"dist": dist, "xyz": tuple(xyz)}
-                elif dist < pts_dict[component_id]["dist"]:
-                    pts_dict[component_id] = {"dist": dist, "xyz": tuple(xyz)}
-        return pts_dict
+    def query_nbhd(self, node, radius):
+        xyz = self.graph.node_xyz[node]
+        if self.allow_nonleaf_targets:
+            return self.kdtree.query_ball_point(xyz, radius)
+        else:
+            nodes = list()
+            for idx in self.kdtree.query_ball_point(xyz, radius):
+                xyz = self.kdtree.data[idx]
+                node = self.graph.find_closest_node(xyz)
+                nodes.append(node)
+                assert self.graph.degree[node] == 1
+            return nodes
 
     def select_closest_components(self, pts_dict):
         """
@@ -307,9 +252,10 @@ class ProposalGenerator:
         between.
         """
         if self.allow_nonleaf_targets:
-            self.kdtree = self.graph.get_kdtree()
+            self.kdtree = self.graph.kdtree
         else:
-            self.kdtree = self.graph.get_kdtree(node_type="leaf")
+            leafs = np.array(self.graph.get_leafs())
+            self.kdtree = KDTree(self.graph.node_xyz[leafs])
 
 
 # --- Trim Endpoints ---
