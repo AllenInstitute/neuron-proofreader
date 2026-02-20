@@ -8,7 +8,9 @@ Code for visualizing SkeletonGraphs.
 
 """
 
+import networkx as nx
 import numpy as np
+import plotly.colors as plc
 import plotly.graph_objects as go
 
 
@@ -30,7 +32,7 @@ def visualize(graph):
     fig.show()
 
 
-def visualize_proposals(graph, gt_graph, proposals=list()):
+def visualize_proposals(graph, gt_graph=None, proposals=list()):
     """
     Visualizes a graph along with its proposals.
 
@@ -43,10 +45,13 @@ def visualize_proposals(graph, gt_graph, proposals=list()):
     proposals : List[Frozenset[int]], optional
         List of proposals to visualize. Default is an empty list.
     """
-    # Generate traces
-    data = list()
+    # Initializations
     proposals = proposals or graph.list_proposals()
+    gt_graph = gt_graph or nx.Graph
+
+    # Generate traces
     data = [get_edge_trace(graph, color="black")]
+    data.extend(get_component_traces(gt_graph))
     data.extend(get_proposal_traces(graph, proposals))
 
     # Plot traces
@@ -55,9 +60,31 @@ def visualize_proposals(graph, gt_graph, proposals=list()):
     fig.show()
 
 
-def get_edge_trace(graph, color="blue", name=""):
+def get_component_traces(graph):
     """
-    Generates a 3D edge trace for visualizing the edges of a graph.
+    Generates edge traces to visualize the connected components of a graph.
+
+    Parameters
+    ----------
+    graph : SkeletonGraph
+        Graph to be visualized.
+    """
+    colors = plc.qualitative.Bold
+    traces = list()
+    for nodes in map(list, nx.connected_components(graph)):
+        color = colors[len(traces) % len(colors)]
+        subgraph = graph.subgraph(nodes)
+        edges = subgraph.edges
+        name = graph.get_swc_id(nodes[0])
+        traces.append(
+            get_edge_trace(graph, color=color, edges=edges, name=name)
+        )
+    return traces
+
+
+def get_edge_trace(graph, color="blue", edges=list(), name=None):
+    """
+    Gets the edge traces for visualizing a graph.
 
     Parameters
     ----------
@@ -74,8 +101,9 @@ def get_edge_trace(graph, color="blue", name=""):
         Scatter3d object that represents the 3D trace of the graph edges.
     """
     # Build coordinate lists
+    edges = edges or graph.edges()
     x, y, z = list(), list(), list()
-    for i, j in graph.edges():
+    for i, j in edges:
         x0, y0, z0 = graph.node_xyz[i]
         x1, y1, z1 = graph.node_xyz[j]
         x.extend([x0, x1, None])

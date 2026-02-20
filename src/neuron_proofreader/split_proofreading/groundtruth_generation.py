@@ -75,9 +75,8 @@ def run(gt_graph, pred_graph):
             continue
 
         # Check if proposal is structurally consistent
-        gt_id = pred_to_gt[id1]
         is_consistent = is_structure_consistent(
-            gt_graph, pred_graph, accepts_graph, gt_id, proposal
+            gt_graph, pred_graph, accepts_graph, pred_to_gt[id1], proposal
         )
         if is_consistent:
             accepts_graph.add_edge(i, j)
@@ -187,7 +186,10 @@ def get_pred_to_gt_mapping(gt_graph, pred_graph):
     for nodes in map(list, nx.connected_components(pred_graph)):
         gt_id = find_aligned_component(gt_graph, pred_graph, nodes)
         if gt_id is not None:
-            pred_to_gt[pred_graph.node_component_id[nodes[0]]] = gt_id
+            pred_id = pred_graph.node_component_id[nodes[0]]
+            pred_to_gt[pred_id] = gt_id
+            pred_id = pred_graph.component_id_to_swc_id[pred_id]
+            gt_id = gt_graph.component_id_to_swc_id[gt_id]
     return pred_to_gt
 
 
@@ -273,20 +275,13 @@ def find_closest_gt_edge(gt_graph, pred_graph, gt_id, root):
         Closest ground-truth edge to the rooted subgraph at the given node, or
         None if no edge could be found.
     """
-    depth = 16
-    while depth <= 64:
-        # Find closest edge for each node
-        edge_cnt_dict = defaultdict(list)
-        for node in pred_graph.get_rooted_subgraph(root, depth):
-            gt_edge = get_irreducible_edge(gt_graph, node)
-            component_id = gt_graph.node_component_id[gt_edge[0]]
-            if component_id == gt_id:
-                edge_cnt_dict[gt_edge].append(1)
-
-        # Check if an edge was found
-        depth += 16
-        if len(edge_cnt_dict) > 0:
-            break
+    edge_cnt_dict = defaultdict(int)
+    for node in pred_graph.nodes_within_distance(root, 40):
+        gt_node = gt_graph.find_closest_node(pred_graph.node_xyz[node])
+        gt_edge = get_irreducible_edge(gt_graph, gt_node)
+        component_id = gt_graph.node_component_id[gt_edge[0]]
+        if component_id == gt_id:
+            edge_cnt_dict[gt_edge] += 1
     return util.find_best(edge_cnt_dict) if edge_cnt_dict else None
 
 

@@ -369,7 +369,7 @@ class MergeSiteDataset(Dataset):
         node = self.gt_graphs[brain_id].find_closest_node(xyz)
 
         # Extract rooted subgraph
-        subgraph = self.gt_graphs[brain_id].get_rooted_subgraph(
+        subgraph = self.gt_graphs[brain_id].rooted_subgraph(
             node, self.subgraph_radius
         )
         return brain_id, subgraph, 0
@@ -398,7 +398,7 @@ class MergeSiteDataset(Dataset):
         node = self.graphs[brain_id].find_closest_node(xyz)
 
         # Extract rooted subgraph
-        subgraph = self.graphs[brain_id].get_rooted_subgraph(
+        subgraph = self.graphs[brain_id].rooted_subgraph(
             node, self.subgraph_radius
         )
         return brain_id, subgraph, 1
@@ -441,13 +441,13 @@ class MergeSiteDataset(Dataset):
                 # Branching node from GT
                 branching_nodes = self.gt_graphs[brain_id].get_branchings()
                 node = util.sample_once(branching_nodes)
-                subgraph = self.gt_graphs[brain_id].get_rooted_subgraph(
+                subgraph = self.gt_graphs[brain_id].rooted_subgraph(
                     node, self.subgraph_radius
                 )
                 return brain_id, subgraph, 0
 
             # Extract rooted subgraph
-            subgraph = self.graphs[brain_id].get_rooted_subgraph(
+            subgraph = self.graphs[brain_id].rooted_subgraph(
                 node, self.subgraph_radius
             )
 
@@ -811,7 +811,7 @@ class MergeSiteValDataset(MergeSiteDataset):
             for node in random.sample(nodes, n_examples):
                 # Check if close to merge site
                 if not self.is_nearby_merge_site(brain_id, node):
-                    subgraph = graph.get_rooted_subgraph(
+                    subgraph = graph.rooted_subgraph(
                         node, self.subgraph_radius
                     )
                     negative_examples.append(

@@ -429,7 +429,22 @@ class SkeletonGraph(nx.Graph):
                 return component_id
         raise ValueError(f"SWC ID={query_swc_id} not found")
 
-    def get_rooted_subgraph(self, root, radius):
+    def nodes_within_distance(self, root, radius):
+        queue = [(root, 0)]
+        visited = {root}
+        while queue:
+            # Visit node
+            i, dist_i = queue.pop()
+
+            # Populate queue
+            for j in self.neighbors(i):
+                dist_j = dist_i + self.dist(i, j)
+                if dist_j < radius and j not in visited:
+                    queue.append((j, dist_j))
+                    visited.add(j)
+        return list(visited)
+
+    def rooted_subgraph(self, root, radius):
         """
         Gets a rooted subgraph with the given radius (in microns).
 
@@ -582,7 +597,7 @@ class SkeletonGraph(nx.Graph):
             zip_writer.writestr(filename, text_buffer.getvalue())
 
     # --- Helpers ---
-    def clip_skeletons(self, metadata_path):
+    def clip_to_bbox(self, metadata_path):
         bucket_name, path = util.parse_cloud_path(metadata_path)
         if util.check_gcs_file_exists(bucket_name, path):
             # Extract bounding box
@@ -598,6 +613,29 @@ class SkeletonGraph(nx.Graph):
                     nodes.append(i)
             self.remove_nodes_from(nodes)
             self.relabel_nodes()
+
+    def clip_to_groundtruth(self, gt_graph, dist):
+        """
+        Removes nodes that are more than "dist" microns from "gt_graph".
+
+        Parameters
+        ----------
+        gt_graph : SkeletonGraph
+            Ground truth graph used as clipping reference.
+        dist : float
+            Distance threshold (in microns) that determines what nodes to
+            remove.
+        """
+        # Remove nodes too far from ground truth
+        d_gt, _ = gt_graph.kdtree.query(self.node_xyz)
+        nodes = np.where(d_gt > dist)[0]
+        self.remove_nodes_from(nodes)
+
+        # Remove resulting small connected components
+        for nodes in list(nx.connected_components(self)):
+            if len(nodes) < 30:
+                self.remove_nodes_from(nodes)
+        self.relabel_nodes()
 
     def dist(self, i, j):
         """
