@@ -57,15 +57,14 @@ def run(gt_graph, pred_graph):
     pred_to_gt = get_pred_to_gt_mapping(gt_graph, pred_graph)
 
     # Main
-    accepts_graph = deepcopy(pred_graph)
     gt_accepts = list()
     for proposal in pred_graph.get_sorted_proposals():
-        # Extract proposal info
+        # Proposal info
         i, j = tuple(proposal)
         id1 = pred_graph.node_component_id[i]
         id2 = pred_graph.node_component_id[j]
 
-        # Check if fragments are aligned to the same ground truth skeletons
+        # Check if fragments are aligned to the same GT skeletons
         if pred_to_gt[id1] != pred_to_gt[id2] or pred_to_gt[id1] is None:
             continue
 
@@ -75,11 +74,8 @@ def run(gt_graph, pred_graph):
             continue
 
         # Check if proposal is structurally consistent
-        is_consistent = is_structure_consistent(
-            gt_graph, pred_graph, accepts_graph, pred_to_gt[id1], proposal
-        )
-        if is_consistent:
-            accepts_graph.add_edge(i, j)
+        gt_id = pred_to_gt[id1]
+        if is_structure_consistent(gt_graph, pred_graph, gt_id, proposal):
             gt_accepts.append(proposal)
     return gt_accepts
 
@@ -151,16 +147,17 @@ def find_aligned_component(gt_graph, pred_graph, nodes):
     for gt_id in np.unique(gt_ids):
         dists_dict[gt_id] = dists_arr[gt_ids == gt_id]
 
-    # Deterine whether aligned
+    # Compute alignment scores
     gt_id = util.find_best(dists_dict)
     dists = np.array(dists_dict[gt_id])
     percent_aligned = len(dists) / len(nodes)
     aligned_score = np.percentile(dists, 60)
 
-    if (aligned_score < 7 and gt_id is not None) and percent_aligned > 0.6:
-        return gt_id
-    else:
+    # Determine whether aligned
+    if gt_id is None:
         return None
+    else:
+        return aligned_score < 7 and percent_aligned > 0.6
 
 
 def get_pred_to_gt_mapping(gt_graph, pred_graph):
@@ -193,9 +190,7 @@ def get_pred_to_gt_mapping(gt_graph, pred_graph):
     return pred_to_gt
 
 
-def is_structure_consistent(
-    gt_graph, pred_graph, accepts_graph, gt_id, proposal
-):
+def is_structure_consistent(gt_graph, pred_graph, gt_id, proposal):
     """
     Determines if the proposal connects two branches corresponding to either
     the same or adjacent branches on the ground truth. If either condition
@@ -301,14 +296,9 @@ def find_closest_point(xyz_list, query_xyz):
     best_idx : int
         Index of the closest point in "xyz_list".
     """
-    best_dist = np.inf
-    best_idx = np.inf
-    for idx, xyz in enumerate(xyz_list):
-        dist = geometry_util.dist(query_xyz, xyz)
-        if dist < best_dist:
-            best_dist = dist
-            best_idx = idx
-    return best_idx
+    xyz_arr = np.asarray(xyz_list)
+    dists = np.linalg.norm(xyz_arr - query_xyz, axis=1)
+    return np.argmin(dists)
 
 
 def get_irreducible_edge(graph, node):

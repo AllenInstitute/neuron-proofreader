@@ -712,13 +712,10 @@ def nearest_neighbor(pts, query_pt):
     best_pt : Tuple[float]
         Nearest neighbor in a list of 3D coordiantes to a given target.
     """
-    best_dist = np.inf
-    best_pt = None
-    for pt in pts:
-        if dist(query_pt, pt) < best_dist:
-            best_dist = dist(query_pt, pt)
-            best_pt = pt
-    return best_pt
+    pts = np.asarray(pts)
+    dists = np.linalg.norm(pts - query_pt, axis=1)
+    idx = np.argmin(dists)
+    return pts[idx]
 
 
 def query_ball(kdtree, query_xyz, radius):
