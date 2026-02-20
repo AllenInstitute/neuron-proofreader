@@ -573,57 +573,26 @@ def upload_file_to_s3(source_path, bucket_name, destination_path):
 # --- Dictionary utils ---
 def find_best(my_dict, maximize=True):
     """
-    Given a dictionary where each value is either a list or int (i.e. cnt),
-    finds the key associated with the longest list or largest integer.
+    Finds the key associated with the largest integer or longest list.
 
     Parameters
     ----------
     my_dict : dict
         Dictionary to be searched.
     maximize : bool, optional
-        Indication of whether to find the largest value or highest vote cnt.
+        Indication of whether to find the largest/longest or
+        smallest/shortest.
 
     Returns
     -------
     hashable
         Key associated with the longest list or largest integer in "my_dict".
     """
-    best_key = None
-    best_vote_cnt = 0 if maximize else np.inf
-    for key in my_dict.keys():
-        val_type = type(my_dict[key])
-        vote_cnt = my_dict[key] if val_type == float else len(my_dict[key])
-        if vote_cnt > best_vote_cnt and maximize:
-            best_key = key
-            best_vote_cnt = vote_cnt
-        elif vote_cnt < best_vote_cnt and not maximize:
-            best_key = key
-            best_vote_cnt = vote_cnt
-    return best_key
+    def score(v):
+        return v if isinstance(v, (int, float)) else len(v)
 
-
-def find_key(my_dict, target_value):
-    """
-    Finds the key corresponding to the given value if it exists; otherwise,
-    returns None.
-
-    Parameters
-    ----------
-    my_dict : dict
-        Dictionary to be searched.
-    target_value : any
-        Value to be searched for in the given dictionary.
-
-    Returns
-    -------
-    hashable
-        Key corresponding to the given value if it exists; otherwise, returns
-        None.
-    """
-    for key, value in my_dict.items():
-        if value == target_value:
-            return key
-    return None
+    optimize = max if maximize else min
+    return optimize(my_dict, key=lambda k: score(my_dict[k]))
 
 
 def remove_items(my_dict, keys):

@@ -518,9 +518,7 @@ class DenseGraphDataset(GraphDataset):
             patches[i, 0, ...] = img_util.normalize(img[s])
             patches[i, 1, ...] = label_mask[s]
 
-            subgraph = self.graph.get_rooted_subgraph(
-                node, self.subgraph_radius
-            )
+            subgraph = self.graph.rooted_subgraph(node, self.subgraph_radius)
             point_clouds[i] = subgraph_to_point_cloud(subgraph)
 
         # Build batch dictionary
