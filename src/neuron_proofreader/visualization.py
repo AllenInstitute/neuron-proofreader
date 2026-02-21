@@ -25,8 +25,6 @@ def visualize(graph):
     """
     # Initializations
     data = get_edge_trace(graph)
-    data.append(get_node_trace(graph, graph.get_leafs()))
-    data.append(get_node_trace(graph, graph.get_branchings()))
     layout = get_layout()
 
     # Generate plot
