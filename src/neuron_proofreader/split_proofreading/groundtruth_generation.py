@@ -20,9 +20,6 @@ ground truth skeleton and are structurally consistent.
             - Proposal is structurally consistent, meaning the connection
               preserves geometric continuity and branching topology consistent
               with the ground truth structure.
-
-Note: We use the convention that a fragment refers to a connected component in
-      "pred_graph".
 """
 
 from collections import defaultdict
@@ -35,11 +32,11 @@ from neuron_proofreader.utils import geometry_util, util
 
 def run(gt_graph, pred_graph):
     """
-    Determines ground truth for edge proposals.
+    Determines the set of accepted proposals.
 
     Parameters
     ----------
-    gt_graph : ProposalGraph
+    gt_graph : SkeletonGraph
         Graph built from ground truth SWC files.
     pred_graph : ProposalGraph
         Graph build from predicted SWC files.
@@ -87,7 +84,7 @@ def compute_proposal_proj_dist(gt_graph, pred_graph, proposal):
 
     Parameters
     ----------
-    gt_graph : ProposalGraph
+    gt_graph : SkeletonGraph
         Graph built from ground truth SWC files.
     pred_graph : ProposalGraph
         Graph build from predicted SWC files.
@@ -123,7 +120,7 @@ def find_aligned_component(gt_graph, pred_graph, nodes):
 
     Parameters
     ----------
-    gt_graph : ProposalGraph
+    gt_graph : SkeletonGraph
         Graph built from ground truth SWC files.
     pred_graph : ProposalGraph
         Graph build from predicted SWC files.
@@ -166,7 +163,7 @@ def get_pred_to_gt_mapping(gt_graph, pred_graph):
 
     Parameters
     ----------
-    gt_graph : ProposalGraph
+    gt_graph : SkeletonGraph
         Graph built from ground truth SWC files.
     pred_graph : ProposalGraph
         Graph build from predicted SWC files.
@@ -194,7 +191,7 @@ def is_structure_consistent(gt_graph, pred_graph, gt_id, proposal):
 
     Parameters
     ----------
-    gt_graph : ProposalGraph
+    gt_graph : SkeletonGraph
         Graph built from ground truth SWC files.
     pred_graph : ProposalGraph
         Graph build from predicted SWC files.
@@ -246,7 +243,7 @@ def find_closest_gt_edge(gt_graph, pred_graph, gt_id, root):
 
     Parameters
     ----------
-    gt_graph : ProposalGraph
+    gt_graph : SkeletonGraph
         Ground truth graph to be searched.
     pred_graph : ProposalGraph
         Graph to extract rooted subgraph from.
@@ -276,27 +273,6 @@ def find_closest_gt_edge(gt_graph, pred_graph, gt_id, root):
         return frozenset(edge)
     else:
         return None
-
-
-def find_closest_point(xyz_list, query_xyz):
-    """
-    Finds the index of the point closest to the given query coordinate.
-
-    Parameters
-    ----------
-    xyz_list : List[Tuple[float]]
-        List of coordinates to be searched.
-    query_xyz : Tuple[float]
-        Query 3D coordinate.
-
-    Returns
-    -------
-    best_idx : int
-        Index of the closest point in "xyz_list".
-    """
-    xyz_arr = np.asarray(xyz_list)
-    dists = np.linalg.norm(xyz_arr - query_xyz, axis=1)
-    return np.argmin(dists)
 
 
 def get_common_node(edge1, edge2):
@@ -375,26 +351,3 @@ def get_path(gt_graph, source, xyz):
     """
     target = gt_graph.closest_node(xyz)
     return nx.shortest_path(gt_graph, source=source, target=target)
-
-
-def length_up_to(path_pts, idx):
-    """
-    Computes the cumulative path length from the start of a 3D point path up
-    to a given index.
-
-    Parameters
-    ----------
-    path_pts : numpy.ndarray
-        3D points defining a continuous path.
-    idx : int
-        Index up to which the cumulative length is computed.
-
-    Returns
-    -------
-    length : float
-         Cumulative path length from the start up to point "idx".
-    """
-    length = 0
-    for i in range(0, idx):
-        length += geometry_util.dist(path_pts[i], path_pts[i + 1])
-    return length
