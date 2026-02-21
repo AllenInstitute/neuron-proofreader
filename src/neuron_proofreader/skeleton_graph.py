@@ -78,7 +78,6 @@ class SkeletonGraph(nx.Graph):
         # Instance attributes
         self.anisotropy = anisotropy
         self.component_id_to_swc_id = dict()
-        self.irreducible = nx.Graph()
         self.kdtree = None
         self.node_spacing = node_spacing
 
@@ -145,7 +144,6 @@ class SkeletonGraph(nx.Graph):
         for (i, j), attrs in irreducibles["edges"].items():
             edge_id = (node_id_mapping[i], node_id_mapping[j])
             self._add_edge(edge_id, attrs, component_id)
-            self.irreducible.add_edge(*edge_id)
 
     def _add_nodes(self, node_dict, component_id):
         """
@@ -242,17 +240,12 @@ class SkeletonGraph(nx.Graph):
         # Set edge ids
         old_to_new = dict(zip(old_node_ids, new_node_ids))
         old_edge_ids = list(self.edges)
-        old_irr_edge_ids = self.irreducible.edges
         edge_attrs = {(i, j): data for i, j, data in self.edges(data=True)}
 
         # Reset graph
         self.clear()
         for (i, j) in old_edge_ids:
             self.add_edge(old_to_new[i], old_to_new[j], **edge_attrs[(i, j)])
-
-        self.irreducible.clear()
-        for (i, j) in old_irr_edge_ids:
-            self.irreducible.add_edge(old_to_new[i], old_to_new[j])
 
         # Update attributes
         self.node_radius = self.node_radius[old_node_ids]
@@ -274,11 +267,7 @@ class SkeletonGraph(nx.Graph):
         relabel_nodes : bool, optional
             Indication of whether to relabel nodes. Default is True.
         """
-        # Remove nodes
         self.remove_nodes_from(nodes)
-        self.irreducible.remove_nodes_from(nodes)
-
-        # Update node labels (if applicable)
         if relabel_nodes:
             self.relabel_nodes()
 
@@ -597,6 +586,34 @@ class SkeletonGraph(nx.Graph):
             zip_writer.writestr(filename, text_buffer.getvalue())
 
     # --- Helpers ---
+    def cable_length(self, max_depth=np.inf, root=None):
+        """
+        Computes the cable length of the graph. If a root is provided, then
+        cable length of the connected component containing the given root is
+        computed.
+
+        Parameters
+        ----------
+        max_depth : float, optional
+            Maximum depth (in microns) to traverse before stopping. Useful for
+            checking if cable length is above a threshold. Default is np.inf.
+        root : int
+            Node contained in connected component to be searched. Default is
+            None.
+
+        Returns
+        -------
+        cable_length : float
+            Cable length of the connected component containing the given root
+            node.
+        """
+        cable_length = 0
+        for i, j in nx.dfs_edges(self, source=root):
+            cable_length += self.dist(i, j)
+            if cable_length > max_depth:
+                break
+        return cable_length
+
     def clip_to_bbox(self, metadata_path):
         bucket_name, path = util.parse_cloud_path(metadata_path)
         if util.check_gcs_file_exists(bucket_name, path):
@@ -637,6 +654,24 @@ class SkeletonGraph(nx.Graph):
                 self.remove_nodes_from(nodes)
         self.relabel_nodes()
 
+    def closest_node(self, xyz):
+        """
+        Finds the closest node to the given xyz coordinate.
+
+        Parameters
+        ----------
+        xyz : ArrayLike
+            Coordinate to be queried.
+
+        Returns
+        -------
+        node : int
+            Closest node to the given xyz coordinate.
+        """
+        assert self.kdtree, "KD-Tree attribute has not be set!"
+        _, node = self.kdtree.query(xyz)
+        return node
+
     def dist(self, i, j):
         """
         Computes the Euclidean distance between nodes "i" and "j".
@@ -654,24 +689,6 @@ class SkeletonGraph(nx.Graph):
             Euclidean distance between nodes "i" and "j".
         """
         return geometry_util.dist(self.node_xyz[i], self.node_xyz[j])
-
-    def find_closest_node(self, xyz):
-        """
-        Finds the closest node to the given xyz coordinate.
-
-        Parameters
-        ----------
-        xyz : ArrayLike
-            Coordinate to be queried.
-
-        Returns
-        -------
-        node : int
-            Closest node to the given xyz coordinate.
-        """
-        assert self.kdtree, "KD-Tree attribute has not be set!"
-        _, node = self.kdtree.query(xyz)
-        return node
 
     def get_irreducible_edge(self, node):
         # Check node is non-branhching
@@ -711,32 +728,23 @@ class SkeletonGraph(nx.Graph):
         summary.append(f"Memory Consumption: {memory:.2f} GBs")
         return "\n".join(summary)
 
-    def path_length(self, max_depth=np.inf, root=None):
+    def path_length(self, path):
         """
-        Computes the path length of the connected component that contains the
-        given root node.
+        Computes the length of the given path.
 
         Parameters
         ----------
-        root : int
-            Node that belongs to connected component to be searched.
-        max_depth : float
-            Maximum depth (in microns) to search in the connected component.
-            Useful if only checking that a connected component is has path
-            length above some threshold.
+        path : List[int]
+            List of nodes that forms a path.
 
         Returns
         -------
-        length : float
-            Path length of the connected component containing the given root
-            node.
+        Length of the given path.
         """
-        length = 0
-        for i, j in nx.dfs_edges(self, source=root):
-            length += self.dist(i, j)
-            if length > max_depth:
-                break
-        return length
+        path_length = 0
+        for i, j in zip(path[1:], path[:-1]):
+            path_length += self.dist(i, j)
+        return path_length
 
     def set_kdtree(self):
         """

@@ -84,7 +84,7 @@ class ProposalGenerator:
         proposals = set()
         for leaf in iterator:
             # Check if fragment satisfies size requirement
-            length = self.graph.path_length(
+            length = self.graph.cable_length(
                 max_depth=self.min_size_with_proposals, root=leaf
             )
             if length < self.min_size_with_proposals:
@@ -214,7 +214,7 @@ class ProposalGenerator:
             nodes = list()
             for idx in self.kdtree.query_ball_point(xyz, radius):
                 xyz = self.kdtree.data[idx]
-                node = self.graph.find_closest_node(xyz)
+                node = self.graph.closest_node(xyz)
                 nodes.append(node)
                 assert self.graph.degree[node] == 1
             return nodes

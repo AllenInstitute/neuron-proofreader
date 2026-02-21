@@ -26,7 +26,6 @@ Note: We use the convention that a fragment refers to a connected component in
 """
 
 from collections import defaultdict
-from copy import deepcopy
 
 import networkx as nx
 import numpy as np
@@ -77,6 +76,8 @@ def run(gt_graph, pred_graph):
         gt_id = pred_to_gt[id1]
         if is_structure_consistent(gt_graph, pred_graph, gt_id, proposal):
             gt_accepts.append(proposal)
+        else:
+            print("Structure is not consistent")
     return gt_accepts
 
 
@@ -147,17 +148,16 @@ def find_aligned_component(gt_graph, pred_graph, nodes):
     for gt_id in np.unique(gt_ids):
         dists_dict[gt_id] = dists_arr[gt_ids == gt_id]
 
-    # Compute alignment scores
+    # Find GT component best aligned to
     gt_id = util.find_best(dists_dict)
+    if gt_id is None:
+        return None
+
+    # Compute alignment scores
     dists = np.array(dists_dict[gt_id])
     percent_aligned = len(dists) / len(nodes)
     aligned_score = np.percentile(dists, 60)
-
-    # Determine whether aligned
-    if gt_id is None:
-        return None
-    else:
-        return aligned_score < 7 and percent_aligned > 0.6
+    return gt_id if aligned_score < 7 and percent_aligned > 0.6 else None
 
 
 def get_pred_to_gt_mapping(gt_graph, pred_graph):
@@ -218,32 +218,27 @@ def is_structure_consistent(gt_graph, pred_graph, gt_id, proposal):
     if gt_edge_i is None or gt_edge_j is None:
         return False
 
-    # Case 1
+    # Case 1: GT edges are identical
     if gt_edge_i == gt_edge_j:
         return True
 
-    # Case 2
+    # Case 2: GT edges are adjacent
     if set(gt_edge_i).intersection(set(gt_edge_j)):
-        # Orient ground truth edges
+        # Proposal info
         i, j = tuple(proposal)
-        hat_edge_xyz_i, hat_edge_xyz_j = orient_edges(
-            gt_graph.edges[gt_edge_i]["xyz"],
-            gt_graph.edges[gt_edge_j]["xyz"]
-        )
-
-        # Find index of closest points on ground truth edges
         xyz_i = pred_graph.node_xyz[i]
         xyz_j = pred_graph.node_xyz[j]
-        idx_i = find_closest_point(hat_edge_xyz_i, xyz_i)
-        idx_j = find_closest_point(hat_edge_xyz_j, xyz_j)
 
-        len_1 = length_up_to(hat_edge_xyz_i, idx_i)
-        len_2 = length_up_to(hat_edge_xyz_j, idx_j)
-        gt_dist = len_1 + len_2
+        # Get GT paths
+        k = get_common_node(gt_edge_i, gt_edge_j)
+        path_ik = get_path(gt_graph, k, xyz_i)
+        path_jk = get_path(gt_graph, k, xyz_j)
+
+        # Compare distances
+        gt_dist = gt_graph.path_length(path_ik + path_jk[::-1])
         proposal_dist = pred_graph.proposal_length(proposal)
         return abs(proposal_dist - gt_dist) < 40
 
-    # Fail: Proposal is between non-adjacent branches
     return False
 
 
@@ -270,14 +265,21 @@ def find_closest_gt_edge(gt_graph, pred_graph, gt_id, root):
         Closest ground-truth edge to the rooted subgraph at the given node, or
         None if no edge could be found.
     """
+    # Compute projections
     edge_cnt_dict = defaultdict(int)
     for node in pred_graph.nodes_within_distance(root, 40):
-        gt_node = gt_graph.find_closest_node(pred_graph.node_xyz[node])
+        gt_node = gt_graph.closest_node(pred_graph.node_xyz[node])
         gt_edge = get_irreducible_edge(gt_graph, gt_node)
         component_id = gt_graph.node_component_id[gt_edge[0]]
         if component_id == gt_id:
             edge_cnt_dict[gt_edge] += 1
-    return util.find_best(edge_cnt_dict) if edge_cnt_dict else None
+
+    # Determine best match
+    if edge_cnt_dict:
+        edge = util.find_best(edge_cnt_dict)
+        return frozenset(edge)
+    else:
+        return None
 
 
 def find_closest_point(xyz_list, query_xyz):
@@ -301,7 +303,40 @@ def find_closest_point(xyz_list, query_xyz):
     return np.argmin(dists)
 
 
+def get_common_node(edge1, edge2):
+    """
+    Finds the common node between the given edges.
+
+    Parameters
+    ----------
+    edge1 : Tuple[int]
+        Edge ID.
+    edge2 : Tuple[int]
+        Edge ID.
+    """
+    common_nodes = set(edge1).intersection(edge2)
+    assert len(common_nodes) == 1
+    return common_nodes.pop()
+
+
 def get_irreducible_edge(graph, node):
+    """
+    Finds the irreducible edge containing the given node. Note that if the
+    node is a branching point, then the first irreducible edge that is found
+    is returned.
+
+    Parameters
+    ----------
+    graph : SkeletonGraph
+        Graph to be searched.
+    node : int
+        Node ID contained in the given graph.
+
+    Returns
+    -------
+    edge : Tuple[int]
+        Irreducible edge containing the given node.
+    """
     # Search
     edge = list()
     queue = [node]
@@ -320,6 +355,30 @@ def get_irreducible_edge(graph, node):
                 queue.append(j)
                 visited.add(j)
     return tuple(edge)
+
+
+def get_path(gt_graph, source, xyz):
+    """
+    Returns the shortest path in the graph from a source node to the node
+    closest to a given 3D coordinate.
+
+    Parameters
+    ----------
+    gt_graph : SkeletonGraph
+        Ground truth graph to be searched.
+    source : int
+        Node ID from which the path will start.
+    xyz : numpy.ndarray
+        3D coordinate used to identify the target node. The node in the graph
+        closest to this coordinate will be used as the path endpoint.
+
+    Returns
+    -------
+    path : List[int]
+        Ordered list of node IDs representing the shortest path.
+    """
+    target = gt_graph.closest_node(xyz)
+    return nx.shortest_path(gt_graph, source=source, target=target)
 
 
 def length_up_to(path_pts, idx):
@@ -343,29 +402,3 @@ def length_up_to(path_pts, idx):
     for i in range(0, idx):
         length += geometry_util.dist(path_pts[i], path_pts[i + 1])
     return length
-
-
-def orient_edges(xyz_edge_i, xyz_edge_j):
-    """
-    Orients two edges so that their closest endpoints are aligned at index 0.
-
-    Parameters
-    ----------
-    xyz_edge_i : numpy.ndarray
-        Ordered 3D coordinates defining the first branch.
-    xyz_edge_j : numpy.ndarray
-        Ordered 3D coordinates defining the second branch.
-    """
-    # Compute distances
-    dist_1 = geometry_util.dist(xyz_edge_i[0], xyz_edge_j[0])
-    dist_2 = geometry_util.dist(xyz_edge_i[0], xyz_edge_j[-1])
-    dist_3 = geometry_util.dist(xyz_edge_i[-1], xyz_edge_j[0])
-    dist_4 = geometry_util.dist(xyz_edge_i[-1], xyz_edge_j[-1])
-
-    # Orient coordinates to match at 0-th index
-    min_dist = np.min([dist_1, dist_2, dist_3, dist_4])
-    if dist_2 == min_dist or dist_4 == min_dist:
-        xyz_edge_j = np.flip(xyz_edge_j, axis=0)
-    if dist_3 == min_dist or dist_4 == min_dist:
-        xyz_edge_i = np.flip(xyz_edge_i, axis=0)
-    return xyz_edge_i, xyz_edge_j

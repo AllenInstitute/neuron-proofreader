@@ -95,10 +95,8 @@ class NewProposalGraph(SkeletonGraph):
         self.anisotropy = anisotropy
         self.component_id_to_swc_id = dict()
         self.gt_path = gt_path
-        self.leaf_kdtree = None
         self.soma_ids = set()
         self.verbose = verbose
-        self.xyz_to_edge = dict()
 
         # Instance attributes - Proposals
         self.accepts = set()
@@ -164,29 +162,6 @@ class NewProposalGraph(SkeletonGraph):
         results = [f"# Somas Connected: {soma_cnt}"]
         results.append(f"# Soma Fragments Merged: {merge_cnt}")
         return "\n".join(results)
-
-    def remove_line_fragment(self, i, j):
-        """
-        Deletes nodes "i" and "j" from "graph", where these nodes form a connected
-        component.
-
-        Parameters
-        ----------
-        i : int
-            Node to be removed.
-        j : int
-            Node to be removed.
-        """
-        # MUST BE UPDATED
-        # Remove xyz entries
-        self.xyz_to_edge.pop(tuple(self.node_xyz[i]), None)
-        self.xyz_to_edge.pop(tuple(self.node_xyz[j]), None)
-        for xyz in self.edges[i, j]["xyz"]:
-            self.xyz_to_edge.pop(tuple(xyz), None)
-
-        # Remove nodes
-        del self.component_id_to_swc_id[self.node_component_id[i]]
-        self.remove_nodes_from([i, j])
 
     # --- Proposal Operations ---
     def add_proposal(self, i, j):
@@ -265,7 +240,7 @@ class NewProposalGraph(SkeletonGraph):
             Indication of whether both nodes in a proposal are leafs.
         """
         i, j = tuple(proposal)
-        return True if self.degree[i] == 1 and self.degree[j] == 1 else False
+        return self.degree[i] == 1 and self.degree[j] == 1
 
     def is_single_proposal(self, proposal):
         """
@@ -427,27 +402,6 @@ class NewProposalGraph(SkeletonGraph):
     def truncated_edge_attr_xyz(self, i, depth):
         xyz_path_list = self.edge_attr(i, "xyz")
         return [geometry.truncate_path(path, depth) for path in xyz_path_list]
-
-    def n_nearby_leafs(self, proposal, radius):
-        """
-        Counts the number of nearby leaf nodes within a specified radius from
-        a proposal.
-
-        Parameters
-        ----------
-        proposal : frozenset
-            Pproposal for which nearby leaf nodes are to be counted.
-        radius : float
-            The radius within which to search for nearby leaf nodes.
-
-        Returns
-        -------
-        int
-            Number of nearby leaf nodes within a specified radius from
-            a proposal.
-        """
-        xyz = self.proposal_midpoint(proposal)
-        return len(geometry.query_ball(self.leaf_kdtree, xyz, radius)) - 1
 
     # --- Helpers ---
     def node_attr(self, i, key):

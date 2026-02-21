@@ -157,7 +157,9 @@ class MergeDetector:
         nodes = np.where(self.node_preds >= threshold)[0]
         return [self.dataset.graph.node_xyz[i] for i in nodes]
 
-    def save_results(self, output_dir, output_prefix_s3=None, save_fragments=True):
+    def save_results(
+        self, output_dir, output_prefix_s3=None, save_fragments=True
+    ):
         # Get predicted merge sites
         nodes = np.where(self.node_preds >= self.threshold)[0]
         detected_sites = [self.dataset.graph.node_xyz[i] for i in nodes]
@@ -540,17 +542,19 @@ class DenseGraphDataset(GraphDataset):
         int
             Estimated number of iterations required to search graph.
         """
-        # Set min size
-        length = 0
-        n_componenets = 0
+        # Search graph
+        total_cable_length = 0
+        n_fragments = 0
         for nodes in map(list, nx.connected_components(self.graph)):
-            node = util.sample_once(nodes)
-            length_component = self.graph.path_length(root=node)
-            if length_component > self.min_size:
-                length += length_component
-                n_componenets += 1
-        print("# Fragments to Search:", n_componenets)
-        return int(length / self.step_size)
+            cable_length = self.graph.cable_length(root=nodes[0])
+            if cable_length > self.min_size:
+                total_cable_length += cable_length
+                n_fragments += 1
+
+        # Report results
+        print("# Fragments:", n_fragments)
+        print(f"Total Cable Length: {total_cable_length / 1000:.2f}mm")
+        return int(total_cable_length / self.step_size)
 
 
 class SparseGraphDataset(GraphDataset):
