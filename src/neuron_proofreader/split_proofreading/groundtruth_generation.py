@@ -76,8 +76,6 @@ def run(gt_graph, pred_graph):
         gt_id = pred_to_gt[id1]
         if is_structure_consistent(gt_graph, pred_graph, gt_id, proposal):
             gt_accepts.append(proposal)
-        else:
-            print("Structure is not consistent")
     return gt_accepts
 
 
@@ -185,8 +183,6 @@ def get_pred_to_gt_mapping(gt_graph, pred_graph):
         if gt_id is not None:
             pred_id = pred_graph.node_component_id[nodes[0]]
             pred_to_gt[pred_id] = gt_id
-            pred_id = pred_graph.component_id_to_swc_id[pred_id]
-            gt_id = gt_graph.component_id_to_swc_id[gt_id]
     return pred_to_gt
 
 
