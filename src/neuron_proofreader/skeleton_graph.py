@@ -742,8 +742,9 @@ class SkeletonGraph(nx.Graph):
         Length of the given path.
         """
         path_length = 0
-        for i, j in zip(path[1:], path[:-1]):
-            path_length += self.dist(i, j)
+        if len(path) > 1:
+            for i, j in zip(path[1:], path[:-1]):
+                path_length += self.dist(i, j)
         return path_length
 
     def set_kdtree(self):

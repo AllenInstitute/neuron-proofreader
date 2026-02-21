@@ -217,15 +217,10 @@ def is_structure_consistent(gt_graph, pred_graph, gt_id, proposal):
 
     # Case 2: GT edges are adjacent
     if set(gt_edge_i).intersection(set(gt_edge_j)):
-        # Proposal info
-        i, j = tuple(proposal)
-        xyz_i = pred_graph.node_xyz[i]
-        xyz_j = pred_graph.node_xyz[j]
-
         # Get GT paths
         k = get_common_node(gt_edge_i, gt_edge_j)
-        path_ik = get_path(gt_graph, k, xyz_i)
-        path_jk = get_path(gt_graph, k, xyz_j)
+        path_ik = get_path(gt_graph, k, pred_graph.node_xyz[i])
+        path_jk = get_path(gt_graph, k, pred_graph.node_xyz[j])
 
         # Compare distances
         gt_dist = gt_graph.path_length(path_ik + path_jk[::-1])
@@ -320,6 +315,8 @@ def get_irreducible_edge(graph, node):
             edge.append(i)
             if len(edge) == 2:
                 break
+            else:
+                continue
 
         # Update queue
         for j in graph.neighbors(i):

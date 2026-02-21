@@ -25,6 +25,8 @@ def visualize(graph):
     """
     # Initializations
     data = get_edge_trace(graph)
+    data.append(get_node_trace(graph, graph.get_leafs()))
+    data.append(get_node_trace(graph, graph.get_branchings()))
     layout = get_layout()
 
     # Generate plot
@@ -51,6 +53,8 @@ def visualize_proposals(graph, gt_graph=None, proposals=list()):
 
     # Generate traces
     data = [get_edge_trace(graph, color="black")]
+    data.append(get_node_trace(graph, graph.get_leafs()))
+    data.append(get_node_trace(graph, graph.get_branchings()))
     data.extend(get_component_traces(gt_graph))
     data.extend(get_proposal_traces(graph, proposals))
 
@@ -60,7 +64,7 @@ def visualize_proposals(graph, gt_graph=None, proposals=list()):
     fig.show()
 
 
-def get_component_traces(graph):
+def get_component_traces(graph, use_color=True):
     """
     Generates edge traces to visualize the connected components of a graph.
 
@@ -72,10 +76,13 @@ def get_component_traces(graph):
     colors = plc.qualitative.Bold
     traces = list()
     for nodes in map(list, nx.connected_components(graph)):
-        color = colors[len(traces) % len(colors)]
+        # Extract data
+        color = colors[len(traces) % len(colors)] if use_color else "black"
+        name = graph.get_swc_id(nodes[0])
         subgraph = graph.subgraph(nodes)
         edges = subgraph.edges
-        name = graph.get_swc_id(nodes[0])
+
+        # Create trace
         traces.append(
             get_edge_trace(graph, color=color, edges=edges, name=name)
         )
@@ -111,10 +118,23 @@ def get_edge_trace(graph, color="blue", edges=list(), name=None):
         z.extend([z0, z1, None])
 
     # Set edge trace
-    edge_trace = go.Scatter3d(
-        x=x, y=y, z=z, mode="lines", line=dict(color=color, width=3), name=name
+    line = line=dict(color=color, width=3)
+    trace = go.Scatter3d(x=x, y=y, z=z, mode="lines", line=line, name=name)
+    return trace
+
+
+def get_node_trace(graph, nodes, color="black"):
+    nodes = np.array(nodes)
+    trace = go.Scatter3d(
+        x=graph.node_xyz[nodes, 0],
+        y=graph.node_xyz[nodes, 1],
+        z=graph.node_xyz[nodes, 2],
+        mode="markers",
+        marker=dict(size=1.5, color=color),
+        text=[str(int(n)) for n in nodes],
+        hovertemplate="node: %{text}<extra></extra>",
     )
-    return edge_trace
+    return trace
 
 
 def get_proposal_traces(graph, proposals):
