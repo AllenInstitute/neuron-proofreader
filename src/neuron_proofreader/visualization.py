@@ -51,8 +51,8 @@ def visualize_proposals(graph, gt_graph=None, proposals=list()):
 
     # Generate traces
     data = [get_edge_trace(graph, color="black")]
-    data.append(get_node_trace(graph, graph.get_leafs()))
-    data.append(get_node_trace(graph, graph.get_branchings()))
+    data.append(get_node_trace(graph, graph.leaf_nodes()))
+    data.append(get_node_trace(graph, graph.branching_nodes()))
     data.extend(get_component_traces(gt_graph))
     data.extend(get_proposal_traces(graph, proposals))
 
@@ -76,7 +76,7 @@ def get_component_traces(graph, use_color=True):
     for nodes in map(list, nx.connected_components(graph)):
         # Extract data
         color = colors[len(traces) % len(colors)] if use_color else "black"
-        name = graph.get_swc_id(nodes[0])
+        name = graph.node_swc_id(nodes[0])
         subgraph = graph.subgraph(nodes)
         edges = subgraph.edges
 
@@ -116,7 +116,7 @@ def get_edge_trace(graph, color="blue", edges=list(), name=None):
         z.extend([z0, z1, None])
 
     # Set edge trace
-    line = line=dict(color=color, width=3)
+    line = dict(color=color, width=3)
     trace = go.Scatter3d(x=x, y=y, z=z, mode="lines", line=line, name=name)
     return trace
 

@@ -15,8 +15,6 @@ import numpy as np
 
 from neuron_proofreader.utils import geometry_util
 
-DOT_THRESHOLD = -0.35
-
 
 class ProposalGenerator:
     """
@@ -75,7 +73,7 @@ class ProposalGenerator:
         """
         # Initializations
         self.set_kdtree()
-        iterator = self.graph.get_leafs()
+        iterator = self.graph.leaf_nodes()
         if self.graph.verbose:
             iterator = tqdm(iterator, desc="Proposal Generation")
 
@@ -254,12 +252,12 @@ class ProposalGenerator:
         if self.allow_nonleaf_targets:
             self.kdtree = self.graph.kdtree
         else:
-            leafs = np.array(self.graph.get_leafs())
+            leafs = np.array(self.graph.leaf_nodes())
             self.kdtree = KDTree(self.graph.node_xyz[leafs])
 
 
 # --- Trim Endpoints ---
-def trim_endpoints_at_proposal(graph, proposal):
+def trim_endpoints_at_proposal(graph, proposal, max_depth=20):
     """
     Trims branch endpoints corresponding to the given proposal.
 
@@ -270,88 +268,28 @@ def trim_endpoints_at_proposal(graph, proposal):
     proposal : Frozenset[int]
         Proposal used to specify endpoints to be trimmed.
     """
-    # Find closest points between proposal branches
+    # Extract paths from nodes
     i, j = tuple(proposal)
-    pts_i = graph.edge_attr(i, key="xyz", ignore=True)[0]
-    pts_j = graph.edge_attr(j, key="xyz", ignore=True)[0]
-    dist_ij, (idx_i, idx_j) = find_closest_pair(pts_i, pts_j)
+    path_i = np.array(graph.path_from_leaf(i, max_depth=max_depth))
+    path_j = np.array(graph.path_from_leaf(j, max_depth=max_depth))
 
-    # Update branches (if applicable)
-    if dist_ij < geometry_util.dist(pts_i[0], pts_j[0]):
-        if compute_dot(pts_i, pts_j, idx_i, idx_j) < DOT_THRESHOLD:
-            trim_to_idx(graph, i, idx_i)
-            trim_to_idx(graph, j, idx_j)
+    # Find closest pair of points
+    pts_i = graph.node_xyz[path_i]
+    pts_j = graph.node_xyz[path_j]
+    ii, jj = geometry_util.closest_pair(pts_i, pts_j)
 
+    # Check if branches should be trimmed
+    if graph.dist(path_i[ii], path_j[jj]) < graph.dist(i, j):
+        if compute_dot(pts_i, pts_j, ii, jj) < -0.35:
+            # Update proposals
+            graph.remove_proposal(proposal)
+            graph.add_proposal(path_i[ii], path_j[jj])
 
-def find_closest_pair(pts1, pts2):
-    """
-    Finds the closest pair of points from the given lists of points.
-
-    Parameters
-    ----------
-    pts1 : List[Tuple[int]]
-        First list of points.
-    pts2 : List[Tuple[int]]
-        Second list of points.
-
-    Returns
-    -------
-    best_dist : float
-        Distance between closest pair of points
-    best_idxs : Tuple[int]
-        Indices of closest pair of points from the given lists.
-    """
-    best_dist, best_idxs = np.inf, (0, 0)
-    i, length1 = -1, 0
-    while length1 < 20 and i < len(pts1) - 1:
-        i += 1
-        length1 += geometry_util.dist(pts1[i], pts1[i - 1]) if i > 0 else 0
-
-        # Search other branch
-        j, length2 = -1, 0
-        while length2 < 20 and j < len(pts2) - 1:
-            j += 1
-            length2 += geometry_util.dist(pts2[j], pts2[j - 1]) if j > 0 else 0
-
-            # Check distance between points
-            dist = geometry_util.dist(pts1[i], pts2[j])
-            if dist < best_dist:
-                best_dist = dist
-                best_idxs = (i, j)
-    return best_dist, best_idxs
+            # Remove nodes
+            graph.remove_nodes_from(path_i[0:ii])
+            graph.remove_nodes_from(path_j[0:jj])
 
 
-def trim_to_idx(graph, i, idx):
-    """
-    Trims the end of a branch specified by the leaf node "i".
-
-    Parameters
-    ----------
-    graph : FragmentsGraph
-        Graph containing node "i"
-    i : int
-        Leaf node ID.
-    idx : int
-        Branch is trimmed to the index "idx".
-    """
-    # Update node
-    edge_xyz = graph.edge_attr(i, key="xyz", ignore=True)[0]
-    edge_radii = graph.edge_attr(i, key="radius", ignore=True)[0]
-    graph.node_xyz[i] = edge_xyz[idx]
-    graph.node_radius[i] = edge_radii[idx]
-
-    # Update edge
-    nb = list(graph.neighbors(i))[0]
-    graph.edges[i, nb]["xyz"] = edge_xyz[idx:]
-    graph.edges[i, nb]["radius"] = edge_radii[idx:]
-    for k in range(idx):
-        try:
-            del graph.xyz_to_edge[tuple(edge_xyz[k])]
-        except KeyError:
-            pass
-
-
-# --- Helpers ---
 def compute_dot(branch1, branch2, idx1, idx2):
     """
     Computes dot product between principal components of "branch1" and
@@ -385,33 +323,6 @@ def compute_dot(branch1, branch2, idx1, idx2):
     dot20 = np.dot(tangent(b1, idx1, 20), tangent(b2, idx2, 20))
     dot40 = np.dot(tangent(b1, idx1, 40), tangent(b2, idx2, 40))
     return np.min([dot10, dot20, dot40])
-
-
-def get_sorted_proposals(graph, proposals):
-    """
-    Sorts the given proposals by physical length.
-
-    Parameters
-    ----------
-    graph : ProposalGraph
-        Graph used to generate proposals.
-    proposals : List[Frozenset[int]]
-        Proposals to be sorted.
-
-    Returns
-    -------
-    proposals : List[Frozenset[int]]
-        Sorted proposals.
-    """
-    # Compute lengths
-    lengths = list()
-    proposals = list(proposals)
-    for i, j in proposals:
-        lengths.append(graph.dist(i, j))
-
-    # Sort by distance
-    lengths = [graph.proposal_length(p) for p in proposals]
-    return [proposals[i] for i in np.argsort(lengths)]
 
 
 def tangent(branch, idx, depth):

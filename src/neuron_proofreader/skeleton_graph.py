@@ -225,7 +225,7 @@ class SkeletonGraph(nx.Graph):
         component_id_to_swc_id = dict()
         for i, nodes in enumerate(nx.connected_components(self)):
             nodes = np.array(list(nodes), dtype=int)
-            component_id_to_swc_id[i + 1] = self.get_swc_id(nodes[0])
+            component_id_to_swc_id[i + 1] = self.node_swc_id(nodes[0])
             self.node_component_id[nodes] = i + 1
         self.component_id_to_swc_id = component_id_to_swc_id
 
@@ -240,12 +240,11 @@ class SkeletonGraph(nx.Graph):
         # Set edge ids
         old_to_new = dict(zip(old_node_ids, new_node_ids))
         old_edge_ids = list(self.edges)
-        edge_attrs = {(i, j): data for i, j, data in self.edges(data=True)}
 
         # Reset graph
         self.clear()
         for (i, j) in old_edge_ids:
-            self.add_edge(old_to_new[i], old_to_new[j], **edge_attrs[(i, j)])
+            self.add_edge(old_to_new[i], old_to_new[j])
 
         # Update attributes
         self.node_radius = self.node_radius[old_node_ids]
@@ -255,6 +254,7 @@ class SkeletonGraph(nx.Graph):
         self.reassign_component_ids()
         if self.kdtree:
             self.set_kdtree()
+        return old_to_new
 
     def remove_nodes(self, nodes, relabel_nodes=True):
         """
@@ -272,7 +272,7 @@ class SkeletonGraph(nx.Graph):
             self.relabel_nodes()
 
     # --- Getters ---
-    def get_branchings(self):
+    def branching_nodes(self):
         """
         Gets all branching nodes in the graph.
 
@@ -283,7 +283,13 @@ class SkeletonGraph(nx.Graph):
         """
         return [i for i in self.nodes if self.degree[i] > 2]
 
-    def get_connected_nodes(self, root):
+    def component_id_from_swc_id(self, query_swc_id):
+        for component_id, swc_id in self.component_id_to_swc_id.items():
+            if query_swc_id == swc_id:
+                return component_id
+        raise ValueError(f"SWC ID={query_swc_id} not found")
+
+    def connected_nodes(self, root):
         """
         Gets all nodes connected to the given root node.
 
@@ -307,7 +313,7 @@ class SkeletonGraph(nx.Graph):
                     visited.add(j)
         return visited
 
-    def get_leafs(self):
+    def leaf_nodes(self):
         """
         Gets all leaf nodes in the graph.
 
@@ -318,23 +324,7 @@ class SkeletonGraph(nx.Graph):
         """
         return [i for i in self.nodes if self.degree[i] == 1]
 
-    def get_voxel(self, i):
-        """
-        Gets the voxel coordinate of the given node.
-
-        Parameters
-        ----------
-        i : int
-            Node ID.
-
-        Returns
-        -------
-        float
-            Voxel coordinate of the given node.
-        """
-        return img_util.to_voxels(self.node_xyz[i], self.anisotropy)
-
-    def get_local_voxel(self, node, offset):
+    def node_local_voxel(self, node, offset):
         """
         Computes the local voxel coordinate of the given node within the image
         patch defined by "center" and "patch_shape".
@@ -352,10 +342,9 @@ class SkeletonGraph(nx.Graph):
             Local voxel coordinate of the given node within the image patch
             defined by "center" and "patch_shape".
         """
-        voxel = self.get_voxel(node)
-        return tuple([v - o for v, o in zip(voxel, offset)])
+        return tuple([v - o for v, o in zip(self.node_voxel(node), offset)])
 
-    def get_node_segment_id(self, node):
+    def node_segment_id(self, node):
         """
         Gets the segment ID corresponding to the given node.
 
@@ -371,7 +360,40 @@ class SkeletonGraph(nx.Graph):
         """
         return self.get_swc_id(node).split(".")[0]
 
-    def get_nodes_with_component_id(self, component_id):
+    def node_swc_id(self, i):
+        """
+        Gets the SWC ID of the given node.
+
+        Parameters
+        ----------
+        i : int
+            Node ID.
+
+        Returns
+        -------
+        str
+            SWC ID of the given node.
+        """
+        component_id = self.node_component_id[i]
+        return self.component_id_to_swc_id[component_id]
+
+    def node_voxel(self, i):
+        """
+        Gets the voxel coordinate of the given node.
+
+        Parameters
+        ----------
+        i : int
+            Node ID.
+
+        Returns
+        -------
+        float
+            Voxel coordinate of the given node.
+        """
+        return img_util.to_voxels(self.node_xyz[i], self.anisotropy)
+
+    def nodes_with_component_id(self, component_id):
         """
         Gets all nodes with the given componenet ID.
 
@@ -387,7 +409,7 @@ class SkeletonGraph(nx.Graph):
         """
         return set(np.where(self.node_component_id == component_id)[0])
 
-    def get_nodes_with_segment_id(self, segment_id):
+    def nodes_with_segment_id(self, segment_id):
         """
         Gets all nodes with the given segment ID.
 
@@ -406,19 +428,13 @@ class SkeletonGraph(nx.Graph):
         for swc_id in self.get_swc_ids():
             segment_id = int(swc_id.replace(".0", ""))
             if segment_id == query_id:
-                component_id = self.get_component_id_from_swc_id(swc_id)
+                component_id = self.component_id_from_swc_id(swc_id)
                 nodes = nodes.union(
-                    self.get_nodes_with_component_id(component_id)
+                    self.nodes_with_component_id(component_id)
                 )
         return nodes
 
-    def get_component_id_from_swc_id(self, query_swc_id):
-        for component_id, swc_id in self.component_id_to_swc_id.items():
-            if query_swc_id == swc_id:
-                return component_id
-        raise ValueError(f"SWC ID={query_swc_id} not found")
-
-    def nodes_within_distance(self, root, radius):
+    def nodes_within_distance(self, root, max_depth):
         queue = [(root, 0)]
         visited = {root}
         while queue:
@@ -428,10 +444,27 @@ class SkeletonGraph(nx.Graph):
             # Populate queue
             for j in self.neighbors(i):
                 dist_j = dist_i + self.dist(i, j)
-                if dist_j < radius and j not in visited:
+                if dist_j < max_depth and j not in visited:
                     queue.append((j, dist_j))
                     visited.add(j)
         return list(visited)
+
+    def path_from_leaf(self, leaf, max_depth=np.inf):
+        queue = [(leaf, 0)]
+        path = [leaf]
+        while queue:
+            # Visit node
+            i, dist_i = queue.pop()
+            if self.degree[i] != 2 and dist_i > 0:
+                return path
+
+            # Update queue
+            for j in self.neighbors(i):
+                dist_j = dist_i + self.dist(i, j)
+                if dist_j < max_depth and j not in path:
+                    queue.append((j, dist_j))
+                    path.append(j)
+        return path
 
     def rooted_subgraph(self, root, radius):
         """
@@ -477,23 +510,6 @@ class SkeletonGraph(nx.Graph):
         subgraph.node_radius = self.node_radius[idxs]
         subgraph.node_xyz = self.node_xyz[idxs]
         return subgraph
-
-    def get_swc_id(self, i):
-        """
-        Gets the SWC ID of the given node.
-
-        Parameters
-        ----------
-        i : int
-            Node ID.
-
-        Returns
-        -------
-        str
-            SWC ID of the given node.
-        """
-        component_id = self.node_component_id[i]
-        return self.component_id_to_swc_id[component_id]
 
     def get_swc_ids(self):
         """
@@ -581,7 +597,7 @@ class SkeletonGraph(nx.Graph):
                 write_entry(j, i)
 
             # Finish
-            filename = self.get_swc_id(i)
+            filename = self.node_swc_id(i)
             filename = util.set_zip_path(zip_writer, filename, ".swc")
             zip_writer.writestr(filename, text_buffer.getvalue())
 
@@ -625,7 +641,7 @@ class SkeletonGraph(nx.Graph):
             # Clip graph
             nodes = list()
             for i in self.nodes:
-                voxel = np.array(self.get_voxel(i))
+                voxel = np.array(self.node_voxel(i))
                 if not img_util.is_contained(voxel - origin, shape):
                     nodes.append(i)
             self.remove_nodes_from(nodes)

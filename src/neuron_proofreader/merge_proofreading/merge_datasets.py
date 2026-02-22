@@ -317,7 +317,7 @@ class MergeSiteDataset(Dataset):
         """
         # Get example
         brain_id, subgraph, label = self.get_site(idx)
-        voxel = subgraph.get_voxel(0)
+        voxel = subgraph.node_voxel(0)
 
         # Extract subgraph and image patches centered at site
         img_patch = self.get_img_patch(brain_id, voxel)
@@ -509,7 +509,7 @@ class MergeSiteDataset(Dataset):
             segment_mask = np.zeros(self.patch_shape)
 
         # Annotate fragment
-        center = subgraph.get_voxel(0)
+        center = subgraph.node_voxel(0)
         offset = img_util.get_offset(center, self.patch_shape)
         for node1, node2 in subgraph.edges:
             # Get local voxel coordinates

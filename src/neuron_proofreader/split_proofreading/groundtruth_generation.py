@@ -54,7 +54,7 @@ def run(gt_graph, pred_graph):
 
     # Main
     gt_accepts = list()
-    for proposal in pred_graph.get_sorted_proposals():
+    for proposal in pred_graph.sorted_proposals():
         # Proposal info
         i, j = tuple(proposal)
         id1 = pred_graph.node_component_id[i]

@@ -104,9 +104,8 @@ class NewProposalGraph(SkeletonGraph):
         self.merged_ids = set()
         self.n_merges_blocked = 0
         self.n_proposals_blocked = 0
-        self.node_proposals = defaultdict(set)
-        self.proposals = set()
 
+        self.reset_proposals()
         self.proposal_generator = ProposalGenerator(
             self,
             max_proposals_per_leaf=max_proposals_per_leaf,
@@ -163,6 +162,17 @@ class NewProposalGraph(SkeletonGraph):
         results.append(f"# Soma Fragments Merged: {merge_cnt}")
         return "\n".join(results)
 
+    def relabel_nodes(self):
+        # Call parent class
+        old_proposals = self.list_proposals()
+        old_to_new = super().relabel_nodes()
+
+        # Update proposals
+        self.reset_proposals()
+        for proposal in old_proposals:
+            i, j = proposal
+            self.add_proposal(int(old_to_new[i]), int(old_to_new[j]))
+
     # --- Proposal Operations ---
     def add_proposal(self, i, j):
         """
@@ -198,7 +208,8 @@ class NewProposalGraph(SkeletonGraph):
         # Proposal generation
         proposals = self.proposal_generator(search_radius)
         self.store_proposals(proposals)
-        #self.trim_proposals() TEMP
+        self.trim_proposals()
+        self.relabel_nodes()
 
         # Set groundtruth
         if self.gt_path:
@@ -206,7 +217,7 @@ class NewProposalGraph(SkeletonGraph):
             gt_graph.load(self.gt_path)
             self.gt_accepts = groundtruth_generation.run(gt_graph, self)
 
-    def get_sorted_proposals(self):
+    def sorted_proposals(self):
         """
         Return proposals sorted by physical length.
 
@@ -323,6 +334,10 @@ class NewProposalGraph(SkeletonGraph):
         self.node_proposals[i].remove(j)
         self.node_proposals[j].remove(i)
         self.proposals.remove(proposal)
+
+    def reset_proposals(self):
+        self.node_proposals = defaultdict(set)
+        self.proposals = set()
 
     def store_proposals(self, proposals):
         self.node_proposals = defaultdict(set)

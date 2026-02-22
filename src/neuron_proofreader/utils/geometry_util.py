@@ -597,6 +597,12 @@ def is_double(hits, n_pts):
 
 
 # --- Miscellaneous ---
+def closest_pair(pts1, pts2):
+    diff = pts1[:, None, :] - pts2[None, :, :]
+    dists_sq = np.sum(diff**2, axis=2)
+    return np.unravel_index(np.argmin(dists_sq), dists_sq.shape)
+
+
 def dist(v_1, v_2, metric="l2"):
     """
     Computes distance between "v_1" and "v_2".

@@ -354,8 +354,8 @@ class ImageFeatureExtractor:
         """
         # Get info
         node1, node2 = tuple(proposal)
-        voxel1 = self.graph.get_voxel(node1)
-        voxel2 = self.graph.get_voxel(node2)
+        voxel1 = self.graph.node_voxel(node1)
+        voxel2 = self.graph.node_voxel(node2)
 
         # Compute bounds
         bounds = img_util.get_minimal_bbox([voxel1, voxel2], self.padding)

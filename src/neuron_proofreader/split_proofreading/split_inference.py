@@ -256,7 +256,7 @@ class InferencePipeline:
             Threshold used to determine which proposals to accept based on
             model prediction.
         """
-        for proposal in self.dataset.graph.get_sorted_proposals():
+        for proposal in self.dataset.graph.sorted_proposals():
             # Check if proposal has been visited
             if proposal not in preds:
                 continue
