@@ -14,7 +14,6 @@ information into the graph structure.
 from collections import defaultdict
 from concurrent.futures import as_completed, ThreadPoolExecutor
 from io import StringIO
-from scipy.spatial import KDTree
 from tqdm import tqdm
 
 import networkx as nx
@@ -96,10 +95,8 @@ class ProposalGraph(SkeletonGraph):
         self.anisotropy = anisotropy
         self.component_id_to_swc_id = dict()
         self.gt_path = gt_path
-        self.leaf_kdtree = None
         self.soma_ids = set()
         self.verbose = verbose
-        self.xyz_to_edge = dict()
 
         # Instance attributes - Proposals
         self.accepts = set()
@@ -107,9 +104,8 @@ class ProposalGraph(SkeletonGraph):
         self.merged_ids = set()
         self.n_merges_blocked = 0
         self.n_proposals_blocked = 0
-        self.node_proposals = defaultdict(set)
-        self.proposals = set()
 
+        self.reset_proposals()
         self.proposal_generator = ProposalGenerator(
             self,
             max_proposals_per_leaf=max_proposals_per_leaf,
@@ -128,75 +124,9 @@ class ProposalGraph(SkeletonGraph):
             verbose=verbose,
         )
 
-    def load(self, swc_pointer):
-        """
-        Loads fragments into "self" by reading SWC files stored on either the
-        cloud or local machine, then extracts the irreducible components from
-        from each SWC file.
-
-        Parameters
-        ----------
-        swc_pointer : Any
-            Pointer to SWC files to be loaded, see "swc_util.Reader" for
-            documentation.
-        """
-        # Extract irreducible components from SWC files
-        irreducibles = self.graph_loader(swc_pointer)
-        n = np.sum([len(irr["nodes"]) for irr in irreducibles])
-
-        # Initialize node attribute data structures
-        self.node_component_id = np.zeros((n), dtype=int)
-        self.node_radius = np.zeros((n), dtype=np.float16)
-        self.node_xyz = np.zeros((n, 3), dtype=np.float32)
-
-        # Add irreducibles to graph
-        component_id = 0
-        while irreducibles:
-            self.add_connected_component(irreducibles.pop(), component_id)
-            component_id += 1
-
     # --- Update Structure ---
-    def add_connected_component(self, irreducibles, component_id):
-        """
-        Adds the irreducibles from a single connected component to "self".
-
-        Parameters
-        ----------
-        irreducibles : dict
-            Dictionary containing the irreducibles of a connected component to
-            add to "self". This dictionary must contain the keys: "nodes",
-            "edges", "swc_id", and "is_soma".
-        component_id : int
-            Connected component ID used to map node IDs back to SWC IDs via
-            "self.component_id_to_swc_id".
-        """
-        # Component ID
-        self.component_id_to_swc_id[component_id] = irreducibles["swc_id"]
-        if irreducibles["is_soma"]:
-            self.soma_ids.add(component_id)
-
-        # Add irreducibles
-        node_id_mapping = self._add_nodes(irreducibles["nodes"], component_id)
-        for (i, j), attrs in irreducibles["edges"].items():
-            edge_id = (node_id_mapping[i], node_id_mapping[j])
-            self._add_edge(edge_id, attrs)
-
-    def _add_edge(self, edge_id, attrs):
-        """
-        Adds an edge to "self".
-
-        Parameters
-        ----------
-        edge : Tuple[int]
-            Edge to be added.
-        attrs : dict
-            Dictionary of attributes of "edge" obtained from an SWC file.
-        """
-        i, j = tuple(edge_id)
-        self.add_edge(i, j, radius=attrs["radius"], xyz=attrs["xyz"])
-        self.xyz_to_edge.update({tuple(xyz): edge_id for xyz in attrs["xyz"]})
-
     def connect_soma_fragments(self, soma_centroids):
+        # MUST BE UPDATED!
         merge_cnt = 0
         soma_cnt = 0
         self.set_kdtree()
@@ -233,108 +163,15 @@ class ProposalGraph(SkeletonGraph):
         return "\n".join(results)
 
     def relabel_nodes(self):
-        """
-        Reassigns contiguous node IDs and update all dependent structures.
-        """
-        # Set node ids
-        old_node_ids = np.array(self.nodes, dtype=int)
-        new_node_ids = np.arange(len(old_node_ids))
+        # Call parent class
+        old_proposals = self.list_proposals()
+        old_to_new = super().relabel_nodes()
 
-        # Set edge ids
-        old_to_new = dict(zip(old_node_ids, new_node_ids))
-        old_edge_ids = list(self.edges)
-        old_irr_edge_ids = self.irreducible.edges
-        edge_attrs = {(i, j): data for i, j, data in self.edges(data=True)}
-
-        # Reset graph
-        self.clear()
-        self.xyz_to_edge = dict()
-        for (i, j) in old_edge_ids:
-            edge_id = (int(old_to_new[i]), int(old_to_new[j]))
-            self._add_edge(edge_id, edge_attrs[(i, j)])
-
-        self.irreducible.clear()
-        for (i, j) in old_irr_edge_ids:
-            self.irreducible.add_edge(old_to_new[i], old_to_new[j])
-
-        # Update attributes
-        self.node_radius = self.node_radius[old_node_ids]
-        self.node_xyz = self.node_xyz[old_node_ids]
-        self.node_component_id = self.node_component_id[old_node_ids]
-
-        self.reassign_component_ids()
-
-    def remove_line_fragment(self, i, j):
-        """
-        Deletes nodes "i" and "j" from "graph", where these nodes form a connected
-        component.
-
-        Parameters
-        ----------
-        i : int
-            Node to be removed.
-        j : int
-            Node to be removed.
-        """
-        # Remove xyz entries
-        self.xyz_to_edge.pop(tuple(self.node_xyz[i]), None)
-        self.xyz_to_edge.pop(tuple(self.node_xyz[j]), None)
-        for xyz in self.edges[i, j]["xyz"]:
-            self.xyz_to_edge.pop(tuple(xyz), None)
-
-        # Remove nodes
-        del self.component_id_to_swc_id[self.node_component_id[i]]
-        self.remove_nodes_from([i, j])
-
-    # -- KDTree --
-    def set_kdtree(self, node_type=None):
-        """
-        Builds a KD-Tree from the xyz coordinates of the subset of nodes
-        indicated by "node_type".
-
-        Parameters
-        ----------
-        node_type : None or str
-            Type of node used to build kdtree.
-        """
-        if node_type == "leaf":
-            self.leaf_kdtree = self.get_kdtree(node_type=node_type)
-        elif node_type == "branching":
-            self.branching_kdtree = self.get_kdtree(node_type=node_type)
-        elif node_type == "proposal":
-            self.proposal_kdtree = self.get_kdtree(node_type=node_type)
-        else:
-            self.kdtree = self.get_kdtree()
-
-    def get_kdtree(self, node_type=None):
-        """
-        Builds KD-Tree from xyz coordinates across all nodes and edges.
-
-        Parameters
-        ----------
-        node_type : None or str, optional
-            Type of nodes used to build kdtree. Default is None.
-
-        Returns
-        -------
-        KDTree
-            KD-Tree generated from xyz coordinates across all nodes and edges.
-        """
-        # Get xyz coordinates
-        if node_type == "leaf":
-            leafs = np.array(self.get_leafs(), dtype=int)
-            return KDTree(self.node_xyz[leafs])
-        elif node_type == "branching":
-            branchings = np.array(self.get_branchings(), dtype=int)
-            return KDTree(self.node_xyz[branchings])
-        elif node_type == "proposal":
-            xyz_set = set()
-            for p in self.proposals:
-                xyz_i, xyz_j = self.proposal_attr(p, attr="xyz")
-                xyz_set = xyz_set.union({tuple(xyz_i), tuple(xyz_j)})
-            return KDTree(list(xyz_set))
-        else:
-            return KDTree(list(self.xyz_to_edge.keys()))
+        # Update proposals
+        self.reset_proposals()
+        for proposal in old_proposals:
+            i, j = proposal
+            self.add_proposal(int(old_to_new[i]), int(old_to_new[j]))
 
     # --- Proposal Operations ---
     def add_proposal(self, i, j):
@@ -372,14 +209,15 @@ class ProposalGraph(SkeletonGraph):
         proposals = self.proposal_generator(search_radius)
         self.store_proposals(proposals)
         self.trim_proposals()
+        self.relabel_nodes()
 
         # Set groundtruth
         if self.gt_path:
-            gt_graph = ProposalGraph(anisotropy=self.anisotropy)
+            gt_graph = SkeletonGraph(anisotropy=self.anisotropy)
             gt_graph.load(self.gt_path)
             self.gt_accepts = groundtruth_generation.run(gt_graph, self)
 
-    def get_sorted_proposals(self):
+    def sorted_proposals(self):
         """
         Return proposals sorted by physical length.
 
@@ -413,7 +251,7 @@ class ProposalGraph(SkeletonGraph):
             Indication of whether both nodes in a proposal are leafs.
         """
         i, j = tuple(proposal)
-        return True if self.degree[i] == 1 and self.degree[j] == 1 else False
+        return self.degree[i] == 1 and self.degree[j] == 1
 
     def is_single_proposal(self, proposal):
         """
@@ -497,6 +335,10 @@ class ProposalGraph(SkeletonGraph):
         self.node_proposals[j].remove(i)
         self.proposals.remove(proposal)
 
+    def reset_proposals(self):
+        self.node_proposals = defaultdict(set)
+        self.proposals = set()
+
     def store_proposals(self, proposals):
         self.node_proposals = defaultdict(set)
         for proposal in proposals:
@@ -575,27 +417,6 @@ class ProposalGraph(SkeletonGraph):
     def truncated_edge_attr_xyz(self, i, depth):
         xyz_path_list = self.edge_attr(i, "xyz")
         return [geometry.truncate_path(path, depth) for path in xyz_path_list]
-
-    def n_nearby_leafs(self, proposal, radius):
-        """
-        Counts the number of nearby leaf nodes within a specified radius from
-        a proposal.
-
-        Parameters
-        ----------
-        proposal : frozenset
-            Pproposal for which nearby leaf nodes are to be counted.
-        radius : float
-            The radius within which to search for nearby leaf nodes.
-
-        Returns
-        -------
-        int
-            Number of nearby leaf nodes within a specified radius from
-            a proposal.
-        """
-        xyz = self.proposal_midpoint(proposal)
-        return len(geometry.query_ball(self.leaf_kdtree, xyz, radius)) - 1
 
     # --- Helpers ---
     def node_attr(self, i, key):
