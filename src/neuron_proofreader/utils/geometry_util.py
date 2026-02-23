@@ -17,8 +17,6 @@ from tqdm import tqdm
 import networkx as nx
 import numpy as np
 
-from neuron_proofreader.utils import img_util
-
 
 # --- Directionals ---
 def get_directional(branches, origin, depth):
@@ -95,7 +93,7 @@ def tangent(pts):
         Tangent vector at the specified point or along the curve.
     """
     if len(pts) == 2:
-        d = max(dist(pts[1], pts[0]), 0.1)
+        d = max(distance.euclidean(pts[1], pts[0]), 0.1)
         tangent_vec = (pts[1] - pts[0]) / d
     else:
         _, _, VT = compute_svd(pts)
@@ -216,7 +214,7 @@ def path_length(path):
     float
         Path length of "path".
     """
-    return np.sum([dist(a, b) for a, b in zip(path[:-1], path[1:])])
+    return np.sqrt(np.sum((path[:-1] - path[1:]) ** 2))
 
 
 def resample_curve_1d(pts, n_pts=None, s=None):
@@ -329,269 +327,96 @@ def truncate_path(xyz_path, depth):
     """
     length = 0
     for i in range(1, len(xyz_path)):
-        length += dist(xyz_path[i - 1], xyz_path[i])
+        length += distance.euclidean(xyz_path[i - 1], xyz_path[i])
         if length > depth:
             return np.array(xyz_path[0:i])
     return np.array(xyz_path)
 
 
-# --- KDTree utils ---
-def kdtree_query(kdtree, xyz):
-    """
-    Gets the xyz coordinates of the nearest neighbor of "xyz" from "kdtree".
-
-    Parameters
-    ----------
-    xyz : tuple
-        xyz coordinate to be queried.
-
-    Returns
-    -------
-    tuple
-        xyz coordinate of the nearest neighbor of "xyz".
-    """
-    _, idx = kdtree.query(xyz)
-    return tuple(kdtree.data[idx])
-
-
-# --- Proposal optimization ---
-def optimize_alignment(neurograph, img, edge, depth=15):
-    """
-    Optimizes alignment of edge proposal between two branches by finding
-    straight path with the brightest averaged image profile.
-
-    Parameters
-    ----------
-    neurograph : NeuroGraph
-        Predicted neuron reconstruction to be corrected.
-    img : numpy.ndarray
-        Image chunk that the reconstruction is contained in.
-    edge : frozenset
-        Edge proposal to be aligned.
-    depth : int, optional
-        Maximum depth checked during alignment optimization. The default value
-        is 15.
-
-    Returns
-    -------
-    numpy.ndarray, numpy.ndarray
-        xyz coordinates of aligned edge proposal.
-    """
-    if neurograph.is_simple(edge):
-        return optimize_simple_alignment(neurograph, img, edge, depth=depth)
-    else:
-        return optimize_complex_alignment(neurograph, img, edge, depth=depth)
-
-
-def optimize_simple_alignment(neurograph, img, edge, depth=15):
-    """
-    Optimizes alignment of edge proposal for simple edges.
-
-    Parameters
-    ----------
-    neurograph : NeuroGraph
-        Predicted neuron reconstruction to be corrected.
-    img : numpy.ndarray
-        Image chunk that the reconstruction is contained in.
-    edge : frozenset
-        Edge proposal to be aligned.
-    depth : int, optional
-        Maximum depth checked during alignment optimization. The default value
-        is 15.
-
-    Returns
-    -------
-    numpy.ndarray, numpy.ndarray
-        xyz coordinates of aligned edge proposal.
-    """
-    i, j = tuple(edge)
-    branch_i = neurograph.get_branches(i, ignore_reducibles=True)[0]
-    branch_j = neurograph.get_branches(j, ignore_reducibles=True)[0]
-    d_i, d_j, _ = align(neurograph, img, branch_i, branch_j, depth)
-    return branch_i[d_i], branch_j[d_j]
-
-
-def optimize_complex_alignment(neurograph, img, edge, depth=15):
-    """
-    Optimizes alignment of edge proposal for complex edges.
-
-    Parameters
-    ----------
-    neurograph : NeuroGraph
-        Predicted neuron reconstruction to be corrected.
-    img : numpy.ndarray
-        Image chunk that the reconstruction is contained in.
-    edge : frozenset
-        Edge proposal to be aligned.
-    depth : int, optional
-        Maximum depth checked during alignment optimization. The default value
-        is 15.
-
-    Returns
-    -------
-    numpy.ndarray, numpy.ndarray
-        xyz coordinates of aligned edge proposal.
-    """
-    i, j = tuple(edge)
-    branch = neurograph.branches(i if neurograph.is_leaf(i) else j)[0]
-    branches = neurograph.branches(j if neurograph.is_leaf(i) else i)
-    d1, e1, val_1 = align(neurograph, img, branch, branches[0], depth)
-    d2, e2, val_2 = align(neurograph, img, branch, branches[1], depth)
-    pair_1 = (branch[d1], branches[0][e1])
-    pair_2 = (branch[d2], branches[1][e2])
-    return pair_1 if val_1 > val_2 else pair_2
-
-
-def align(neurograph, img, branch_1, branch_2, depth):
-    """
-    Finds straight line path between end points of "branch_1" and "branch_2"
-    that best captures the image signal. This path is determined by checking
-    the average image intensity of the line drawn from "branch_1[d_1]" and
-    "branch_2[d_2]" with d_1, d_2 in [0, depth].
-
-    Parameters
-    ----------
-    neurograph : NeuroGraph
-        Predicted neuron reconstruction to be corrected.
-    img : numpy.ndarray
-        Image chunk that the reconstruction is contained in.
-    branch_1 : np.ndarray
-        Branch corresponding to some predicted neuron. This branch must be
-        oriented so that the end points being considered are the coordinates
-        in rows 0 through "depth".
-    branch_2 : np.ndarray
-        Branch corresponding to some predicted neuron. This branch must be
-        oriented so that the end points being considered are the coordinates
-        in rows 0 through "depth".
-    depth : int
-        Maximum depth of branch that is optimized over.
-
-    Returns
-    -------
-    np.ndarray
-        Optimal xyz coordinate from "branch_1".
-    np.ndarray
-        Optimal xyz coordinate from "branch_2".
-    float
-        Average brightness of voxels sampled along line between "best_xyz_1"
-        and "best_xyz_2".
-    """
-    best_d1 = None
-    best_d2 = None
-    best_score = 0
-    for d1 in range(min(depth, len(branch_1) - 1)):
-        xyz_1 = neurograph.to_voxels(branch_1[d1], shift=True)
-        for d2 in range(min(depth, len(branch_2) - 1)):
-            xyz_2 = neurograph.to_voxels(branch_2[d2], shift=True)
-            line = make_line(xyz_1, xyz_2, 10)
-            score = np.mean(img_util.get_profile(img, line))
-            if score > best_score:
-                best_score = score
-                best_d1 = d1
-                best_d2 = d2
-    return best_d1, best_d2, best_score
-
-
 # --- Fragment Filtering ---
-def remove_doubles(graph, max_length):
+def remove_doubles(graph, max_cable_length):
     """
-    Removes connected components from the graph that are likely duplicates
+    Removes connected components from the graph that are likely doubles
     caused by image ghosting artifacts.
 
     Parameters
     ----------
-    graph : FragmentsGraph
+    graph : SkeletonGraph
         Graph to be searched for doubles.
-    max_length : int
-        Maximum size of connected components to be searched.
+    max_cable_length : float
+        Maximum cable length of connected components to be searched.
     """
-    # MUST BE UPDATED
-    # Initializations
-    components = [c for c in nx.connected_components(graph) if len(c) == 2]
-    iterator = np.argsort([len(c) for c in components])
+    # Set progress bar
+    iterator = nx.connected_components(graph)
     if graph.verbose:
-        iterator = tqdm(iterator, desc="Filter Doubled Fragments")
+        total = nx.number_connected_components(graph)
+        iterator = tqdm(iterator, total=total, desc="Filter Doubles")
 
-    # Main
-    for idx in iterator:
-        i, j = tuple(components[idx])
-        if graph.node_component_id[i] in graph.component_id_to_swc_id:
-            if graph.edge_length((i, j)) < max_length:
-                # Check doubles criteria
-                n_pts = len(graph.edges[i, j]["xyz"])
-                hits = compute_projections(graph, (i, j))
-                if is_double(hits, n_pts):
-                    graph.remove_line_fragment(i, j)
+    # Search graph
+    branching_nodes = set(graph.branching_nodes())
+    for nodes in iterator:
+        # Check if component is obviously too big
+        if len(nodes) > 1000:
+            continue
+
+        # Check for branching node
+        if branching_nodes.intersection(nodes):
+            continue
+
+        # Check cable length
+        nodes = list(nodes)
+        length = graph.cable_length(max_depth=max_cable_length, root=nodes[0])
+        if length > max_cable_length:
+            continue
+
+        # Check doubles criteria
+        if is_double(graph, nodes):
+            graph.remove_nodes_from(nodes)
+
     graph.relabel_nodes()
 
 
-def compute_projections(graph, kdtree, edge):
+def is_double(graph, nodes):
     """
-    Given a fragment defined by "edge", this routine iterates of every xyz in
-    the fragment and projects it onto the closest fragment. For each detected
-    fragment, the fragment id and projection distance are stored in a
-    dictionary called "hits".
-
-    Parameters
-    ----------
-    graph : FragmentsGraph
-        Graph that contains "edge".
-    kdtree : KDTree
-        KD-Tree that contains all xyz coordinates of every fragment in
-        "graph".
-    edge : tuple
-        Pair of leaf nodes that define a fragment.
-
-    Returns
-    -------
-    dict
-        Dictionary that stores all fragments that were detected and the
-        projection distances.
-    """
-    hits = defaultdict(list)
-    query_id = graph.node_component_id[edge[0]]
-    for i, xyz in enumerate(graph.edges[edge]["xyz"]):
-        # Compute projections
-        best_id = None
-        best_dist = np.inf
-        for hit_xyz in query_ball(graph.kdtree, xyz, 15):
-            hit_id = graph.xyz_to_component_id(hit_xyz)
-            if hit_id is not None and hit_id != query_id:
-                if dist(hit_xyz, xyz) < best_dist:
-                    best_dist = dist(hit_xyz, xyz)
-                    best_id = hit_id
-
-        # Store best
-        if best_id:
-            hits[best_id].append(best_dist)
-        elif i == 15 and len(hits) == 0:
-            return hits
-    return hits
-
-
-def is_double(hits, n_pts):
-    """
-    Determines whether the connected component corresponding to "root" is a
-    double of another connected component.
+    Determines if the connected component corresponding to "nodes" is a double
+    another connected component.
 
     Paramters
     ---------
-    hits : dict
-        ...
-    n_pts : int
-        Number of nodes that comprise the component being checked.
+    graph : SkeletonGraph
+        Graph to be searched.
+    nodes : List[int]
+        Nodes that correspond to a single connected component.
 
     Returns
     -------
     bool
-        Indication of whether component is a double.
+        True if the component is a double; otherwise, False.
     """
-    for dists in hits.values():
+    # Compute projection distances
+    cid = graph.node_component_id[nodes[0]]
+    cid_to_dists = defaultdict(list)
+    for i in nodes:
+        # Find nearest neighbor
+        idxs = np.array(graph.kdtree.query_ball_point(graph.node_xyz[i], 15))
+        idxs = idxs[graph.node_component_id[idxs] != cid]
+        if len(idxs) > 0:
+            idx = nearest_neighbor(
+                graph.node_xyz[idxs], graph.node_xyz[i], return_index=True
+            )
+
+            # Store distance
+            j = idxs[idx]
+            cid_to_dists[graph.node_component_id[j]].append(graph.dist(i, j))
+
+
+    # Determine if double
+    for dists in cid_to_dists.values():
         if len(dists) > 10:
-            percent_hit = len(dists) / n_pts
-            if percent_hit > 0.5 and np.std(dists) < 2:
+            percent_hit = len(dists) / len(nodes)
+            if percent_hit > 0.6 and np.std(dists) < 2:
                 return True
-            elif percent_hit > 0.75 and np.std(dists) < 2.5:
+            elif percent_hit > 0.8 and np.std(dists) < 2.5:
                 return True
     return False
 
@@ -601,28 +426,6 @@ def closest_pair(pts1, pts2):
     diff = pts1[:, None, :] - pts2[None, :, :]
     dists_sq = np.sum(diff**2, axis=2)
     return np.unravel_index(np.argmin(dists_sq), dists_sq.shape)
-
-
-def dist(v_1, v_2, metric="l2"):
-    """
-    Computes distance between "v_1" and "v_2".
-
-    Parameters
-    ----------
-    v_1 : np.ndarray
-        Vector.
-    v_2 : np.ndarray
-        Vector.
-
-    Returns
-    -------
-    float
-        Distance between "v_1" and "v_2".
-    """
-    if metric == "l1":
-        return np.sum(v_1 - v_2)
-    else:
-        return distance.euclidean(v_1, v_2)
 
 
 def make_line(p1, p2, n_steps):
@@ -682,26 +485,7 @@ def make_digital_line(p1, p2):
     return line
 
 
-def normalize(vector, norm="l2"):
-    """
-    Normalizes a vector to have unit length with respect to a specified norm.
-
-    Parameters
-    ----------
-    vector : numpy.ndarray
-        The input vector to be normalized.
-    norm : str, optional
-        The norm to use for normalization. Default is "l2".
-
-    Returns
-    -------
-    numpy.ndarray
-        Normalized vector.
-    """
-    return vector / abs(dist(np.zeros((3)), vector, metric=norm))
-
-
-def nearest_neighbor(pts, query_pt):
+def nearest_neighbor(pts, query_pt, return_index=False):
     """
     Finds the nearest neighbor in a list of 3D coordinates to a given target
     coordinate.
@@ -712,6 +496,8 @@ def nearest_neighbor(pts, query_pt):
         3D coordinates to search for the nearest neighbor.
     query_pt : numpy.ndarray
         3D coordinate to query.
+    return_index : bool, optional
+        Indication of whether to return the index of the nearest neighbor.
 
     Returns
     -------
@@ -721,27 +507,4 @@ def nearest_neighbor(pts, query_pt):
     pts = np.asarray(pts)
     dists = np.linalg.norm(pts - query_pt, axis=1)
     idx = np.argmin(dists)
-    return pts[idx]
-
-
-def query_ball(kdtree, query_xyz, radius):
-    """
-    Queries a KD-tree for points within a given radius from a target point.
-
-    Parameters
-    ----------
-    kdtree : scipy.spatial.cKDTree
-        KD-tree to be queried.
-    xyz : numpy.ndarray
-        Target 3D coordinate around which to search for points.
-    radius : float
-        Search radius used to generate proposals.
-
-    Returns
-    -------
-    numpy.ndarray
-        An array containing the points within the specified radius from the
-        target coordinate.
-    """
-    idxs = kdtree.query_ball_point(query_xyz, radius)
-    return kdtree.data[idxs]
+    return idx if return_index else pts[idx]

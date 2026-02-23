@@ -13,14 +13,13 @@ fragments). It then stores the relevant information into the graph structure.
 from collections import defaultdict
 from io import StringIO
 from scipy.spatial import KDTree
+from scipy.spatial import distance
 
 import networkx as nx
 import numpy as np
 import zipfile
 
-from neuron_proofreader.utils import (
-    geometry_util, graph_util as gutil, img_util, util
-)
+from neuron_proofreader.utils import graph_util as gutil, img_util, util
 
 
 class SkeletonGraph(nx.Graph):
@@ -113,6 +112,7 @@ class SkeletonGraph(nx.Graph):
         self.node_component_id = np.zeros((n), dtype=int)
         self.node_radius = np.zeros((n), dtype=np.float16)
         self.node_xyz = np.zeros((n, 3), dtype=np.float32)
+        self.set_kdtree()
 
         # Add irreducibles to graph
         component_id = 0
@@ -191,8 +191,8 @@ class SkeletonGraph(nx.Graph):
         """
         # Determine orientation of attributes
         i, j = tuple(edge_id)
-        dist_i = geometry_util.dist(self.node_xyz[i], attrs["xyz"][0])
-        dist_j = geometry_util.dist(self.node_xyz[j], attrs["xyz"][0])
+        dist_i = distance.euclidean(self.node_xyz[i], attrs["xyz"][0])
+        dist_j = distance.euclidean(self.node_xyz[j], attrs["xyz"][0])
         if dist_i < dist_j:
             start = i
             end = j
@@ -704,7 +704,7 @@ class SkeletonGraph(nx.Graph):
         float
             Euclidean distance between nodes "i" and "j".
         """
-        return geometry_util.dist(self.node_xyz[i], self.node_xyz[j])
+        return distance.euclidean(self.node_xyz[i], self.node_xyz[j])
 
     def get_irreducible_edge(self, node):
         # Check node is non-branhching

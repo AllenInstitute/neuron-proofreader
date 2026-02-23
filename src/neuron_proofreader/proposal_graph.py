@@ -27,7 +27,7 @@ from neuron_proofreader.split_proofreading import (
 )
 from neuron_proofreader.split_proofreading.proposal_generation import (
     ProposalGenerator,
-    trim_endpoints_at_proposal
+    trim_proposal_endpoints
 )
 from neuron_proofreader.utils import (
     geometry_util as geometry,
@@ -350,7 +350,7 @@ class ProposalGraph(SkeletonGraph):
             is_simple = self.is_simple(proposal)
             is_single = self.is_single_proposal(proposal)
             if is_simple and is_single:
-                trim_endpoints_at_proposal(self, proposal)
+                trim_proposal_endpoints(self, proposal)
 
     # --- Proposal Feature Generation ---
     def proposal_attr(self, proposal, key):

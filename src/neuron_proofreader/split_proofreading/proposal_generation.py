@@ -141,7 +141,7 @@ class ProposalGenerator:
         """
         node_candidates = list()
         for node in self.get_nearby_nodes(leaf, radius):
-            # check whether to move to leaf if allowing leaf-branch connections
+            # UPDATE - check whether to move to leaf if allowing leaf-branch connections
             if self.is_valid_proposal(leaf, node):
                 node_candidates.append(node)
         return node_candidates
@@ -257,7 +257,7 @@ class ProposalGenerator:
 
 
 # --- Trim Endpoints ---
-def trim_endpoints_at_proposal(graph, proposal, max_depth=20):
+def trim_proposal_endpoints(graph, proposal, max_depth=20):
     """
     Trims branch endpoints corresponding to the given proposal.
 

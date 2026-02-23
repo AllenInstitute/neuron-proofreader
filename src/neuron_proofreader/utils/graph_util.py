@@ -28,6 +28,7 @@ from concurrent.futures import (
 )
 from random import sample
 from scipy.spatial import KDTree
+from scipy.spatial.distance import euclidean
 from tqdm import tqdm
 
 import multiprocessing
@@ -214,7 +215,7 @@ class GraphLoader:
         graph = self.to_graph(swc_dict)
         irreducibles_list = deque()
         high_risk_cnt = 0
-        if self.satifies_path_length_condition(graph):
+        if self.satisfies_cable_length_condition(graph):
             # Check for soma merges
             if len(graph.graph["soma_nodes"]) > 1:
                 self.remove_soma_merges(graph)
@@ -273,7 +274,7 @@ class GraphLoader:
             float
                 Distance between nodes.
             """
-            return geometry.dist(graph.graph["xyz"][i], graph.graph["xyz"][j])
+            return euclidean(graph.graph["xyz"][i], graph.graph["xyz"][j])
 
         # Initializations
         irreducible_nodes = set({source})
@@ -451,7 +452,7 @@ class GraphLoader:
                 soma_nodes.add(find_nearby_branching_node(graph, node, 20))
         return soma_nodes
 
-    def satifies_path_length_condition(self, graph):
+    def satisfies_cable_length_condition(self, graph):
         """
         Determines whether the total path length of the given graph is greater
         than "self.min_size".
@@ -467,7 +468,12 @@ class GraphLoader:
             Indication of whether the total path length of the given graph is
             greater than "self.min_size".
         """
-        return path_length(graph, self.min_size) > self.min_size
+        length = 0
+        for i, j in nx.dfs_edges(graph):
+            length += euclidean(graph.graph["xyz"][i], graph.graph["xyz"][j])
+            if length > self.min_size:
+                return True
+        return False
 
     def resample_curve_3d(self, graph, attrs, edge, n_pts):
         """
@@ -614,7 +620,7 @@ def dist(graph, i, j):
     float
         Euclidean distance between nodes i and j.
     """
-    return geometry.dist(graph.graph["xyz"][i], graph.graph["xyz"][j])
+    return euclidean(graph.graph["xyz"][i], graph.graph["xyz"][j])
 
 
 def edges_to_line_graph(edges):
@@ -657,7 +663,7 @@ def find_closest_node(graph, xyz):
     best_dist = np.inf
     best_node = None
     for i in graph.nodes:
-        cur_dist = geometry.dist(xyz, graph.graph["xyz"][i])
+        cur_dist = euclidean(xyz, graph.graph["xyz"][i])
         if cur_dist < best_dist:
             best_dist = cur_dist
             best_node = i
@@ -738,7 +744,7 @@ def find_nearby_branching_node(graph, root, max_depth=10):
 
         # Update queue
         for j in graph.neighbors(i):
-            dist_j = dist_i + dist(graph, i, j)
+            dist_j = dist_i + euclidean(graph, i, j)
             if dist_j < max_depth and j not in visited:
                 queue.append((j, dist_j))
                 visited.add(j)
@@ -821,32 +827,6 @@ def largest_components(graph, k):
     return node_ids
 
 
-def path_length(graph, max_length=np.inf):
-    """
-    Computes the path length of the given graph.
-
-    Parameters
-    ----------
-    graph : networkx.Graph
-        Graph whose nodes have an attribute called "xyz" which represents
-        a 3d coordinate.
-    max_length : float
-        Maximum physical distance to search along the graph. Limits traversal
-        depth and can improve performance.
-
-    Returns
-    -------
-    length : float
-        Path length of graph.
-    """
-    length = 0
-    for i, j in nx.dfs_edges(graph):
-        length += dist(graph, i, j)
-        if length > max_length:
-            break
-    return length
-
-
 def prune_branches(graph, depth):
     """
     Prunes branches with length less than "depth" microns.
@@ -863,7 +843,7 @@ def prune_branches(graph, depth):
         length = 0
         for (i, j) in nx.dfs_edges(graph, source=leaf):
             # Visit edge
-            length += dist(graph, i, j)
+            length += euclidean(graph.graph["xyz"][i], graph.graph["xyz"][j])
             if length > depth:
                 break
 
