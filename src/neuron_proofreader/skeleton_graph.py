@@ -19,7 +19,7 @@ import networkx as nx
 import numpy as np
 import zipfile
 
-from neuron_proofreader.utils import graph_util as gutil, img_util, util
+from neuron_proofreader.utils import geometry_util, graph_util, img_util, util
 
 
 class SkeletonGraph(nx.Graph):
@@ -82,7 +82,7 @@ class SkeletonGraph(nx.Graph):
 
         # Graph Loader
         anisotropy = anisotropy if use_anisotropy else (1.0, 1.0, 1.0)
-        self.graph_loader = gutil.GraphLoader(
+        self.graph_loader = graph_util.GraphLoader(
             anisotropy=anisotropy,
             min_size=min_size,
             node_spacing=node_spacing,
@@ -686,7 +686,7 @@ class SkeletonGraph(nx.Graph):
                 )
         return nodes
 
-    def nodes_within_distance(self, root, max_depth):
+    def nodes_within_distance(self, root, max_dist):
         """
         Gets nodes connected to the given root node up to a certain depth.
 
@@ -694,7 +694,7 @@ class SkeletonGraph(nx.Graph):
         ----------
         root : int
             Node ID and root of search.
-        max_depth : float
+        max_dist : float
             Maximum distance (in microns) between returned nodes and root.
 
         Returns
@@ -711,7 +711,7 @@ class SkeletonGraph(nx.Graph):
             # Populate queue
             for j in self.neighbors(i):
                 dist_j = dist_i + self.dist(i, j)
-                if dist_j < max_depth and j not in visited:
+                if dist_j < max_dist and j not in visited:
                     queue.append((j, dist_j))
                     visited.add(j)
         return list(visited)
@@ -749,6 +749,25 @@ class SkeletonGraph(nx.Graph):
                     queue.append((j, dist_j))
                     path.append(j)
         return path
+
+    def path_length(self, path):
+        """
+        Computes the length of the given path.
+
+        Parameters
+        ----------
+        path : List[int]
+            List of nodes that forms a path.
+
+        Returns
+        -------
+        Length of the given path.
+        """
+        if len(path) > 1:
+            diffs = self.node_xyz[path[1:]] - self.node_xyz[path[:-1]]
+            return np.sqrt(np.sum(diffs ** 2))
+        else:
+            return 0
 
     def rooted_subgraph(self, root, radius):
         """
@@ -795,25 +814,6 @@ class SkeletonGraph(nx.Graph):
         subgraph.node_xyz = self.node_xyz[idxs]
         return subgraph
 
-    def path_length(self, path):
-        """
-        Computes the length of the given path.
-
-        Parameters
-        ----------
-        path : List[int]
-            List of nodes that forms a path.
-
-        Returns
-        -------
-        Length of the given path.
-        """
-        if len(path) > 1:
-            diffs = self.node_xyz[path[1:]] - self.node_xyz[path[:-1]]
-            return np.sqrt(np.sum(diffs ** 2))
-        else:
-            return 0
-
     def set_kdtree(self):
         """
         Initializes KD-Tree from node xyz coordinates.
@@ -852,3 +852,20 @@ class SkeletonGraph(nx.Graph):
         summary.append(f"# Edges: {n_edges}")
         summary.append(f"Memory Consumption: {memory:.2f} GBs")
         return "\n".join(summary)
+
+    def tangent_from_leaf(self, leaf, max_depth=np.inf):
+        """
+        Computes the tangent vector of the path emanating from the given leaf.
+
+        Parameters
+        ----------
+        leaf : int
+            Node ID and starting point of path extracted.
+        max_depth : float
+            Maximum depth (in microns) of path extracted.
+
+        Returns
+        -------
+        """
+        path = self.path_from_leaf(leaf, max_depth=max_depth)
+        return geometry_util.tangent(self.node_xyz[np.array(path)])

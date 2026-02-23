@@ -71,8 +71,8 @@ class ProposalGenerator:
             with degree 2. Default is False.
         """
         # Initializations
-        self.set_kdtree()
         self.allow_nonleaf_targets = allow_nonleaf_targets
+        self.set_kdtree()
         iterator = self.graph.leaf_nodes()
         if self.graph.verbose:
             iterator = tqdm(iterator, desc="Proposal Generation")
@@ -141,7 +141,7 @@ class ProposalGenerator:
         """
         node_candidates = list()
         for node in self.get_nearby_nodes(leaf, radius):
-            # UPDATE - check whether to move to leaf if allowing leaf-branch connections
+            node = self.adjust_position(leaf, node, radius)
             if self.is_valid_proposal(leaf, node):
                 node_candidates.append(node)
         return node_candidates
@@ -178,6 +178,73 @@ class ProposalGenerator:
         return [val["node"] for val in pts_dict.values()]
 
     # --- Helpers ---
+    def adjust_position(self, leaf, node, radius):
+        """
+        Adjusts a candidate node by searching for a nearby leaf, or falling
+        back to angular alignment if none is found.
+
+        Parameters
+        ----------
+        leaf : int
+            Node ID of the leaf node.
+        node : int
+            Node ID of the candidate node.
+        radius : float
+            Maximum path distance (in microns) for searching neighboring
+            nodes.
+
+        Returns
+        -------
+        node : int
+            Node ID of candidate.
+        """
+        # Check if node is close to another leaf
+        queue = [(node, 0)]
+        visited = {node}
+        while queue:
+            # Visit node
+            i, dist_i = queue.pop()
+            if self.graph.degree[i] == 1:
+                return i
+
+            # Update queue
+            for j in self.graph.neighbors(i):
+                dist_j = dist_i + self.graph.dist(i, j)
+                if dist_j < radius and j not in visited:
+                    queue.append((j, dist_j))
+                    visited.add(j)
+        return self.maximize_branch_angle(leaf, node)
+
+    def maximize_branch_angle(self, leaf, node):
+        """
+        Selects a nearby node that maximizes the angular alignment with a
+        leaf's tangent.
+
+        Parameters
+        ----------
+        leaf : int
+            Node ID of the leaf node.
+        node : int
+            Node ID of the candidate node. The search for better candidates is
+            restricted to nodes within a fixed distance of this node.
+
+        Returns
+        -------
+        node : int
+            Node ID of the node that maximizes angular alignment with the leaf
+            tangent.
+        """
+        max_inner_product = 0
+        leaf_tangent = self.graph.tangent_from_leaf(leaf, max_depth=20)
+        for i in self.graph.nodes_within_distance(node, 30):
+            pts = [self.graph.node_xyz[i], self.graph.node_xyz[leaf]]
+            proposal_tangent = geometry_util.tangent(pts)
+            inner_product = abs(np.sum(leaf_tangent * proposal_tangent))
+            if inner_product > max_inner_product:
+                max_inner_product = inner_product
+                node = i
+        return node
+
     def is_valid_proposal(self, leaf, i):
         """
         Determines whether a pair of nodes satisfies the following:
@@ -226,10 +293,8 @@ class ProposalGenerator:
         else:
             nodes = list()
             for idx in self.kdtree.query_ball_point(xyz, radius):
-                xyz = self.kdtree.data[idx]
-                node = self.graph.closest_node(xyz)
+                node = self.graph.closest_node(self.kdtree.data[idx])
                 nodes.append(node)
-                assert self.graph.degree[node] == 1
             return nodes
 
     def select_closest_components(self, pts_dict):

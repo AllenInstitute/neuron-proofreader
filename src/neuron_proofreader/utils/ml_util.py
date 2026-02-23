@@ -63,6 +63,14 @@ class FeedForwardNet(nn.Module):
 
     @staticmethod
     def _init_weights(m):
+        """
+        Initializes weights for linear layers using Kaiming initialization.
+
+        Parameters
+        ----------
+        m : torch.nn.Module
+            Module to initialize.
+        """
         if isinstance(m, nn.Linear):
             nn.init.kaiming_normal_(m.weight, nonlinearity="leaky_relu")
             if m.bias is not None:
@@ -116,8 +124,24 @@ def init_mlp(input_dim, hidden_dim, output_dim, dropout=0.1):
 
 # --- Data Structures ---
 class TensorDict(dict):
+    """
+    A class for model inputs in a dictionary.
+    """
 
     def to(self, device):
+        """
+        Moves dictionary values to the specified GPU device.
+
+        Parameters
+        ----------
+        device : str
+            Name of GPU device to move inputs to.
+
+        Returns
+        -------
+        TensorDict
+            Dictionary with values moved to the specified GPU device.
+        """
         return TensorDict({k: self.move(v, device) for k, v in self.items()})
 
     def move(self, v, device):
