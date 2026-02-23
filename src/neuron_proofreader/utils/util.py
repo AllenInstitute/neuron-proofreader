@@ -589,6 +589,9 @@ def find_best(my_dict, maximize=True):
         Key associated with the longest list or largest integer in "my_dict".
     """
     def score(v):
+        """
+        Assigns a score to a given value.
+        """
         return v if isinstance(v, (int, float)) else len(v)
 
     optimize = max if maximize else min

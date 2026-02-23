@@ -122,6 +122,23 @@ def get_edge_trace(graph, color="blue", edges=list(), name=None):
 
 
 def get_node_trace(graph, nodes, color="black"):
+    """
+    Gets a scatter plot trace for the given nodes.
+
+    Parameters
+    ----------
+    graph : SkeletonGraph
+        Graph containing the given nodes.
+    nodes : List[int]
+        Nodes to be visualized.
+    color : str, optional
+        Color that nodes are plotted with. Default is "black".
+
+    Returns
+    -------
+    trace : go.Scatter3d
+        Scatter plot trace for the given nodes.
+    """
     nodes = np.array(nodes)
     trace = go.Scatter3d(
         x=graph.node_xyz[nodes, 0],
@@ -136,6 +153,21 @@ def get_node_trace(graph, nodes, color="black"):
 
 
 def get_proposal_traces(graph, proposals):
+    """
+    Gets scatter plot traces for the given proposals.
+
+    Parameters
+    ----------
+    graph : ProposalGraph
+        Graph containing the given proposals.
+    proposals : List[Frozenset[int]]
+        Proposals to be visualized.
+
+    Returns
+    -------
+    traces : List[go.Scatter3d]
+        Scatter plots of the given proposals.
+    """
     traces = []
     for proposal in map(tuple, proposals):
         xyz = graph.node_xyz[np.array(proposal)]

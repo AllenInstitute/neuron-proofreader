@@ -271,7 +271,86 @@ class SkeletonGraph(nx.Graph):
         if relabel_nodes:
             self.relabel_nodes()
 
-    # --- Getters ---
+    # --- Writer ---
+    def to_zipped_swcs(self, zip_path, preserve_radius=False):
+        """
+        Writes the graph to a ZIP archive of SWC files, where each file
+        corresponds to a single connected component.
+
+        Parameters
+        ----------
+        zip_path : str
+            Path to ZIP archive that SWC files are to be written to.
+        preserve_radius : bool, optional
+            Indication of whether to set radius as node radius or 2μm.
+            Default is False.
+        """
+        with zipfile.ZipFile(zip_path, "w") as zip_writer:
+            for nodes in map(list, nx.connected_components(self)):
+                root = util.sample_once(nodes)
+                self.component_to_zipped_swc(
+                    zip_writer, root, preserve_radius=preserve_radius
+                )
+
+    def component_to_zipped_swc(
+        self, zip_writer, root, preserve_radius=False
+    ):
+        """
+        Writes the connected component containing the given root node to a
+        zipped SWC file.
+
+        Parameters
+        ----------
+        zip_writer : zipfile.ZipFile
+            A ZipFile object that will store the generated SWC file.
+        root : int
+            Root node of connected component to be written to an SWC file.
+        preserve_radius : bool, optional
+            Indication of whether to preserve radii of nodes or use default
+            radius of 2μm. Default is False.
+        """
+        # Subroutines
+        def write_entry(node, parent):
+            """
+            Writes a line of an SWC file for the given node.
+
+            Parameters
+            ----------
+            node : int
+                Node ID.
+            parent : int
+                Node ID of parent.
+            """
+            x, y, z = tuple(self.node_xyz[node])
+            r = self.node_radius[node] if preserve_radius else 2
+            node_id = cnt
+            parent_id = node_to_idx[parent]
+            node_to_idx[node] = node_id
+            text_buffer.write(f"\n{node_id} 2 {x} {y} {z} {r} {parent_id}")
+
+        # Main
+        with StringIO() as text_buffer:
+            # Preamble
+            text_buffer.write("# id, type, z, y, x, r, pid")
+
+            # Write entries
+            cnt = 1
+            node_to_idx = defaultdict(lambda: -1)
+            for i, j in nx.dfs_edges(self, source=root):
+                # Special Case: Root
+                if len(node_to_idx) == 0:
+                    write_entry(i, -1)
+
+                # General Case: Non-Root
+                cnt += 1
+                write_entry(j, i)
+
+            # Finish
+            filename = self.node_swc_id(i)
+            filename = util.set_zip_path(zip_writer, filename, ".swc")
+            zip_writer.writestr(filename, text_buffer.getvalue())
+
+    # --- Helpers ---
     def branching_nodes(self):
         """
         Gets all branching nodes in the graph.
@@ -283,7 +362,116 @@ class SkeletonGraph(nx.Graph):
         """
         return [i for i in self.nodes if self.degree[i] > 2]
 
+    def cable_length(self, max_depth=np.inf, root=None):
+        """
+        Computes the cable length of the graph. If a root is provided, then
+        cable length of the connected component containing the given root is
+        computed.
+
+        Parameters
+        ----------
+        max_depth : float, optional
+            Maximum depth (in microns) to traverse before stopping. Useful for
+            checking if cable length is above a threshold. Default is np.inf.
+        root : int
+            Node contained in connected component to be searched. Default is
+            None.
+
+        Returns
+        -------
+        cable_length : float
+            Cable length of the connected component containing the given root
+            node.
+        """
+        cable_length = 0
+        for i, j in nx.dfs_edges(self, source=root):
+            cable_length += self.dist(i, j)
+            if cable_length > max_depth:
+                break
+        return cable_length
+
+    def clip_to_bbox(self, metadata_path):
+        """
+        Clips skeletons to the bounding box defined by an origin and shape
+        stored in the file at the given path.
+
+        Parameters
+        ----------
+        metadata_path : str
+            Path to JSON file containing origin and shape of bounding box to
+            clip skeletons to.
+        """
+        bucket_name, path = util.parse_cloud_path(metadata_path)
+        if util.check_gcs_file_exists(bucket_name, path):
+            # Extract bounding box
+            metadata = util.read_json_from_gcs(bucket_name, path)
+            origin = metadata["chunk_origin"][::-1]
+            shape = metadata["chunk_shape"][::-1]
+
+            # Clip graph
+            nodes = list()
+            for i in self.nodes:
+                voxel = np.array(self.node_voxel(i))
+                if not img_util.is_contained(voxel - origin, shape):
+                    nodes.append(i)
+            self.remove_nodes_from(nodes)
+            self.relabel_nodes()
+
+    def clip_to_groundtruth(self, gt_graph, dist):
+        """
+        Removes nodes that are more than "dist" microns from "gt_graph".
+
+        Parameters
+        ----------
+        gt_graph : SkeletonGraph
+            Ground truth graph used as clipping reference.
+        dist : float
+            Distance threshold (in microns) that determines what nodes to
+            remove.
+        """
+        # Remove nodes too far from ground truth
+        d_gt, _ = gt_graph.kdtree.query(self.node_xyz)
+        nodes = np.where(d_gt > dist)[0]
+        self.remove_nodes_from(nodes)
+
+        # Remove resulting small connected components
+        for nodes in list(nx.connected_components(self)):
+            if len(nodes) < 30:
+                self.remove_nodes_from(nodes)
+        self.relabel_nodes()
+
+    def closest_node(self, xyz):
+        """
+        Finds the closest node to the given xyz coordinate.
+
+        Parameters
+        ----------
+        xyz : ArrayLike
+            Coordinate to be queried.
+
+        Returns
+        -------
+        node : int
+            Closest node to the given xyz coordinate.
+        """
+        assert self.kdtree, "KD-Tree attribute has not be set!"
+        _, node = self.kdtree.query(xyz)
+        return node
+
     def component_id_from_swc_id(self, query_swc_id):
+        """
+        Gets the component ID corresponding to the given SWC ID.
+
+        Parameters
+        ----------
+        query_swc_id : str
+            SWC ID to query.
+
+        Returns
+        -------
+        component_id : int
+            Component ID corresponding to the given SWC ID.
+        """
         for component_id, swc_id in self.component_id_to_swc_id.items():
             if query_swc_id == swc_id:
                 return component_id
@@ -312,6 +500,71 @@ class SkeletonGraph(nx.Graph):
                     queue.append(j)
                     visited.add(j)
         return visited
+
+    def dist(self, i, j):
+        """
+        Computes the Euclidean distance between nodes "i" and "j".
+
+        Parameters
+        ----------
+        i : int
+            Node ID.
+        j : int
+            Node ID.
+
+        Returns
+        -------
+        float
+            Euclidean distance between nodes "i" and "j".
+        """
+        return distance.euclidean(self.node_xyz[i], self.node_xyz[j])
+
+    def get_swc_ids(self):
+        """
+        Gets the set of all unique SWC IDs of nodes in the graph.
+
+        Returns
+        -------
+        Set[str]
+            Set of all unique SWC IDs of nodes in the graph.
+        """
+        return set(self.component_id_to_swc_id.values())
+
+    def get_irreducible_edge(self, node):
+        """
+        Finds the irreducible edge containing the given node.
+
+        Parameters
+        ----------
+        node : int
+            Node ID.
+
+        Returns
+        -------
+        edge : Tuple[int]
+            Irreducible edge containing the given node.
+        """
+        # Check node is non-branhching
+        assert self.degree[node] < 3
+
+        # Search
+        edge = list()
+        queue = [node]
+        visited = set(queue)
+        while queue:
+            # Visit node
+            i = queue.pop()
+            if self.degree[i] != 2:
+                edge.append(i)
+                continue
+
+            # Update queue
+            for j in self.neighbors(i):
+                if j not in visited:
+                    queue.append(j)
+                    visited.add(j)
+        assert len(edge) == 2
+        return edge
 
     def leaf_nodes(self):
         """
@@ -435,6 +688,21 @@ class SkeletonGraph(nx.Graph):
         return nodes
 
     def nodes_within_distance(self, root, max_depth):
+        """
+        Gets nodes connected to the given root node up to a certain depth.
+
+        Parameters
+        ----------
+        root : int
+            Node ID and root of search.
+        max_depth : float
+            Maximum distance (in microns) between returned nodes and root.
+
+        Returns
+        -------
+        visited : List[int]
+            Nodes connected to the given root node up to a certain depth.
+        """
         queue = [(root, 0)]
         visited = {root}
         while queue:
@@ -450,6 +718,23 @@ class SkeletonGraph(nx.Graph):
         return list(visited)
 
     def path_from_leaf(self, leaf, max_depth=np.inf):
+        """
+        Gets the path of nodes emanating from the given leaf up to a certain
+        depth if "max_depth" is provided.
+
+        Parameters
+        ----------
+        leaf : int
+            Node ID and start of path.
+        max_depth : float, optional
+            Maximum length (in microns) of path returned. Default is np.inf.
+
+        Returns
+        -------
+        path : List[int]
+            Path of nodes emanating from the given leaf up to a certain depth
+            if "max_depth" is provided.
+        """
         queue = [(leaf, 0)]
         path = [leaf]
         while queue:
@@ -511,239 +796,6 @@ class SkeletonGraph(nx.Graph):
         subgraph.node_xyz = self.node_xyz[idxs]
         return subgraph
 
-    def get_swc_ids(self):
-        """
-        Gets the set of all unique SWC IDs of nodes in the graph.
-
-        Returns
-        -------
-        Set[str]
-            Set of all unique SWC IDs of nodes in the graph.
-        """
-        return set(self.component_id_to_swc_id.values())
-
-    # --- Writer ---
-    def to_zipped_swcs(self, zip_path, preserve_radius=False):
-        """
-        Writes the graph to a ZIP archive of SWC files, where each file
-        corresponds to a connected component.
-
-        Parameters
-        ----------
-        zip_path : str
-            Path to ZIP archive that SWC files are to be written to.
-        preserve_radius : bool, optional
-            Indication of whether to set radius as node radius or 2μm.
-            Default is False.
-        """
-        with zipfile.ZipFile(zip_path, "w") as zip_writer:
-            for nodes in map(list, nx.connected_components(self)):
-                root = util.sample_once(nodes)
-                self.component_to_zipped_swc(
-                    zip_writer, root, preserve_radius=preserve_radius
-                )
-
-    def component_to_zipped_swc(
-        self, zip_writer, root, preserve_radius=False
-    ):
-        """
-        Writes the connected component containing the given root node to a
-        zipped SWC file.
-
-        Parameters
-        ----------
-        zip_writer : zipfile.ZipFile
-            A ZipFile object that will store the generated SWC file.
-        root : int
-            Root node of connected component to be written to an SWC file.
-        preserve_radius : bool, optional
-            Indication of whether to preserve radii of nodes or use default
-            radius of 2μm. Default is False.
-        """
-        # Subroutines
-        def write_entry(node, parent):
-            """
-            Writes a line of an SWC file for the given node.
-
-            Parameters
-            ----------
-            node : int
-                Node ID.
-            parent : int
-                Node ID of parent.
-            """
-            x, y, z = tuple(self.node_xyz[node])
-            r = self.node_radius[node] if preserve_radius else 2
-            node_id = cnt
-            parent_id = node_to_idx[parent]
-            node_to_idx[node] = node_id
-            text_buffer.write(f"\n{node_id} 2 {x} {y} {z} {r} {parent_id}")
-
-        # Main
-        with StringIO() as text_buffer:
-            # Preamble
-            text_buffer.write("# id, type, z, y, x, r, pid")
-
-            # Write entries
-            cnt = 1
-            node_to_idx = defaultdict(lambda: -1)
-            for i, j in nx.dfs_edges(self, source=root):
-                # Special Case: Root
-                if len(node_to_idx) == 0:
-                    write_entry(i, -1)
-
-                # General Case: Non-Root
-                cnt += 1
-                write_entry(j, i)
-
-            # Finish
-            filename = self.node_swc_id(i)
-            filename = util.set_zip_path(zip_writer, filename, ".swc")
-            zip_writer.writestr(filename, text_buffer.getvalue())
-
-    # --- Helpers ---
-    def cable_length(self, max_depth=np.inf, root=None):
-        """
-        Computes the cable length of the graph. If a root is provided, then
-        cable length of the connected component containing the given root is
-        computed.
-
-        Parameters
-        ----------
-        max_depth : float, optional
-            Maximum depth (in microns) to traverse before stopping. Useful for
-            checking if cable length is above a threshold. Default is np.inf.
-        root : int
-            Node contained in connected component to be searched. Default is
-            None.
-
-        Returns
-        -------
-        cable_length : float
-            Cable length of the connected component containing the given root
-            node.
-        """
-        cable_length = 0
-        for i, j in nx.dfs_edges(self, source=root):
-            cable_length += self.dist(i, j)
-            if cable_length > max_depth:
-                break
-        return cable_length
-
-    def clip_to_bbox(self, metadata_path):
-        bucket_name, path = util.parse_cloud_path(metadata_path)
-        if util.check_gcs_file_exists(bucket_name, path):
-            # Extract bounding box
-            metadata = util.read_json_from_gcs(bucket_name, path)
-            origin = metadata["chunk_origin"][::-1]
-            shape = metadata["chunk_shape"][::-1]
-
-            # Clip graph
-            nodes = list()
-            for i in self.nodes:
-                voxel = np.array(self.node_voxel(i))
-                if not img_util.is_contained(voxel - origin, shape):
-                    nodes.append(i)
-            self.remove_nodes_from(nodes)
-            self.relabel_nodes()
-
-    def clip_to_groundtruth(self, gt_graph, dist):
-        """
-        Removes nodes that are more than "dist" microns from "gt_graph".
-
-        Parameters
-        ----------
-        gt_graph : SkeletonGraph
-            Ground truth graph used as clipping reference.
-        dist : float
-            Distance threshold (in microns) that determines what nodes to
-            remove.
-        """
-        # Remove nodes too far from ground truth
-        d_gt, _ = gt_graph.kdtree.query(self.node_xyz)
-        nodes = np.where(d_gt > dist)[0]
-        self.remove_nodes_from(nodes)
-
-        # Remove resulting small connected components
-        for nodes in list(nx.connected_components(self)):
-            if len(nodes) < 30:
-                self.remove_nodes_from(nodes)
-        self.relabel_nodes()
-
-    def closest_node(self, xyz):
-        """
-        Finds the closest node to the given xyz coordinate.
-
-        Parameters
-        ----------
-        xyz : ArrayLike
-            Coordinate to be queried.
-
-        Returns
-        -------
-        node : int
-            Closest node to the given xyz coordinate.
-        """
-        assert self.kdtree, "KD-Tree attribute has not be set!"
-        _, node = self.kdtree.query(xyz)
-        return node
-
-    def dist(self, i, j):
-        """
-        Computes the Euclidean distance between nodes "i" and "j".
-
-        Parameters
-        ----------
-        i : int
-            Node ID.
-        j : int
-            Node ID.
-
-        Returns
-        -------
-        float
-            Euclidean distance between nodes "i" and "j".
-        """
-        return distance.euclidean(self.node_xyz[i], self.node_xyz[j])
-
-    def get_irreducible_edge(self, node):
-        # Check node is non-branhching
-        assert self.degree[node] < 3
-
-        # Search
-        edge = list()
-        queue = [node]
-        visited = set(queue)
-        while queue:
-            # Visit node
-            i = queue.pop()
-            if self.degree[i] != 2:
-                edge.append(i)
-                continue
-
-            # Update queue
-            for j in self.neighbors(i):
-                if j not in visited:
-                    queue.append(j)
-                    visited.add(j)
-        assert len(edge) == 2
-        return edge
-
-    def get_summary(self, prefix=""):
-        # Compute values
-        n_components = format(nx.number_connected_components(self), ",")
-        n_nodes = format(self.number_of_nodes(), ",")
-        n_edges = format(self.number_of_edges(), ",")
-        memory = util.get_memory_usage()
-
-        # Compile results
-        summary = [f"{prefix} Graph"]
-        summary.append(f"# Connected Components: {n_components}")
-        summary.append(f"# Nodes: {n_nodes}")
-        summary.append(f"# Edges: {n_edges}")
-        summary.append(f"Memory Consumption: {memory:.2f} GBs")
-        return "\n".join(summary)
-
     def path_length(self, path):
         """
         Computes the length of the given path.
@@ -757,14 +809,46 @@ class SkeletonGraph(nx.Graph):
         -------
         Length of the given path.
         """
-        path_length = 0
         if len(path) > 1:
-            for i, j in zip(path[1:], path[:-1]):
-                path_length += self.dist(i, j)
-        return path_length
+            return np.sqrt(np.sum(abs(path[1:] - path[:-1]) ** 2))
+        else:
+            return 0
 
     def set_kdtree(self):
         """
         Initializes KD-Tree from node xyz coordinates.
         """
         self.kdtree = KDTree(self.node_xyz)
+
+    def summary(self, prefix=""):
+        """
+        Generate a human-readable summary of the graph.
+
+        Parameters
+        ----------
+        prefix : str, optional
+            Optional string to prepend to the summary title.
+
+        Returns
+        -------
+        summary : str
+            Formatted multi-line string containing:
+            - Graph label
+            - Number of connected components
+            - Number of nodes
+            - Number of edges
+            - Memory consumption (in GB)
+        """
+        # Compute values
+        n_components = format(nx.number_connected_components(self), ",")
+        n_nodes = format(self.number_of_nodes(), ",")
+        n_edges = format(self.number_of_edges(), ",")
+        memory = util.get_memory_usage()
+
+        # Compile results
+        summary = [f"{prefix} Graph"]
+        summary.append(f"# Connected Components: {n_components}")
+        summary.append(f"# Nodes: {n_nodes}")
+        summary.append(f"# Edges: {n_edges}")
+        summary.append(f"Memory Consumption: {memory:.2f} GBs")
+        return "\n".join(summary)

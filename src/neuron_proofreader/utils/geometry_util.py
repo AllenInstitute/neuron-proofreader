@@ -423,6 +423,22 @@ def is_double(graph, nodes):
 
 # --- Miscellaneous ---
 def closest_pair(pts1, pts2):
+    """
+    Find the indices of the closest pair of points between two point sets.
+
+    Parameters
+    ----------
+    pts1 : numpy.ndarray
+        First set of points with shape (N, D).
+    pts2 : numpy.ndarray
+        Second set of points with shape (M, N).
+
+    Returns
+    -------
+    (i, j) : Tuple[int]
+        Indices such that "pts1[i]" and "pts2[j]" are the closest pair of
+        points between the two sets.
+    """
     diff = pts1[:, None, :] - pts2[None, :, :]
     dists_sq = np.sum(diff**2, axis=2)
     return np.unravel_index(np.argmin(dists_sq), dists_sq.shape)
