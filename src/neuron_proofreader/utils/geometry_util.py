@@ -409,7 +409,6 @@ def is_double(graph, nodes):
             j = idxs[idx]
             cid_to_dists[graph.node_component_id[j]].append(graph.dist(i, j))
 
-
     # Determine if double
     for dists in cid_to_dists.values():
         if len(dists) > 10:

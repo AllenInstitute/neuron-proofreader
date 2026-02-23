@@ -24,7 +24,6 @@ class ProposalGenerator:
     def __init__(
         self,
         graph,
-        allow_nonleaf_targets=False,
         max_attempts=2,
         max_proposals_per_leaf=3,
         min_size_with_proposals=0,
@@ -37,9 +36,6 @@ class ProposalGenerator:
         ----------
         graph : ProposalGraph
             Graph that proposals will be generated for.
-        allow_nonleaf_targets : bool, optional
-            Indication of whether to generate proposals between leaf and nodes
-            with degree 2. Default is False.
         max_attempts : int, optional
             Number of attempts made to generate proposals from a node with
             increasing search radii. Default is 2.
@@ -52,7 +48,7 @@ class ProposalGenerator:
             Default is 2.
         """
         # Instance attributes
-        self.allow_nonleaf_targets = allow_nonleaf_targets
+        self.allow_nonleaf_targets = None
         self.graph = graph
         self.kdtree = None
         self.max_attempts = max_attempts
@@ -60,7 +56,7 @@ class ProposalGenerator:
         self.min_size_with_proposals = min_size_with_proposals
         self.search_scaling_factor = search_scaling_factor
 
-    def __call__(self, initial_radius):
+    def __call__(self, initial_radius, allow_nonleaf_targets=False):
         """
         Generates edge proposals between fragments within the given search
         radius.
@@ -70,9 +66,13 @@ class ProposalGenerator:
         initial_radius : float
             Initial search radius used to generate proposals between endpoints
             of proposal.
+        allow_nonleaf_targets : bool, optional
+            Indication of whether to generate proposals between leaf and nodes
+            with degree 2. Default is False.
         """
         # Initializations
         self.set_kdtree()
+        self.allow_nonleaf_targets = allow_nonleaf_targets
         iterator = self.graph.leaf_nodes()
         if self.graph.verbose:
             iterator = tqdm(iterator, desc="Proposal Generation")
@@ -205,6 +205,21 @@ class ProposalGenerator:
             return False
 
     def query_nbhd(self, node, radius):
+        """
+        Queries nodes within a spatial neighborhood of a given node.
+
+        Parameters
+        ----------
+        node : int
+            Node ID.
+        radius : float
+            Search radius (in microns) of the neighborhood.
+
+        Returns
+        -------
+        nodes : List[int]
+            Node IDs within the specified radius.
+        """
         xyz = self.graph.node_xyz[node]
         if self.allow_nonleaf_targets:
             return self.kdtree.query_ball_point(xyz, radius)

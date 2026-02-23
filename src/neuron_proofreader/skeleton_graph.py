@@ -112,13 +112,13 @@ class SkeletonGraph(nx.Graph):
         self.node_component_id = np.zeros((n), dtype=int)
         self.node_radius = np.zeros((n), dtype=np.float16)
         self.node_xyz = np.zeros((n, 3), dtype=np.float32)
-        self.set_kdtree()
 
         # Add irreducibles to graph
         component_id = 0
         while irreducibles:
             self.add_connected_component(irreducibles.pop(), component_id)
             component_id += 1
+        self.set_kdtree()
 
     def add_connected_component(self, irreducibles, component_id):
         """
@@ -252,8 +252,7 @@ class SkeletonGraph(nx.Graph):
         self.node_component_id = self.node_component_id[old_node_ids]
 
         self.reassign_component_ids()
-        if self.kdtree:
-            self.set_kdtree()
+        self.set_kdtree()
         return old_to_new
 
     def remove_nodes(self, nodes, relabel_nodes=True):
@@ -810,7 +809,8 @@ class SkeletonGraph(nx.Graph):
         Length of the given path.
         """
         if len(path) > 1:
-            return np.sqrt(np.sum(abs(path[1:] - path[:-1]) ** 2))
+            diffs = self.node_xyz[path[1:]] - self.node_xyz[path[:-1]]
+            return np.sqrt(np.sum(diffs ** 2))
         else:
             return 0
 

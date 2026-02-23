@@ -48,8 +48,6 @@ def run(gt_graph, pred_graph):
         Note: a model will learn to accept these proposals.
     """
     # Initializations
-    gt_graph.set_kdtree()
-    pred_graph.set_kdtree()
     pred_to_gt = get_pred_to_gt_mapping(gt_graph, pred_graph)
 
     # Main
@@ -223,7 +221,7 @@ def is_structure_consistent(gt_graph, pred_graph, gt_id, proposal):
         path_jk = get_path(gt_graph, k, pred_graph.node_xyz[j])
 
         # Compare distances
-        gt_dist = gt_graph.path_length(path_ik + path_jk[::-1])
+        gt_dist = gt_graph.path_length(np.array(path_ik + path_jk[::-1]))
         proposal_dist = pred_graph.proposal_length(proposal)
         return abs(proposal_dist - gt_dist) < 40
 

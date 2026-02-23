@@ -163,6 +163,9 @@ class ProposalGraph(SkeletonGraph):
         return "\n".join(results)
 
     def relabel_nodes(self):
+        """
+        Reassigns contiguous node IDs and update all dependent structures.
+        """
         # Call parent class
         old_proposals = self.list_proposals()
         old_to_new = super().relabel_nodes()
@@ -198,20 +201,15 @@ class ProposalGraph(SkeletonGraph):
         ----------
         search_radius : float
             Search radius used to generate proposals.
-        gt_graph : networkx.Graph, optional
-            Ground truth graph. Default is None.
         """
-        # Initializations
-        self.set_kdtree()
-        self.search_radius = search_radius
-
         # Proposal generation
         proposals = self.proposal_generator(search_radius)
+        self.search_radius = search_radius
         self.store_proposals(proposals)
         self.trim_proposals()
         self.relabel_nodes()
 
-        # Set groundtruth
+        # Set groundtruth (if applicable)
         if self.gt_path:
             gt_graph = SkeletonGraph(anisotropy=self.anisotropy)
             gt_graph.load(self.gt_path)
@@ -219,12 +217,12 @@ class ProposalGraph(SkeletonGraph):
 
     def sorted_proposals(self):
         """
-        Return proposals sorted by physical length.
+        Returns proposals sorted by physical length.
 
         Returns
         -------
         List[Frozenset[int]]
-            List of proposals sorted by phyiscal length.
+            Proposals sorted by physical length.
         """
         proposals = self.list_proposals()
         lengths = [self.proposal_length(p) for p in proposals]
@@ -248,14 +246,14 @@ class ProposalGraph(SkeletonGraph):
         Returns
         -------
         bool
-            Indication of whether both nodes in a proposal are leafs.
+            True if both nodes in a proposal are leafs; otherwise, False.
         """
         i, j = tuple(proposal)
         return self.degree[i] == 1 and self.degree[j] == 1
 
     def is_single_proposal(self, proposal):
         """
-        Determines whether "proposal" is the only proposal generated for the
+        Checks if "proposal" is the only proposal generated for the
         corresponding nodes.
 
         Parameters
@@ -266,8 +264,8 @@ class ProposalGraph(SkeletonGraph):
         Returns
         -------
         bool
-            Indiciation of "proposal" is the only proposal generated for the
-            corresponding nodes.
+            True if "proposal" is the only proposal generated for the
+            corresponding nodes; otherwise, False
         """
         i, j = tuple(proposal)
         single_i = len(self.node_proposals[i]) == 1
