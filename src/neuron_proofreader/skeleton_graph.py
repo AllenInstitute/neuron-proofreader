@@ -769,6 +769,36 @@ class SkeletonGraph(nx.Graph):
         else:
             return 0
 
+    def path_thru_node(self, i, max_depth=np.inf):
+        if self.degree[i] == 1:
+            return self.path_from_leaf(i, max_depth)
+        else:
+            assert self.degree[i] == 2
+            j, k = self.neighbors(i)
+            path_ij = self.directed_path(i, j, max_depth=max_depth)
+            path_ik = self.directed_path(i, k, max_depth=max_depth)
+            return path_ij[::-1] + path_ik[1:]
+
+    def directed_path(self, start_node, next_node, max_depth=np.inf):
+        queue = [(next_node, 0)]
+        visited = [start_node, next_node]
+        path = list()
+        while queue:
+            # Visit node
+            i, dist_i = queue.pop()
+            if self.degree[i] != 2:
+                return path
+            else:
+                path.append(i)
+
+            # Update queue
+            for j in self.neighbors(i):
+                dist_j = dist_i + self.dist(i, j)
+                if dist_j < max_depth and j not in visited:
+                    queue.append((j, dist_j))
+                    visited.append(j)
+        return visited
+
     def rooted_subgraph(self, root, radius):
         """
         Gets a rooted subgraph with the given radius (in microns).

@@ -388,25 +388,24 @@ class ProposalGraph(SkeletonGraph):
     def proposal_directionals(self, proposal, depth):
         # Extract points along branches
         i, j = tuple(proposal)
-        xyz_list_i = self.truncated_edge_attr_xyz(i, depth)
-        xyz_list_j = self.truncated_edge_attr_xyz(j, depth)
-        origin = self.proposal_midpoint(proposal)
+        path_i = self.path_thru_node(i, depth)
+        path_j = self.path_thru_node(j, depth)
+        path_xyz_i = self.node_xyz[np.array(path_i)]
+        path_xyz_j = self.node_xyz[np.array(path_j)]
+        print("Path Lengths:", len(path_i), len(path_j))
 
         # Compute tangent vectors - branches
-        direction_i = geometry.get_directional(xyz_list_i, origin, depth)
-        direction_j = geometry.get_directional(xyz_list_j, origin, depth)
-        direction = geometry.tangent(self.proposal_attr(proposal, "xyz"))
-        if np.isnan(direction).any():
-            direction[0] = 0
-            direction[1] = 0
+        dir_i = geometry.tangent(path_xyz_i)
+        dir_j = geometry.tangent(path_xyz_j)
+        dir_proposal = geometry.tangent(self.proposal_attr(proposal, "xyz"))
 
         # Compute features
-        dot_i = abs(np.dot(direction, direction_i))
-        dot_j = abs(np.dot(direction, direction_j))
+        dot_i = abs(np.dot(dir_proposal, dir_i))
+        dot_j = abs(np.dot(dir_proposal, dir_j))
         if self.is_simple(proposal):
-            dot_ij = np.dot(direction_i, direction_j)
+            dot_ij = np.dot(dir_i, dir_j)
         else:
-            dot_ij = np.dot(direction_i, direction_j)
+            dot_ij = np.dot(dir_i, dir_j)
             if not self.is_simple(proposal):
                 dot_ij = max(dot_ij, -dot_ij)
         return np.array([dot_i, dot_j, dot_ij])
@@ -418,67 +417,7 @@ class ProposalGraph(SkeletonGraph):
         i, j = tuple(proposal)
         return geometry.midpoint(self.node_xyz[i], self.node_xyz[j])
 
-    def truncated_edge_attr_xyz(self, i, depth):
-        xyz_path_list = self.edge_attr(i, "xyz")
-        return [geometry.truncate_path(path, depth) for path in xyz_path_list]
-
     # --- Helpers ---
-    def node_attr(self, i, key):
-        if key == "xyz":
-            return self.node_xyz[i]
-        elif key == "radius":
-            return self.node_radius[i]
-        else:
-            return self.nodes[i][key]
-
-    def edge_attr(self, i, key="xyz", ignore=False):
-        """
-        Gets the edge attribute specified by "key" for all edges connected to
-        the given node.
-
-        Parameters
-        ----------
-        i : int
-            Node for which the edge attributes are to be retrieved.
-        key : str, optional
-            Key specifying the type of edge attribute to retrieve. The default
-            is "xyz".
-        ignore : bool, optional
-            If True, it will only consider direct neighbors of node "i". If
-            False, the method will follow add the edge attributes along the
-            path of chain-like connections from node "i" to its neighbors,
-            provided that the neighbor nodes have degree 2.
-
-        Returns
-        -------
-        List[numpy.ndarray]
-            Edge attribute specified by "key" for all edges connected to the
-            given node.
-        """
-        attrs = list()
-        for j in self.neighbors(i):
-            attr_ij = self.orient_edge_attr((i, j), i, key=key)
-            if not ignore:
-                root = i
-                while self.degree[j] == 2:
-                    k = [k for k in self.neighbors(j) if k != root][0]
-                    attr_jk = self.orient_edge_attr((j, k), j, key=key)
-                    if key == "xyz":
-                        attr_ij = np.vstack([attr_ij, attr_jk])
-                    else:
-                        attr_ij = np.concatenate((attr_ij, attr_jk))
-                    root = j
-                    j = k
-            attrs.append(attr_ij)
-        return attrs
-
-    def edge_length(self, edge):
-        xyz = self.edges[edge]["xyz"]
-        if len(xyz) < 2:
-            return 0.0
-        else:
-            return np.linalg.norm(xyz[1:] - xyz[:-1], axis=1).sum()
-
     def find_fragments_near_xyz(self, query_xyz, max_dist):
         hits = dict()
         xyz_list = geometry.query_ball(self.kdtree, query_xyz, max_dist)
@@ -505,13 +444,6 @@ class ProposalGraph(SkeletonGraph):
             False otherwise.
         """
         return self.node_component_id[i] in self.soma_ids
-
-    def orient_edge_attr(self, edge, i, key="xyz"):
-        node_attr = self.node_attr(i, key)
-        if (self.edges[edge][key][0] == node_attr).all():
-            return self.edges[edge][key]
-        else:
-            return np.flip(self.edges[edge][key], axis=0)
 
     def update_component_ids(self, component_id, root):
         """

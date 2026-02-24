@@ -18,110 +18,6 @@ import networkx as nx
 import numpy as np
 
 
-# --- Directionals ---
-def get_directional(branches, origin, depth):
-    """
-    Computes the directional vector of a branch or bifurcation in a neurograph
-    relative to a specified origin.
-
-    Parameters
-    ----------
-    neurograph : Neurograph
-        The neurograph object containing the branches.
-    origin : numpy.ndarray
-        The origin point xyz relative to which the directional vector is
-        computed.
-    depth : numpy.ndarry
-        Size of the window in microns around the branch or bifurcation to
-        consider for computing the directional vector.
-
-    Returns
-    -------
-    numpy.ndarray
-        Directional vector of the branch or bifurcation relative to specified
-        origin.
-    """
-    branches = [shift_path(b, origin) for b in branches]
-    if len(branches) == 1:
-        return tangent(truncate_path(branches[0], depth))
-    else:
-        branch_1 = truncate_path(branches[0], depth)
-        branch_2 = truncate_path(branches[1], depth)
-        return tangent(np.concatenate((branch_1, branch_2)))
-
-
-def compute_svd(xyz):
-    """
-    Compute singular value decomposition (svd) of an NxD array where N is the
-    number of points and D is the dimension of the space.
-
-    Parameters
-    ----------
-    xyz : numpy.ndarray
-        Array containing data points.
-
-    Returns
-    -------
-    numpy.ndarry
-        Unitary matrix having left singular vectors as columns. Of shape
-        (N, N) or (N, min(N, D)), depending on full_matrices.
-    numpy.ndarray
-        Singular values, sorted in non-increasing order. Of shape (K,), with
-        K = min(N, D).
-    numpy.ndarray
-        Unitary matrix having right singular vectors as rows. Of shape (D, D)
-        or (K, D) depending on full_matrices.
-    """
-    xyz = xyz - np.mean(xyz, axis=0)
-    return svd(xyz)
-
-
-def tangent(pts):
-    """
-    Computes the tangent vector at a given point or along a curve defined by
-    an array of points.
-
-    Parameters
-    ----------
-    pts : numpy.ndarray
-        Array containing either two xyz coordinates or an arbitrary number of
-        defining a curve.
-
-    Returns
-    -------
-    numpy.ndarray
-        Tangent vector at the specified point or along the curve.
-    """
-    if len(pts) == 2:
-        d = max(distance.euclidean(pts[1], pts[0]), 0.1)
-        tangent_vec = (pts[1] - pts[0]) / d
-    else:
-        _, _, VT = compute_svd(pts)
-        tangent_vec = VT[0]
-        if np.dot(tangent_vec, tangent([pts[0], pts[-1]])) < 0:
-            tangent_vec *= -1
-    return tangent_vec / (np.linalg.norm(tangent_vec) + 1e-5)
-
-
-def midpoint(xyz_1, xyz_2):
-    """
-    Computes the midpoint between "xyz_1" and "xyz_2".
-
-    Parameters
-    ----------
-    xyz_1 : numpy.ndarray
-        n-dimensional coordinate.
-    xyz_2 : numpy.ndarray
-        n-dimensional coordinate.
-
-    Returns
-    -------
-    numpy.ndarray
-        Midpoint of "xyz_1" and "xyz_2".
-    """
-    return np.mean([xyz_1, xyz_2], axis=0)
-
-
 # --- 3D Curve utils ---
 def fit_spline_3d(pts, k=3, s=None):
     """
@@ -289,50 +185,6 @@ def resample_curve_3d(pts, n_pts=None, s=None):
     return pts
 
 
-def shift_path(pts, offset):
-    """
-    Shifts the given points by subtracting "offset".
-
-    Parameters
-    ----------
-    pts : ArrayLike
-        Coordinates to be shifted.
-    offset : ArrayLike
-        Offset to shift points by.
-
-    Returns
-    -------
-    List[Tuple[float]]
-        Voxels shifted by the given offset.
-    """
-    offset = np.array(offset)
-    return [tuple(xyz - offset) for xyz in map(np.array, pts)]
-
-
-def truncate_path(xyz_path, depth):
-    """
-    Extracts a sub-path of a specified depth from a given input path.
-
-    Parameters
-    ----------
-    xyz_path : array-like
-        Coordinates that form a discrete path.
-    depth : int
-        Path length in microns to extract from input path.
-
-    Returns
-    -------
-    numpy.ndarray
-        Sub-path of a specified depth from a given input path.
-    """
-    length = 0
-    for i in range(1, len(xyz_path)):
-        length += distance.euclidean(xyz_path[i - 1], xyz_path[i])
-        if length > depth:
-            return np.array(xyz_path[0:i])
-    return np.array(xyz_path)
-
-
 # --- Fragment Filtering ---
 def remove_doubles(graph, max_cable_length):
     """
@@ -443,29 +295,30 @@ def closest_pair(pts1, pts2):
     return np.unravel_index(np.argmin(dists_sq), dists_sq.shape)
 
 
-def make_line(p1, p2, n_steps):
+def compute_svd(xyz):
     """
-    Generates a series of points representing a straight line between two 3D
-    coordinates.
+    Compute singular value decomposition (svd) of an NxD array where N is the
+    number of points and D is the dimension of the space.
 
     Parameters
     ----------
-    p1 : Tuple[float]
-        Start coordinate of line.
-    p2 : Tuple[float]
-        End coordinate of line.
-    n_steps : int
-        Number of steps to interpolate between the two coordinates.
+    xyz : numpy.ndarray
+        Array containing data points.
 
     Returns
     -------
+    numpy.ndarry
+        Unitary matrix having left singular vectors as columns. Of shape
+        (N, N) or (N, min(N, D)), depending on full_matrices.
     numpy.ndarray
-        Coordinates representing the straight line between p1 and p2.
+        Singular values, sorted in non-increasing order. Of shape (K,), with
+        K = min(N, D).
+    numpy.ndarray
+        Unitary matrix having right singular vectors as rows. Of shape (D, D)
+        or (K, D) depending on full_matrices.
     """
-    p1 = np.array(p1)
-    p2 = np.array(p2)
-    t_steps = np.linspace(0, 1, n_steps)
-    return np.array([(1 - t) * p1 + t * p2 for t in t_steps], dtype=int)
+    xyz = xyz - np.mean(xyz, axis=0)
+    return svd(xyz)
 
 
 def make_digital_line(p1, p2):
@@ -500,6 +353,50 @@ def make_digital_line(p1, p2):
     return line
 
 
+def make_line(p1, p2, n_steps):
+    """
+    Generates a series of points representing a straight line between two 3D
+    coordinates.
+
+    Parameters
+    ----------
+    p1 : Tuple[float]
+        Start coordinate of line.
+    p2 : Tuple[float]
+        End coordinate of line.
+    n_steps : int
+        Number of steps to interpolate between the two coordinates.
+
+    Returns
+    -------
+    numpy.ndarray
+        Coordinates representing the straight line between p1 and p2.
+    """
+    p1 = np.array(p1)
+    p2 = np.array(p2)
+    t_steps = np.linspace(0, 1, n_steps)
+    return np.array([(1 - t) * p1 + t * p2 for t in t_steps], dtype=int)
+
+
+def midpoint(xyz_1, xyz_2):
+    """
+    Computes the midpoint between "xyz_1" and "xyz_2".
+
+    Parameters
+    ----------
+    xyz_1 : numpy.ndarray
+        n-dimensional coordinate.
+    xyz_2 : numpy.ndarray
+        n-dimensional coordinate.
+
+    Returns
+    -------
+    numpy.ndarray
+        Midpoint of "xyz_1" and "xyz_2".
+    """
+    return np.mean([xyz_1, xyz_2], axis=0)
+
+
 def nearest_neighbor(pts, query_pt, return_index=False):
     """
     Finds the nearest neighbor in a list of 3D coordinates to a given target
@@ -523,3 +420,30 @@ def nearest_neighbor(pts, query_pt, return_index=False):
     dists = np.linalg.norm(pts - query_pt, axis=1)
     idx = np.argmin(dists)
     return idx if return_index else pts[idx]
+
+
+def tangent(pts):
+    """
+    Computes the tangent vector at a given point or along a curve defined by
+    an array of points.
+
+    Parameters
+    ----------
+    pts : numpy.ndarray
+        Array containing either two xyz coordinates or an arbitrary number of
+        defining a curve.
+
+    Returns
+    -------
+    numpy.ndarray
+        Tangent vector at the specified point or along the curve.
+    """
+    if len(pts) == 2:
+        d = max(distance.euclidean(pts[1], pts[0]), 0.1)
+        tangent_vec = (pts[1] - pts[0]) / d
+    else:
+        _, _, VT = compute_svd(pts)
+        tangent_vec = VT[0]
+        if np.dot(tangent_vec, tangent([pts[0], pts[-1]])) < 0:
+            tangent_vec *= -1
+    return tangent_vec / (np.linalg.norm(tangent_vec) + 1e-5)

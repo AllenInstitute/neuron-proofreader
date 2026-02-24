@@ -9,7 +9,8 @@ correction.
 
 """
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import as_completed, ThreadPoolExecutor
+from scipy.spatial import KDTree
 from skimage.transform import resize
 from torch_geometric.data import HeteroData
 
@@ -98,9 +99,7 @@ class SkeletonFeatureExtractor:
         """
         # Instance attributes
         self.graph = graph
-
-        # Build KD-tree from leaf nodes
-        self.graph.set_kdtree(node_type="leaf")
+        self.kdtree = KDTree(graph.node_xyz[np.array(graph.leaf_nodes())])
 
     def __call__(self, subgraph, features):
         """
@@ -398,9 +397,10 @@ class PatchFeatureExtractor:
         self.patch_shape = patch_shape
 
         # Annotate mask
-        node1, node2 = tuple(self.proposal)
-        self.annotate_edge(node1)
-        self.annotate_edge(node2)
+        i, j = self.proposal
+        self.voxels = {u: self.get_branch_voxels(u) for u in [i, j]}
+        self.annotate_edge(i)
+        self.annotate_edge(j)
         self.annotate_proposal()
 
     # --- Core Routines ---
@@ -462,25 +462,8 @@ class PatchFeatureExtractor:
         profile : numpy.ndarray
             Intensity profile along the branch containing the given node.
         """
-        def check_emptiness():
-            """
-            Checks if voxels is empty.
-            """
-            if len(voxels) < 2:
-                voxels.append(self.graph.get_local_voxel(node, self.offset))
-
-        # Get branch voxel coordinates
-        voxels = self.get_branch_voxels(node)
-        voxels = geometry_util.make_voxels_connected(voxels)
-        voxels = img_util.get_contained_voxels(voxels, self.mask.shape)
-        check_emptiness()
-
-        # Resample voxels
-        voxels = np.array(voxels)
-        voxels = geometry_util.resample_curve_3d(voxels, 16).astype(int)
-        voxels = img_util.get_contained_voxels(voxels, self.mask.shape)
-        check_emptiness()
-        return self._extract_profile(voxels)
+        profile = self._extract_profile(self.voxels[node])
+        return geometry_util.resample_curve_1d(profile, 16)
 
     def _extract_profile(self, voxels):
         """
@@ -513,9 +496,7 @@ class PatchFeatureExtractor:
         node : int
             Node ID used to get branch to be annotated.
         """
-        voxels = self.get_branch_voxels(node)
-        voxels = geometry_util.make_voxels_connected(voxels)
-        img_util.annotate_voxels(self.mask, voxels, val=0.5)
+        img_util.annotate_voxels(self.mask, self.voxels[node], val=0.5)
 
     def annotate_proposal(self):
         """
@@ -540,8 +521,8 @@ class PatchFeatureExtractor:
             Voxel line between the two nodes of a proposal.
         """
         node1, node2 = self.proposal
-        voxel1 = self.graph.get_local_voxel(node1, self.offset)
-        voxel2 = self.graph.get_local_voxel(node2, self.offset)
+        voxel1 = self.graph.node_local_voxel(node1, self.offset)
+        voxel2 = self.graph.node_local_voxel(node2, self.offset)
         if n_pts:
             return geometry_util.make_line(voxel1, voxel2, n_pts)
         else:
@@ -563,10 +544,22 @@ class PatchFeatureExtractor:
             Voxel coordinates representing the edge path in local patch
             coordinates.
         """
-        pts = np.vstack(self.graph.edge_attr(node, "xyz"))
-        anisotropy = self.graph.anisotropy
-        voxels = [img_util.to_voxels(xyz, anisotropy) for xyz in pts]
-        return geometry_util.shift_path(voxels, self.offset)
+        queue = [(node, self.graph.node_local_voxel(node, self.offset))]
+        visited = {node}
+        voxels = list()
+        while queue:
+            # Visit node
+            i, voxel_i = queue.pop()
+            voxels.append(voxel_i)
+
+            # Update queue
+            for j in self.graph.neighbors(i):
+                voxel_j = self.graph.node_local_voxel(j, self.offset)
+                contained_j = img_util.is_contained(voxel_j, self.patch_shape)
+                if contained_j and j not in visited:
+                    queue.append((j, voxel_j))
+                    visited.add(j)
+        return geometry_util.make_voxels_connected(voxels)
 
 
 # --- Feature Data Structures ---
@@ -929,19 +922,22 @@ class IndexMapping:
 
 
 # --- Helpers ---
-def check_list_length(my_list, min_length=2):
+def check_list_length(arr, min_length=2):
     """
-    Checks that the list contains at least "min_length" items.
+    Checks that the array contains at least "min_length" items.
 
     Parameters
     ----------
-    my_list : list
-        List to be checked.
+    arr : list
+        Array to be checked.
     min_length : int
-        Minimum items that must be contained in the list
+        Minimum length of the array.
     """
-    while len(my_list) < min_length:
-        my_list.append(my_list[-1])
+    if arr.shape[0] < min_length:
+        pad_size = min_length - arr.shape[0]
+        padding = np.repeat(arr[-1:], pad_size, axis=0)
+        arr = np.concatenate([arr, padding], axis=0)
+    return arr
 
 
 def get_feature_dict():
