@@ -145,6 +145,21 @@ class TensorDict(dict):
         return TensorDict({k: self.move(v, device) for k, v in self.items()})
 
     def move(self, v, device):
+        """
+        Moves the given dictionary value to the speficied GPU device.
+
+        Parameters
+        ----------
+        v : object
+            Value to be moved to GPU device.
+        device : str
+            Name of GPU device to move value to.
+
+        Returns
+        -------
+        object
+            Value moved to the specified GPU device.
+        """
         if torch.is_tensor(v):
             if v.dtype == torch.float64:
                 v = v.float()

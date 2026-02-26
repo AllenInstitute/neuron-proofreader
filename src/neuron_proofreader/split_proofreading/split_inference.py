@@ -38,7 +38,6 @@ import torch
 from neuron_proofreader.split_proofreading.split_datasets import (
     FragmentsDataset
 )
-from neuron_proofreader.machine_learning.gnn_models import VisionHGAT
 from neuron_proofreader.utils import ml_util, util
 
 

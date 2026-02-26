@@ -500,6 +500,26 @@ class SkeletonGraph(nx.Graph):
                     visited.add(j)
         return visited
 
+    def directed_path(self, start_node, next_node, max_depth=np.inf):
+        queue = [(next_node, 0)]
+        visited = [start_node, next_node]
+        path = list()
+        while queue:
+            # Visit node
+            i, dist_i = queue.pop()
+            if self.degree[i] != 2:
+                return path
+            else:
+                path.append(i)
+
+            # Update queue
+            for j in self.neighbors(i):
+                dist_j = dist_i + self.dist(i, j)
+                if dist_j < max_depth and j not in visited:
+                    queue.append((j, dist_j))
+                    visited.append(j)
+        return visited
+
     def dist(self, i, j):
         """
         Computes the Euclidean distance between nodes "i" and "j".
@@ -517,17 +537,6 @@ class SkeletonGraph(nx.Graph):
             Euclidean distance between nodes "i" and "j".
         """
         return distance.euclidean(self.node_xyz[i], self.node_xyz[j])
-
-    def get_swc_ids(self):
-        """
-        Gets the set of all unique SWC IDs of nodes in the graph.
-
-        Returns
-        -------
-        Set[str]
-            Set of all unique SWC IDs of nodes in the graph.
-        """
-        return set(self.component_id_to_swc_id.values())
 
     def get_irreducible_edge(self, node):
         """
@@ -564,6 +573,17 @@ class SkeletonGraph(nx.Graph):
                     visited.add(j)
         assert len(edge) == 2
         return edge
+
+    def irreducible_nodes(self):
+        """
+        Gets the set of irreducible nodes.
+
+        Returns
+        -------
+        Set[int]
+            Irreducible nodes.
+        """
+        return {i for i in map(int, self.nodes) if self.degree[i] != 2}
 
     def leaf_nodes(self):
         """
@@ -677,7 +697,7 @@ class SkeletonGraph(nx.Graph):
         """
         nodes = set()
         query_id = f"{segment_id}."
-        for swc_id in self.get_swc_ids():
+        for swc_id in self.swc_ids():
             segment_id = int(swc_id.replace(".0", ""))
             if segment_id == query_id:
                 component_id = self.component_id_from_swc_id(swc_id)
@@ -779,26 +799,6 @@ class SkeletonGraph(nx.Graph):
             path_ik = self.directed_path(i, k, max_depth=max_depth)
             return path_ij[::-1] + path_ik[1:]
 
-    def directed_path(self, start_node, next_node, max_depth=np.inf):
-        queue = [(next_node, 0)]
-        visited = [start_node, next_node]
-        path = list()
-        while queue:
-            # Visit node
-            i, dist_i = queue.pop()
-            if self.degree[i] != 2:
-                return path
-            else:
-                path.append(i)
-
-            # Update queue
-            for j in self.neighbors(i):
-                dist_j = dist_i + self.dist(i, j)
-                if dist_j < max_depth and j not in visited:
-                    queue.append((j, dist_j))
-                    visited.append(j)
-        return visited
-
     def rooted_subgraph(self, root, radius):
         """
         Gets a rooted subgraph with the given radius (in microns).
@@ -882,6 +882,17 @@ class SkeletonGraph(nx.Graph):
         summary.append(f"# Edges: {n_edges}")
         summary.append(f"Memory Consumption: {memory:.2f} GBs")
         return "\n".join(summary)
+
+    def swc_ids(self):
+        """
+        Gets the set of all unique SWC IDs of nodes in the graph.
+
+        Returns
+        -------
+        Set[str]
+            Set of all unique SWC IDs of nodes in the graph.
+        """
+        return set(self.component_id_to_swc_id.values())
 
     def tangent_from_leaf(self, leaf, max_depth=np.inf):
         """

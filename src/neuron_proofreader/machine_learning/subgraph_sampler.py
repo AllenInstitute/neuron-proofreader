@@ -11,7 +11,7 @@ batches suitable for GNN input.
 
 from collections import deque
 
-from neuron_proofreader.proposal_graph import ProposalGraph
+from neuron_proofreader.proposal_graph import ProposalComputationGraph
 from neuron_proofreader.utils import util
 
 
@@ -149,7 +149,7 @@ class SubgraphSampler:
                 pair = frozenset({i, j})
                 if pair in self.proposals:
                     # Add proposal to subgraph
-                    subgraph.add_proposal(i, j)
+                    subgraph.proposals.add(i, j)
                     if pair in self.graph.gt_accepts:
                         subgraph.gt_accepts.add(pair)
 
@@ -187,102 +187,8 @@ class SubgraphSampler:
         subgraph : ProposalGraph
             Empty graph.
         """
-        subgraph = ProposalGraph(
-            anisotropy=self.graph.anisotropy,
-            node_spacing=self.graph.node_spacing,
-        )
+        subgraph = ProposalComputationGraph()
         return subgraph
 
     def is_subgraph_full(self, subgraph):
         return subgraph.n_proposals() >= self.max_proposals
-
-
-class SeededSubgraphSampler(SubgraphSampler):
-
-    def __init__(self, graph, gnn_depth=2, max_proposals=64):
-        # Call parent class
-        super(SeededSubgraphSampler, self).__init__(
-            graph, gnn_depth=gnn_depth, max_proposals=max_proposals
-        )
-
-    # --- Batch Generation ---
-    def sample(self):
-        soma_connected_proposals_exist = True
-        while soma_connected_proposals_exist:
-            # Run BFS
-            subgraph = self.init_subgraph()
-            while not self.is_subgraph_full(subgraph) and self.proposals:
-                root = self.find_bfs_root()
-                if root:
-                    self.populate_via_seeded_bfs(subgraph, root)
-                else:
-                    soma_connected_proposals_exist = False
-                    break
-
-            # Yield batch
-            if subgraph.n_proposals():
-                yield subgraph
-
-        # Call parent class dataloader
-        for batch in super().__iter__():
-            yield batch
-
-    def find_bfs_root(self):
-        for proposal in self.proposals:
-            i, j = tuple(proposal)
-            if self.graph.is_soma(i):
-                return i
-            elif self.graph.is_soma(j):
-                return j
-        return False
-
-    def populate_via_seeded_bfs(self, subgraph, root):
-        queue = self.init_seeded_queue(root)
-        visited = set({root})
-        while queue:
-            # Visit node
-            i, d_i = queue.popleft()
-            self.visit_nbhd(subgraph, i)
-            self.visit_proposals_seeded(subgraph, queue, visited, i)
-
-            # Update queue
-            for j in self.graph.neighbors(i):
-                if j not in visited:
-                    n_j = len(self.graph.node_proposals[j])
-                    d_j = min(d_i + 1, -n_j)
-                    if d_j <= self.gnn_depth:
-                        queue.append((j, d_j))
-                        visited.add(j)
-
-    def init_seeded_queue(self, root):
-        seeded_queue = deque([(root, 0)])
-        queue = deque([root])
-        visited = set({root})
-        while queue:
-            # Visit node
-            i = queue.pop()
-            if self.graph.node_proposals[i]:
-                seeded_queue.append((i, 0))
-
-            # Update queue
-            for j in self.graph.neighbors(i):
-                if j not in visited:
-                    queue.append(j)
-                    visited.add(j)
-        return seeded_queue
-
-    def visit_proposals_seeded(self, batch, queue, visited, i):
-        if len(batch["proposals"]) < self.max_proposals:
-            for j in self.graph.node_proposals[i]:
-                # Visit proposal
-                proposal = frozenset({i, j})
-                if proposal in self.proposals:
-                    batch["graph"].add_edge(i, j)
-                    batch["proposals"].add(proposal)
-                    self.proposals.remove(proposal)
-                    if j not in visited:
-                        queue.append((j, 0))
-
-                # Check if proposal is connected to soma
-                if self.graph.is_soma(i) or self.graph.is_soma(j):
-                    batch["soma_proposals"].add(proposal)

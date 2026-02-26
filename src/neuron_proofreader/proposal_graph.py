@@ -12,14 +12,9 @@ information into the graph structure.
 """
 
 from collections import defaultdict
-from concurrent.futures import as_completed, ThreadPoolExecutor
-from io import StringIO
-from tqdm import tqdm
 
 import networkx as nx
 import numpy as np
-import os
-import zipfile
 
 from neuron_proofreader.skeleton_graph import SkeletonGraph
 from neuron_proofreader.split_proofreading import (
@@ -29,11 +24,7 @@ from neuron_proofreader.split_proofreading.proposal_generation import (
     ProposalGenerator,
     trim_proposal_endpoints
 )
-from neuron_proofreader.utils import (
-    geometry_util as geometry,
-    graph_util as gutil,
-    util,
-)
+from neuron_proofreader.utils import geometry_util, graph_util
 
 
 class ProposalGraph(SkeletonGraph):
@@ -113,7 +104,7 @@ class ProposalGraph(SkeletonGraph):
         )
 
         # Graph Loader
-        self.graph_loader = gutil.GraphLoader(
+        self.graph_loader = graph_util.GraphLoader(
             anisotropy=anisotropy,
             min_size=min_size,
             node_spacing=node_spacing,
@@ -138,7 +129,7 @@ class ProposalGraph(SkeletonGraph):
                 best_dist = np.inf
                 best_node = None
                 for i in node_ids:
-                    dist = geometry.dist(soma_xyz, self.node_xyz[i])
+                    dist = geometry_util.dist(soma_xyz, self.node_xyz[i])
                     if dist < best_dist:
                         best_dist = dist
                         best_node = i
@@ -221,41 +212,11 @@ class ProposalGraph(SkeletonGraph):
             gt_graph.load(self.gt_path)
             self.gt_accepts = groundtruth_generation.run(gt_graph, self)
 
-    def sorted_proposals(self):
-        """
-        Returns proposals sorted by physical length.
-
-        Returns
-        -------
-        List[Frozenset[int]]
-            Proposals sorted by physical length.
-        """
-        proposals = self.list_proposals()
-        lengths = [self.proposal_length(p) for p in proposals]
-        return [proposals[i] for i in np.argsort(lengths)]
-
     def is_mergeable(self, i, j):
         one_leaf = self.degree[i] == 1 or self.degree[j] == 1
         branching = self.degree[i] > 2 or self.degree[j] > 2
         somas_check = not (self.is_soma(i) and self.is_soma(j))
         return somas_check and (one_leaf and not branching)
-
-    def is_simple(self, proposal):
-        """
-        Checks if both nodes in a proposal are leafs.
-
-        Parameters
-        ----------
-        proposal : Frozenset[int]
-            Pair of nodes that form a proposal.
-
-        Returns
-        -------
-        bool
-            True if both nodes in a proposal are leafs; otherwise, False.
-        """
-        i, j = tuple(proposal)
-        return self.degree[i] == 1 and self.degree[j] == 1
 
     def is_single_proposal(self, proposal):
         """
@@ -277,6 +238,23 @@ class ProposalGraph(SkeletonGraph):
         single_i = len(self.node_proposals[i]) == 1
         single_j = len(self.node_proposals[j]) == 1
         return single_i and single_j
+
+    def leaf_to_leaf(self, proposal):
+        """
+        Checks if both nodes in a proposal are leafs.
+
+        Parameters
+        ----------
+        proposal : Frozenset[int]
+            Pair of nodes that form a proposal.
+
+        Returns
+        -------
+        bool
+            True if both nodes in a proposal are leafs; otherwise, False.
+        """
+        i, j = tuple(proposal)
+        return self.degree[i] == 1 and self.degree[j] == 1
 
     def list_proposals(self):
         """
@@ -343,6 +321,19 @@ class ProposalGraph(SkeletonGraph):
         self.node_proposals = defaultdict(set)
         self.proposals = set()
 
+    def sorted_proposals(self):
+        """
+        Returns proposals sorted by physical length.
+
+        Returns
+        -------
+        List[Frozenset[int]]
+            Proposals sorted by physical length.
+        """
+        proposals = self.list_proposals()
+        lengths = [self.proposal_length(p) for p in proposals]
+        return [proposals[i] for i in np.argsort(lengths)]
+
     def store_proposals(self, proposals):
         self.node_proposals = defaultdict(set)
         for proposal in proposals:
@@ -351,40 +342,12 @@ class ProposalGraph(SkeletonGraph):
 
     def trim_proposals(self):
         for proposal in self.list_proposals():
-            is_simple = self.is_simple(proposal)
+            leaf_to_leaf = self.leaf_to_leaf(proposal)
             is_single = self.is_single_proposal(proposal)
-            if is_simple and is_single:
+            if leaf_to_leaf and is_single:
                 trim_proposal_endpoints(self, proposal)
 
     # --- Proposal Feature Generation ---
-    def proposal_attr(self, proposal, key):
-        """
-        Gets the attributes of nodes in "proposal".
-
-        Parameters
-        ----------
-        proposal : Frozenset[int]
-            Pair of nodes that form a proposal.
-        key : str
-            Name of attribute to be returned.
-
-        Returns
-        -------
-        numpy.ndarray
-            Attributes of nodes in "proposal".
-        """
-        i, j = tuple(proposal)
-        if key == "xyz":
-            return np.array([self.node_xyz[i], self.node_xyz[j]])
-        elif key == "radius":
-            return np.array([self.node_radius[i], self.node_radius[j]])
-
-    def proposal_avg_radii(self, proposal):
-        i, j = tuple(proposal)
-        radii_i = self.edge_attr(i, key="radius")
-        radii_j = self.edge_attr(j, key="radius")
-        return np.array([avg_radius(radii_i), avg_radius(radii_j)])
-
     def proposal_directionals(self, proposal, depth):
         # Extract points along branches
         i, j = tuple(proposal)
@@ -392,21 +355,20 @@ class ProposalGraph(SkeletonGraph):
         path_j = self.path_thru_node(j, depth)
         path_xyz_i = self.node_xyz[np.array(path_i)]
         path_xyz_j = self.node_xyz[np.array(path_j)]
-        print("Path Lengths:", len(path_i), len(path_j))
 
         # Compute tangent vectors - branches
-        dir_i = geometry.tangent(path_xyz_i)
-        dir_j = geometry.tangent(path_xyz_j)
-        dir_proposal = geometry.tangent(self.proposal_attr(proposal, "xyz"))
+        dir_i = geometry_util.tangent(path_xyz_i)
+        dir_j = geometry_util.tangent(path_xyz_j)
+        dir_proposal = geometry_util.tangent(self.proposal_xyz(proposal))
 
         # Compute features
         dot_i = abs(np.dot(dir_proposal, dir_i))
         dot_j = abs(np.dot(dir_proposal, dir_j))
-        if self.is_simple(proposal):
+        if self.leaf_to_leaf(proposal):
             dot_ij = np.dot(dir_i, dir_j)
         else:
             dot_ij = np.dot(dir_i, dir_j)
-            if not self.is_simple(proposal):
+            if not self.leaf_to_leaf(proposal):
                 dot_ij = max(dot_ij, -dot_ij)
         return np.array([dot_i, dot_j, dot_ij])
 
@@ -414,17 +376,58 @@ class ProposalGraph(SkeletonGraph):
         return self.dist(*tuple(proposal))
 
     def proposal_midpoint(self, proposal):
+        return geometry_util.midpoint(*self.proposal_xyz(proposal))
+
+    def proposal_radius(self, proposal):
         i, j = tuple(proposal)
-        return geometry.midpoint(self.node_xyz[i], self.node_xyz[j])
+        return self.node_radius[i], self.node_radius[j]
+
+    def proposal_xyz(self, proposal):
+        i, j = tuple(proposal)
+        return self.node_xyz[i], self.node_xyz[j]
 
     # --- Helpers ---
+    def computation_graph(self):
+        # Add nodes
+        graph = ProposalComputationGraph()
+        graph.add_nodes_from(self.irreducible_nodes())
+        graph.add_nodes_from(set().union(*self.proposals))
+        graph.proposals = self.proposals
+        graph.gt_accepts = self.gt_accepts
+
+        # Extract edges
+        visited = set()
+        for i in map(int, self.irreducible_nodes()):
+            for j in map(int, self.neighbors(i)):
+                # Check if already visited
+                if frozenset({i, j}) in visited:
+                    continue
+
+                # Walk through degree-2 chain
+                path = [i, j]
+                prev, curr = i, j
+                while curr not in graph.nodes:
+                    nbs = list(self.neighbors(curr))
+                    nxt = nbs[0] if nbs[1] == prev else nbs[1]
+                    path.append(nxt)
+                    prev, curr = curr, int(nxt)
+                edge_id = frozenset({i, curr})
+                graph.edge_to_path[edge_id] = np.array(path, dtype=int)
+                assert i in graph.nodes and curr in graph.nodes
+                graph.add_edge(i, curr)
+
+                # Mark edges as visited
+                for a, b in zip(path[:-1], path[1:]):
+                    visited.add(frozenset({a, b}))
+        return graph
+
     def find_fragments_near_xyz(self, query_xyz, max_dist):
         hits = dict()
-        xyz_list = geometry.query_ball(self.kdtree, query_xyz, max_dist)
+        xyz_list = geometry_util.query_ball(self.kdtree, query_xyz, max_dist)
         for xyz in xyz_list:
             i, j = self.xyz_to_edge[tuple(xyz)]
-            dist_i = geometry.dist(self.node_xyz[i], query_xyz)
-            dist_j = geometry.dist(self.node_xyz[j], query_xyz)
+            dist_i = geometry_util.dist(self.node_xyz[i], query_xyz)
+            dist_j = geometry_util.dist(self.node_xyz[j], query_xyz)
             hits[self.node_component_id[i]] = i if dist_i < dist_j else j
         return list(hits.values())
 
@@ -465,137 +468,15 @@ class ProposalGraph(SkeletonGraph):
             for j in [j for j in self.neighbors(i) if j not in visited]:
                 queue.append(j)
 
-    def xyz_to_component_id(self, xyz, return_node=False):
-        if tuple(xyz) in self.xyz_to_edge.keys():
-            edge = self.xyz_to_edge[tuple(xyz)]
-            return self.node_component_id[edge[0]]
-        else:
-            return None
 
-    # --- SWC Writer ---
-    def to_zipped_swcs(self, swc_dir, preserve_radius=False, sampling_rate=1):
-        # Initializations
-        n = nx.number_connected_components(self)
-        batch_size = max(1, n // 1000) if n > 10 ** 4 else n
-        util.mkdir(swc_dir)
+# --- Computation Graph ---
+class ProposalComputationGraph(nx.Graph):
 
-        # Main
-        zip_cnt = 0
-        with ThreadPoolExecutor() as executor:
-            # Assign threads
-            batch = list()
-            threads = list()
-            for i, nodes in enumerate(nx.connected_components(self)):
-                batch.append(nodes)
-                if len(batch) >= batch_size or i == n - 1:
-                    # Zip batch
-                    zip_path = os.path.join(swc_dir, f"{zip_cnt}.zip")
-                    threads.append(
-                        executor.submit(
-                            self.batch_to_zipped_swcs,
-                            batch,
-                            zip_path,
-                            preserve_radius,
-                            sampling_rate
-                        )
-                    )
+    def __init__(self):
+        # Call parent class
+        super().__init__()
 
-                    # Reset batch
-                    batch = list()
-                    zip_cnt += 1
-
-            # Watch progress
-            pbar = tqdm(total=len(threads), desc="Write SWCs")
-            for _ in as_completed(threads):
-                pbar.update(1)
-
-    def batch_to_zipped_swcs(
-        self, nodes_list, zip_path, preserve_radius=False, sampling_rate=1
-    ):
-        with zipfile.ZipFile(zip_path, "w") as zip_writer:
-            for nodes in nodes_list:
-                self.nodes_to_zipped_swc(
-                    zip_writer,
-                    nodes,
-                    preserve_radius=preserve_radius,
-                    sampling_rate=sampling_rate
-                )
-
-    def nodes_to_zipped_swc(
-        self,
-        zip_writer,
-        nodes,
-        preserve_radius=False,
-        sampling_rate=1,
-    ):
-        with StringIO() as text_buffer:
-            # Preamble
-            text_buffer.write("# id, type, x, y, z, r, pid")
-
-            # Write entries
-            n_entries = 0
-            node_to_idx = dict()
-            for i, j in nx.dfs_edges(self.subgraph(nodes)):
-                # Root entry
-                if len(node_to_idx) == 0:
-                    # Get attributes
-                    x, y, z = tuple(self.node_xyz[i])
-                    r = self.node_radius[i] if preserve_radius else 2
-
-                    # Write entry
-                    text_buffer.write(f"\n1 2 {x} {y} {z} {r} -1")
-                    node_to_idx[i] = 1
-                    n_entries += 1
-
-                # Remaining entries
-                parent = node_to_idx[i]
-                text_buffer, n_entries = self.branch_to_zip(
-                    text_buffer,
-                    n_entries,
-                    i,
-                    j,
-                    parent,
-                    preserve_radius=preserve_radius,
-                    sampling_rate=sampling_rate
-                )
-                node_to_idx[j] = n_entries
-
-            # Write SWC file
-            filename = self.get_swc_id(i)
-            filename = util.set_zip_path(zip_writer, filename, ".swc")
-            zip_writer.writestr(filename, text_buffer.getvalue())
-
-    def branch_to_zip(
-        self,
-        text_buffer,
-        n_entries,
-        i,
-        j,
-        parent,
-        preserve_radius=False,
-        sampling_rate=1,
-    ):
-        branch_xyz = self.orient_edge_attr((i, j), i, "xyz")
-        branch_radius = self.orient_edge_attr((i, j), i, "radius")
-        for k in util.spaced_idxs(len(branch_xyz), sampling_rate):
-            # Get attributes
-            node_id = n_entries + 1
-            parent = n_entries if k > 1 else parent
-            x, y, z = tuple(branch_xyz[k])
-            r = branch_radius[k] if preserve_radius else 2
-            if frozenset({i, j}) in self.accepts:
-                r = 6
-
-            # Write entry
-            text_buffer.write(f"\n{node_id} 2 {x} {y} {z} {r} {parent}")
-            n_entries += 1
-        return text_buffer, n_entries
-
-
-# -- Helpers --
-def avg_radius(radii_list):
-    avg = 0
-    for radii in radii_list:
-        end = max(min(16, len(radii) - 1), 1)
-        avg += np.mean(radii[0:end]) / len(radii_list)
-    return avg
+        # Instance attributes
+        self.edge_to_path = dict()
+        self.gt_accepts = set()
+        self.proposals = set()
