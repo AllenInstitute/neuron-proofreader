@@ -206,6 +206,7 @@ def remove_doubles(graph, max_cable_length):
 
     # Search graph
     branching_nodes = set(graph.branching_nodes())
+    nodes_to_remove = list()
     for nodes in iterator:
         # Check if component is obviously too big
         if len(nodes) > 1000:
@@ -223,8 +224,10 @@ def remove_doubles(graph, max_cable_length):
 
         # Check doubles criteria
         if is_double(graph, nodes):
-            graph.remove_nodes_from(nodes)
+            nodes_to_remove.extend(nodes)
 
+    # Update graph
+    graph.remove_nodes_from(nodes_to_remove)
     graph.relabel_nodes()
 
 

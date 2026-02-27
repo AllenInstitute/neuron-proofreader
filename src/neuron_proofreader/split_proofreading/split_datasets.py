@@ -17,7 +17,6 @@ import pandas as pd
 from neuron_proofreader.proposal_graph import ProposalGraph
 from neuron_proofreader.machine_learning.augmentation import ImageTransforms
 from neuron_proofreader.machine_learning.subgraph_sampler import (
-    SeededSubgraphSampler,
     SubgraphSampler
 )
 from neuron_proofreader.split_proofreading.split_feature_extraction import (
@@ -136,7 +135,7 @@ class FragmentsDataset(IterableDataset):
 
         # Post process fragments
         if metadata_path:
-            graph.clip_skeletons(metadata_path)
+            graph.clip_to_bbox(metadata_path)
 
         if self.config.graph.remove_doubles:
             geometry_util.remove_doubles(graph, 200)
@@ -169,16 +168,7 @@ class FragmentsDataset(IterableDataset):
             Subgraph sampler that is used to iterate over dataset.
         """
         batch_size = self.config.ml.batch_size
-        if len(self.graph.soma_ids) > 0:
-            sampler = SeededSubgraphSampler(
-                self.graph, max_proposals=batch_size
-            )
-        else:
-            sampler = SubgraphSampler(self.graph, max_proposals=batch_size)
-        return iter(sampler)
-
-    def remove_proposals_near_boundary(self):
-        pass
+        return iter(SubgraphSampler(self.graph, max_proposals=batch_size))
 
 
 # --- Multi-Brain Dataset ---

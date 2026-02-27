@@ -972,7 +972,7 @@ def get_feature_dict():
         Dictionary that contains the number of features for branchs and
         proposals.
     """
-    return {"branch": 2, "proposal": 70}
+    return {"branch": 2, "proposal": 67}
 
 
 def resize_segmentation(mask, new_shape):
