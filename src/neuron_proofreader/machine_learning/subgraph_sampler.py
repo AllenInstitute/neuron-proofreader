@@ -11,14 +11,16 @@ batches suitable for GNN input.
 
 from collections import deque
 
+import numpy as np
+
 from neuron_proofreader.proposal_graph import ProposalComputationGraph
 from neuron_proofreader.utils import util
 
 
 class SubgraphSampler:
     """
-    A class that extracts subgraphs from a graph in order to create batches
-    suitable for GNN input.
+    A class that extracts ProposalComputationGraphs from a ProposalGraphs in
+    order to create batches suitable for GNN input.
     """
 
     def __init__(self, graph, gnn_depth=2, max_proposals=64):
@@ -112,15 +114,15 @@ class SubgraphSampler:
     def populate_via_bfs(self, subgraph, root):
         i, j = tuple(root)
         queue = deque([(i, 0), (j, 0)])
-        visited = set([i, j])
+        visited = {i, j}
         while queue:
             # Visit node
             i, d_i = queue.popleft()
-            self.add_nbhd(subgraph, i)
+            self.add_nbhd(i, subgraph, visited)
             self.add_proposals(subgraph, queue, visited, i)
 
             # Update queue
-            for j in self.graph.neighbors(i):
+            for j in subgraph.neighbors(i):
                 if j not in visited:
                     n_j = len(self.graph.node_proposals[j])
                     d_j = min(d_i + 1, -n_j)
@@ -128,19 +130,34 @@ class SubgraphSampler:
                         queue.append((j, d_j))
                         visited.add(j)
 
-    def add_nbhd(self, subgraph, i):
+    def add_nbhd(self, i, subgraph, visited):
         """
         Adds the neighborhood of node "i" to the given sugraph.
 
         Parameters
         ----------
-        subgraph : ProposalGraph
-            Graph to be updated.
         i : int
             Node id.
+        subgraph : ProposalComputationGraph
+            Graph to be updated.
         """
         for j in self.graph.neighbors(i):
-            subgraph.add_edge(i, j)
+            if j not in visited:
+                # Walk through degree-2 chain
+                path = [i, j]
+                prev, curr = i, j
+                while not self.is_computation_node(curr):
+                    nbs = list(self.graph.neighbors(curr))
+                    nxt = nbs[0] if nbs[1] == prev else nbs[1]
+                    path.append(nxt)
+                    prev, curr = curr, int(nxt)
+                    visited.add(curr)
+
+                # Store computation edge
+                edge_id = frozenset({i, curr})
+                subgraph.edge_to_path[edge_id] = np.array(path, dtype=int)
+                subgraph.add_edge(i, curr)
+                visited.remove(curr)
 
     def add_proposals(self, subgraph, queue, visited, i):
         if subgraph.n_proposals() < self.max_proposals:
@@ -149,7 +166,7 @@ class SubgraphSampler:
                 pair = frozenset({i, j})
                 if pair in self.proposals:
                     # Add proposal to subgraph
-                    subgraph.proposals.add(i, j)
+                    subgraph.proposals.add(pair)
                     if pair in self.graph.gt_accepts:
                         subgraph.gt_accepts.add(pair)
 
@@ -165,17 +182,17 @@ class SubgraphSampler:
 
     def visit_flagged_proposal(self, subgraph, queue, visited, proposal):
         nodes_added = set()
-        for p in self.extract_cluster(proposal):
+        for proposal in self.extract_cluster(proposal):
             # Add proposal
-            u, v = tuple(p)
-            subgraph.add_edge(u, v)
-            subgraph.add_proposal(p)
+            i, j = proposal
+            subgraph.add_edge(i, j)
+            subgraph.add_proposal(proposal)
 
             # Update queue
-            if not (u in visited and u in nodes_added):
-                queue.append((u, 0))
-            if not (v in visited and v in nodes_added):
-                queue.append((v, 0))
+            if not (i in visited and i in nodes_added):
+                queue.append((i, 0))
+            if not (j in visited and j in nodes_added):
+                queue.append((j, 0))
 
     # --- Helpers ---
     def init_subgraph(self):
@@ -189,6 +206,29 @@ class SubgraphSampler:
         """
         subgraph = ProposalComputationGraph()
         return subgraph
+
+    def irreducible_nbs_and_paths(self, root, visited):
+        pass
+
+    def is_computation_node(self, i):
+        """
+        Checks if the given node is either irreducible or contains at least
+        one proposal, hence needs to be a node in the computation graph.
+
+        Parameters
+        ----------
+        i : int
+            Node ID.
+
+        Returns
+        -------
+        bool
+            True if node needs to be contained in the computation graph;
+            otherwise, False.
+        """
+        is_irreducible = self.graph.degree[i] != 2
+        has_propsoals = len(self.graph.node_proposals[i]) > 0
+        return is_irreducible or has_propsoals
 
     def is_subgraph_full(self, subgraph):
         return subgraph.n_proposals() >= self.max_proposals

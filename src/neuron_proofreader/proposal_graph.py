@@ -388,16 +388,19 @@ class ProposalGraph(SkeletonGraph):
 
     # --- Helpers ---
     def computation_graph(self):
+        def is_computation_node(i):
+            return self.degree[i] != 2 or len(self.node_proposals[i]) > 0
+
         # Add nodes
         graph = ProposalComputationGraph()
-        graph.add_nodes_from(self.irreducible_nodes())
-        graph.add_nodes_from(set().union(*self.proposals))
+        nodes = self.irreducible_nodes()
+        nodes = nodes.union(set().union(*self.proposals))
         graph.proposals = self.proposals
         graph.gt_accepts = self.gt_accepts
 
         # Extract edges
         visited = set()
-        for i in map(int, self.irreducible_nodes()):
+        for i in map(int, nodes):
             for j in map(int, self.neighbors(i)):
                 # Check if already visited
                 if frozenset({i, j}) in visited:
@@ -406,14 +409,15 @@ class ProposalGraph(SkeletonGraph):
                 # Walk through degree-2 chain
                 path = [i, j]
                 prev, curr = i, j
-                while curr not in graph.nodes:
+                while not is_computation_node(curr):
                     nbs = list(self.neighbors(curr))
                     nxt = nbs[0] if nbs[1] == prev else nbs[1]
                     path.append(nxt)
                     prev, curr = curr, int(nxt)
+
+                # Add computation edge
                 edge_id = frozenset({i, curr})
                 graph.edge_to_path[edge_id] = np.array(path, dtype=int)
-                assert i in graph.nodes and curr in graph.nodes
                 graph.add_edge(i, curr)
 
                 # Mark edges as visited
@@ -480,3 +484,6 @@ class ProposalComputationGraph(nx.Graph):
         self.edge_to_path = dict()
         self.gt_accepts = set()
         self.proposals = set()
+
+    def n_proposals(self):
+        return len(self.proposals)

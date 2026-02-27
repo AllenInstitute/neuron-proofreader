@@ -286,9 +286,8 @@ class SkeletonGraph(nx.Graph):
         """
         with zipfile.ZipFile(zip_path, "w") as zip_writer:
             for nodes in map(list, nx.connected_components(self)):
-                root = util.sample_once(nodes)
                 self.component_to_zipped_swc(
-                    zip_writer, root, preserve_radius=preserve_radius
+                    zip_writer, nodes[0], preserve_radius=preserve_radius
                 )
 
     def component_to_zipped_swc(

@@ -47,7 +47,7 @@ def visualize_proposals(graph, gt_graph=None, proposals=list()):
     """
     # Initializations
     proposals = proposals or graph.list_proposals()
-    gt_graph = gt_graph or nx.Graph
+    gt_graph = gt_graph or nx.Graph()
 
     # Generate traces
     data = [get_edge_trace(graph, color="black")]

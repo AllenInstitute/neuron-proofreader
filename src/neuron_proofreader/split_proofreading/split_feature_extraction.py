@@ -650,7 +650,7 @@ class FeatureSet:
         targets : numpy.ndarray
             Binary target vector for proposals.
         """
-        targets = np.zeros((len(self.graph.proposals), 1))
+        targets = np.zeros((self.graph.n_proposals(), 1))
         idx_to_id = self.proposal_index_mapping.idx_to_id
         for idx, object_id in idx_to_id.items():
             if object_id in self.graph.gt_accepts:
