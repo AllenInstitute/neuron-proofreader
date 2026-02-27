@@ -77,7 +77,7 @@ class SubgraphSampler:
         """
         queue = deque([proposal])
         visited = set(queue)
-        while len(queue) > 0:
+        while queue:
             # Visit proposal
             proposal = queue.pop()
 
@@ -159,28 +159,29 @@ class SubgraphSampler:
                 edge_id = frozenset({i, curr})
                 subgraph.edge_to_path[edge_id] = np.array(path, dtype=int)
                 subgraph.add_edge(i, curr)
-                visited.remove(curr)
+                visited.discard(curr)
 
     def add_proposals(self, subgraph, queue, visited, i):
-        if subgraph.n_proposals() < self.max_proposals:
-            for j in self.graph.node_proposals[i]:
-                # Visit proposal
-                pair = frozenset({i, j})
-                if pair in self.proposals:
-                    # Add proposal to subgraph
-                    subgraph.proposals.add(pair)
-                    if pair in self.graph.gt_accepts:
-                        subgraph.gt_accepts.add(pair)
+        nodes = list(self.graph.node_proposals[i])
+        while subgraph.n_proposals() < self.max_proposals and nodes:
+            # Visit proposal
+            j = nodes.pop()
+            pair = frozenset({i, j})
+            if pair in self.proposals:
+                # Add proposal to subgraph
+                subgraph.proposals.add(pair)
+                if pair in self.graph.gt_accepts:
+                    subgraph.gt_accepts.add(pair)
 
-                    # Update instance state
-                    self.proposals.remove(pair)
-                    if j not in visited:
-                        queue.append((j, 0))
+                # Update instance state
+                self.proposals.remove(pair)
+                if j not in visited:
+                    queue.append((j, 0))
 
-                # Check if proposal is flagged
-                # proposal in self.flagged and proposal in self.proposals:
-                if False:
-                    self.visit_flagged_proposal(subgraph)
+            # Check if proposal is flagged
+            # proposal in self.flagged and proposal in self.proposals:
+            if False:
+                self.visit_flagged_proposal(subgraph)
 
     def visit_flagged_proposal(self, subgraph, queue, visited, proposal):
         nodes_added = set()
@@ -199,7 +200,7 @@ class SubgraphSampler:
     # --- Helpers ---
     def init_subgraph(self):
         """
-        Instantiates an empty instance of ProposalGraph.
+        Instantiates an empty instance of a ProposalComputationGraph.
 
         Returns
         -------

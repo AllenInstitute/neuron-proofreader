@@ -221,9 +221,10 @@ def is_structure_consistent(gt_graph, pred_graph, gt_id, proposal):
         path_jk = get_path(gt_graph, k, pred_graph.node_xyz[j])
 
         # Compare distances
-        gt_dist = gt_graph.path_length(np.array(path_ik + path_jk[::-1]))
-        proposal_dist = pred_graph.proposal_length(proposal)
-        return abs(proposal_dist - gt_dist) < 40
+        if len(path_ik) > 0 and len(path_jk) > 0:
+            gt_dist = gt_graph.path_length(np.array(path_ik + path_jk[::-1]))
+            proposal_dist = pred_graph.proposal_length(proposal)
+            return abs(proposal_dist - gt_dist) < 40
 
     return False
 
@@ -344,5 +345,9 @@ def get_path(gt_graph, source, xyz):
     path : List[int]
         Ordered list of node IDs representing the shortest path.
     """
-    target = gt_graph.closest_node(xyz)
-    return nx.shortest_path(gt_graph, source=source, target=target)
+    try:
+        target = gt_graph.closest_node(xyz)
+        path = nx.shortest_path(gt_graph, source=source, target=target)
+        return path
+    except nx.NetworkXNoPath:
+        return list()

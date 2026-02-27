@@ -99,7 +99,9 @@ class GraphLoader:
         self.verbose = verbose
 
         # SWC reader
-        self.swc_reader = swc_util.Reader(anisotropy, min_size)
+        self.swc_reader = swc_util.Reader(
+            anisotropy, min_size, verbose=verbose
+        )
 
         # Load somas
         if segmentation_path and soma_centroids:
