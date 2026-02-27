@@ -98,7 +98,7 @@ class SubgraphSampler:
 
         Returns
         -------
-        subgraph : ProposalGraph
+        subgraph : ProposalComputationGraph
             Sampled subgraph with a bounded number of proposals.
         """
         while self.proposals:
@@ -140,6 +140,8 @@ class SubgraphSampler:
             Node id.
         subgraph : ProposalComputationGraph
             Graph to be updated.
+        visited : Set[int]
+            Nodes that have already been visited.
         """
         for j in self.graph.neighbors(i):
             if j not in visited:
@@ -201,14 +203,11 @@ class SubgraphSampler:
 
         Returns
         -------
-        subgraph : ProposalGraph
+        subgraph : ProposalComputationGraph
             Empty graph.
         """
         subgraph = ProposalComputationGraph()
         return subgraph
-
-    def irreducible_nbs_and_paths(self, root, visited):
-        pass
 
     def is_computation_node(self, i):
         """
