@@ -11,12 +11,15 @@ fragments). It then stores the relevant information into the graph structure.
 """
 
 from collections import defaultdict
+from concurrent.futures import as_completed, ThreadPoolExecutor
 from io import StringIO
 from scipy.spatial import KDTree
 from scipy.spatial import distance
+from tqdm import tqdm
 
 import networkx as nx
 import numpy as np
+import os
 import zipfile
 
 from neuron_proofreader.utils import geometry_util, graph_util, img_util, util
@@ -288,6 +291,48 @@ class SkeletonGraph(nx.Graph):
             for nodes in map(list, nx.connected_components(self)):
                 self.component_to_zipped_swc(
                     zip_writer, nodes[0], preserve_radius=preserve_radius
+                )
+
+    def to_zipped_swcs_multithreaded(self, output_dir, preserve_radius=True):
+        # Set batch size
+        n = nx.number_connected_components(self)
+        batch_size = max(1, n // 1000) if n > 10 ** 4 else n
+        util.mkdir(output_dir)
+
+        # Main
+        zip_cnt = 0
+        with ThreadPoolExecutor() as executor:
+            # Assign threads
+            batch = list()
+            threads = list()
+            for i, nodes in enumerate(nx.connected_components(self)):
+                batch.append(nodes)
+                if len(batch) >= batch_size or i == n - 1:
+                    # Zip batch
+                    zip_path = os.path.join(output_dir, f"{zip_cnt}.zip")
+                    threads.append(
+                        executor.submit(
+                            self._batch_to_zipped_swcs,
+                            batch,
+                            zip_path,
+                            preserve_radius,
+                        )
+                    )
+
+                    # Reset batch
+                    batch = list()
+                    zip_cnt += 1
+
+            # Watch progress
+            pbar = tqdm(total=len(threads), desc="Write SWCs")
+            for _ in as_completed(threads):
+                pbar.update(1)
+
+    def _batch_to_zipped_swcs(self, nodes_list, zip_path, preserve_radius):
+        with zipfile.ZipFile(zip_path, "w") as zip_writer:
+            for nodes in map(list, nodes_list):
+                self.component_to_zipped_swc(
+                    zip_writer, nodes[0], preserve_radius
                 )
 
     def component_to_zipped_swc(

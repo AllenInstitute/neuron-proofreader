@@ -32,6 +32,7 @@ from time import time
 from tqdm import tqdm
 
 import networkx as nx
+import numpy as np
 import os
 import torch
 
@@ -277,7 +278,8 @@ class InferencePipeline:
         """
         # Save temp result on local machine
         temp_dir = os.path.join(self.output_dir, "temp")
-        self.dataset.graph.to_zipped_swcs(temp_dir, sampling_rate=2)
+        self.reconfigure_node_radius()
+        self.dataset.graph.to_zipped_swcs_multithreaded(temp_dir)
 
         # Merge ZIPs
         swc_path = os.path.join(self.output_dir, "corrected-swcs.zip")
@@ -338,6 +340,13 @@ class InferencePipeline:
             id2 = self.dataset.graph.get_swc_id(node2)
             id_to_pred[str((id1, id2))] = pred
         return id_to_pred
+
+    def reconfigure_node_radius(self):
+        n_nodes = len(self.dataset.graph.node_radius)
+        self.dataset.graph.node_radius = np.ones((n_nodes), dtype=np.float16)
+        for i, j in self.dataset.graph.accepts:
+            self.dataset.graph.node_radius[i] = 6
+            self.dataset.graph.node_radius[j] = 6
 
     def save_connections(self, round_id=None):
         """

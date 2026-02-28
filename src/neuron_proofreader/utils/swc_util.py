@@ -224,6 +224,8 @@ class Reader:
             swc_dicts = deque()
             for process in as_completed(processes):
                 swc_dicts.extend(process.result())
+                if self.verbose:
+                    pbar.update(1)
         return swc_dicts
 
     def read_from_zip(self, zip_path):
