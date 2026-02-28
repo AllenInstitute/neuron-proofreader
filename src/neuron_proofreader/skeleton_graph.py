@@ -11,16 +11,18 @@ fragments). It then stores the relevant information into the graph structure.
 """
 
 from collections import defaultdict
+from concurrent.futures import as_completed, ThreadPoolExecutor
 from io import StringIO
 from scipy.spatial import KDTree
+from scipy.spatial import distance
+from tqdm import tqdm
 
 import networkx as nx
 import numpy as np
+import os
 import zipfile
 
-from neuron_proofreader.utils import (
-    geometry_util, graph_util as gutil, img_util, util
-)
+from neuron_proofreader.utils import geometry_util, graph_util, img_util, util
 
 
 class SkeletonGraph(nx.Graph):
@@ -78,12 +80,12 @@ class SkeletonGraph(nx.Graph):
         # Instance attributes
         self.anisotropy = anisotropy
         self.component_id_to_swc_id = dict()
-        self.irreducible = nx.Graph()
+        self.kdtree = None
         self.node_spacing = node_spacing
 
         # Graph Loader
         anisotropy = anisotropy if use_anisotropy else (1.0, 1.0, 1.0)
-        self.graph_loader = gutil.GraphLoader(
+        self.graph_loader = graph_util.GraphLoader(
             anisotropy=anisotropy,
             min_size=min_size,
             node_spacing=node_spacing,
@@ -119,6 +121,7 @@ class SkeletonGraph(nx.Graph):
         while irreducibles:
             self.add_connected_component(irreducibles.pop(), component_id)
             component_id += 1
+        self.set_kdtree()
 
     def add_connected_component(self, irreducibles, component_id):
         """
@@ -144,7 +147,6 @@ class SkeletonGraph(nx.Graph):
         for (i, j), attrs in irreducibles["edges"].items():
             edge_id = (node_id_mapping[i], node_id_mapping[j])
             self._add_edge(edge_id, attrs, component_id)
-            self.irreducible.add_edge(*edge_id)
 
     def _add_nodes(self, node_dict, component_id):
         """
@@ -192,8 +194,8 @@ class SkeletonGraph(nx.Graph):
         """
         # Determine orientation of attributes
         i, j = tuple(edge_id)
-        dist_i = geometry_util.dist(self.node_xyz[i], attrs["xyz"][0])
-        dist_j = geometry_util.dist(self.node_xyz[j], attrs["xyz"][0])
+        dist_i = distance.euclidean(self.node_xyz[i], attrs["xyz"][0])
+        dist_j = distance.euclidean(self.node_xyz[j], attrs["xyz"][0])
         if dist_i < dist_j:
             start = i
             end = j
@@ -226,7 +228,7 @@ class SkeletonGraph(nx.Graph):
         component_id_to_swc_id = dict()
         for i, nodes in enumerate(nx.connected_components(self)):
             nodes = np.array(list(nodes), dtype=int)
-            component_id_to_swc_id[i + 1] = self.get_swc_id(nodes[0])
+            component_id_to_swc_id[i + 1] = self.node_swc_id(nodes[0])
             self.node_component_id[nodes] = i + 1
         self.component_id_to_swc_id = component_id_to_swc_id
 
@@ -241,17 +243,11 @@ class SkeletonGraph(nx.Graph):
         # Set edge ids
         old_to_new = dict(zip(old_node_ids, new_node_ids))
         old_edge_ids = list(self.edges)
-        old_irr_edge_ids = self.irreducible.edges
-        edge_attrs = {(i, j): data for i, j, data in self.edges(data=True)}
 
         # Reset graph
         self.clear()
         for (i, j) in old_edge_ids:
-            self.add_edge(old_to_new[i], old_to_new[j], **edge_attrs[(i, j)])
-
-        self.irreducible.clear()
-        for (i, j) in old_irr_edge_ids:
-            self.irreducible.add_edge(old_to_new[i], old_to_new[j])
+            self.add_edge(old_to_new[i], old_to_new[j])
 
         # Update attributes
         self.node_radius = self.node_radius[old_node_ids]
@@ -260,6 +256,7 @@ class SkeletonGraph(nx.Graph):
 
         self.reassign_component_ids()
         self.set_kdtree()
+        return old_to_new
 
     def remove_nodes(self, nodes, relabel_nodes=True):
         """
@@ -272,239 +269,15 @@ class SkeletonGraph(nx.Graph):
         relabel_nodes : bool, optional
             Indication of whether to relabel nodes. Default is True.
         """
-        # Remove nodes
         self.remove_nodes_from(nodes)
-        self.irreducible.remove_nodes_from(nodes)
-
-        # Update node labels (if applicable)
         if relabel_nodes:
             self.relabel_nodes()
-
-    # --- Getters ---
-    def get_branchings(self):
-        """
-        Gets all branching nodes in the graph.
-
-        Returns
-        -------
-        List[int]
-            Branching nodes in the graph.
-        """
-        return [i for i in self.nodes if self.degree[i] > 2]
-
-    def get_connected_nodes(self, root):
-        """
-        Gets all nodes connected to the given root node.
-
-        Parameters
-        ----------
-        root : int
-            Node ID.
-
-        Returns
-        -------
-        visited : List[int]
-            Nodes connected to the given root.
-        """
-        queue = [root]
-        visited = set({root})
-        while queue:
-            i = queue.pop()
-            for j in self.neighbors(i):
-                if j not in visited:
-                    queue.append(j)
-                    visited.add(j)
-        return visited
-
-    def get_leafs(self):
-        """
-        Gets all leaf nodes in the graph.
-
-        Returns
-        -------
-        List[int]
-            Leaf nodes in the graph.
-        """
-        return [i for i in self.nodes if self.degree[i] == 1]
-
-    def get_voxel(self, i):
-        """
-        Gets the voxel coordinate of the given node.
-
-        Parameters
-        ----------
-        i : int
-            Node ID.
-
-        Returns
-        -------
-        float
-            Voxel coordinate of the given node.
-        """
-        return img_util.to_voxels(self.node_xyz[i], self.anisotropy)
-
-    def get_local_voxel(self, node, offset):
-        """
-        Computes the local voxel coordinate of the given node within the image
-        patch defined by "center" and "patch_shape".
-
-        Parameters
-        ----------
-        node : int
-            Node in image patch.
-        offset : Tuple[int]
-            Shift to be applied to the node's voxel coordinate.
-
-        Returns
-        -------
-        Tuple[int]
-            Local voxel coordinate of the given node within the image patch
-            defined by "center" and "patch_shape".
-        """
-        voxel = self.get_voxel(node)
-        return tuple([v - o for v, o in zip(voxel, offset)])
-
-    def get_node_segment_id(self, node):
-        """
-        Gets the segment ID corresponding to the given node.
-
-        Parameters
-        ----------
-        node : int
-            Node ID.
-
-        Returns
-        -------
-        str
-            Segment ID corresponding to the given node.
-        """
-        return self.get_swc_id(node).split(".")[0]
-
-    def get_nodes_with_component_id(self, component_id):
-        """
-        Gets all nodes with the given componenet ID.
-
-        Parameters
-        ----------
-        component_id : int
-            Unique identifier of connected component to be queried.
-
-        Returns
-        -------
-        Set[int]
-            Nodes with the given component ID.
-        """
-        return set(np.where(self.node_component_id == component_id)[0])
-
-    def get_nodes_with_segment_id(self, segment_id):
-        """
-        Gets all nodes with the given segment ID.
-
-        Parameters
-        ----------
-        segment_id : int
-            Unique identifier of a segment to be queried.
-
-        Returns
-        -------
-        Set[int]
-            Nodes with the given segment ID.
-        """
-        nodes = set()
-        query_id = f"{segment_id}."
-        for swc_id in self.get_swc_ids():
-            segment_id = int(swc_id.replace(".0", ""))
-            if segment_id == query_id:
-                component_id = self.get_component_id_from_swc_id(swc_id)
-                nodes = nodes.union(
-                    self.get_nodes_with_component_id(component_id)
-                )
-        return nodes
-
-    def get_component_id_from_swc_id(self, query_swc_id):
-        for component_id, swc_id in self.component_id_to_swc_id.items():
-            if query_swc_id == swc_id:
-                return component_id
-        raise ValueError(f"SWC ID={query_swc_id} not found")
-
-    def get_rooted_subgraph(self, root, radius):
-        """
-        Gets a rooted subgraph with the given radius (in microns).
-
-        Parameters
-        ----------
-        root : int
-            Node ID of root.
-        radius : float
-            Depth (in microns) of subgraph.
-
-        Returns
-        -------
-        subgraph : SkeletonGraph
-            Rooted subgraph.
-        """
-        # Initializations
-        subgraph = SkeletonGraph(anisotropy=self.anisotropy)
-        subgraph.add_node(0)
-        idxs = [root]
-
-        # Extract graph
-        node_mapping = {root: 0}
-        queue = [(root, 0)]
-        visited = {root}
-        while queue:
-            # Visit node
-            i, dist_i = queue.pop()
-
-            # Populate queue
-            for j in self.neighbors(i):
-                dist_j = dist_i + self.dist(i, j)
-                if j not in visited and dist_j < radius:
-                    node_mapping[j] = subgraph.number_of_nodes()
-                    subgraph.add_edge(node_mapping[i], node_mapping[j])
-                    queue.append((j, dist_j))
-                    visited.add(j)
-                    idxs.append(j)
-
-        # Store coordinates
-        idxs = np.array(idxs, dtype=int)
-        subgraph.node_radius = self.node_radius[idxs]
-        subgraph.node_xyz = self.node_xyz[idxs]
-        return subgraph
-
-    def get_swc_id(self, i):
-        """
-        Gets the SWC ID of the given node.
-
-        Parameters
-        ----------
-        i : int
-            Node ID.
-
-        Returns
-        -------
-        str
-            SWC ID of the given node.
-        """
-        component_id = self.node_component_id[i]
-        return self.component_id_to_swc_id[component_id]
-
-    def get_swc_ids(self):
-        """
-        Gets the set of all unique SWC IDs of nodes in the graph.
-
-        Returns
-        -------
-        Set[str]
-            Set of all unique SWC IDs of nodes in the graph.
-        """
-        return set(self.component_id_to_swc_id.values())
 
     # --- Writer ---
     def to_zipped_swcs(self, zip_path, preserve_radius=False):
         """
         Writes the graph to a ZIP archive of SWC files, where each file
-        corresponds to a connected component.
+        corresponds to a single connected component.
 
         Parameters
         ----------
@@ -516,9 +289,50 @@ class SkeletonGraph(nx.Graph):
         """
         with zipfile.ZipFile(zip_path, "w") as zip_writer:
             for nodes in map(list, nx.connected_components(self)):
-                root = util.sample_once(nodes)
                 self.component_to_zipped_swc(
-                    zip_writer, root, preserve_radius=preserve_radius
+                    zip_writer, nodes[0], preserve_radius=preserve_radius
+                )
+
+    def to_zipped_swcs_multithreaded(self, output_dir, preserve_radius=True):
+        # Set batch size
+        n = nx.number_connected_components(self)
+        batch_size = max(1, n // 1000) if n > 10 ** 4 else n
+        util.mkdir(output_dir)
+
+        # Main
+        zip_cnt = 0
+        with ThreadPoolExecutor() as executor:
+            # Assign threads
+            batch = list()
+            threads = list()
+            for i, nodes in enumerate(nx.connected_components(self)):
+                batch.append(nodes)
+                if len(batch) >= batch_size or i == n - 1:
+                    # Zip batch
+                    zip_path = os.path.join(output_dir, f"{zip_cnt}.zip")
+                    threads.append(
+                        executor.submit(
+                            self._batch_to_zipped_swcs,
+                            batch,
+                            zip_path,
+                            preserve_radius,
+                        )
+                    )
+
+                    # Reset batch
+                    batch = list()
+                    zip_cnt += 1
+
+            # Watch progress
+            pbar = tqdm(total=len(threads), desc="Write SWCs")
+            for _ in as_completed(threads):
+                pbar.update(1)
+
+    def _batch_to_zipped_swcs(self, nodes_list, zip_path, preserve_radius):
+        with zipfile.ZipFile(zip_path, "w") as zip_writer:
+            for nodes in map(list, nodes_list):
+                self.component_to_zipped_swc(
+                    zip_writer, nodes[0], preserve_radius
                 )
 
     def component_to_zipped_swc(
@@ -575,12 +389,61 @@ class SkeletonGraph(nx.Graph):
                 write_entry(j, i)
 
             # Finish
-            filename = self.get_swc_id(i)
+            filename = self.node_swc_id(i)
             filename = util.set_zip_path(zip_writer, filename, ".swc")
             zip_writer.writestr(filename, text_buffer.getvalue())
 
     # --- Helpers ---
-    def clip_skeletons(self, metadata_path):
+    def branching_nodes(self):
+        """
+        Gets all branching nodes in the graph.
+
+        Returns
+        -------
+        List[int]
+            Branching nodes in the graph.
+        """
+        return [i for i in self.nodes if self.degree[i] > 2]
+
+    def cable_length(self, max_depth=np.inf, root=None):
+        """
+        Computes the cable length of the graph. If a root is provided, then
+        cable length of the connected component containing the given root is
+        computed.
+
+        Parameters
+        ----------
+        max_depth : float, optional
+            Maximum depth (in microns) to traverse before stopping. Useful for
+            checking if cable length is above a threshold. Default is np.inf.
+        root : int
+            Node contained in connected component to be searched. Default is
+            None.
+
+        Returns
+        -------
+        cable_length : float
+            Cable length of the connected component containing the given root
+            node.
+        """
+        cable_length = 0
+        for i, j in nx.dfs_edges(self, source=root):
+            cable_length += self.dist(i, j)
+            if cable_length > max_depth:
+                break
+        return cable_length
+
+    def clip_to_bbox(self, metadata_path):
+        """
+        Clips skeletons to the bounding box defined by an origin and shape
+        stored in the file at the given path.
+
+        Parameters
+        ----------
+        metadata_path : str
+            Path to JSON file containing origin and shape of bounding box to
+            clip skeletons to.
+        """
         bucket_name, path = util.parse_cloud_path(metadata_path)
         if util.check_gcs_file_exists(bucket_name, path):
             # Extract bounding box
@@ -591,31 +454,36 @@ class SkeletonGraph(nx.Graph):
             # Clip graph
             nodes = list()
             for i in self.nodes:
-                voxel = np.array(self.get_voxel(i))
+                voxel = np.array(self.node_voxel(i))
                 if not img_util.is_contained(voxel - origin, shape):
                     nodes.append(i)
             self.remove_nodes_from(nodes)
             self.relabel_nodes()
 
-    def dist(self, i, j):
+    def clip_to_groundtruth(self, gt_graph, dist):
         """
-        Computes the Euclidean distance between nodes "i" and "j".
+        Removes nodes that are more than "dist" microns from "gt_graph".
 
         Parameters
         ----------
-        i : int
-            Node ID.
-        j : int
-            Node ID.
-
-        Returns
-        -------
-        float
-            Euclidean distance between nodes "i" and "j".
+        gt_graph : SkeletonGraph
+            Ground truth graph used as clipping reference.
+        dist : float
+            Distance threshold (in microns) that determines what nodes to
+            remove.
         """
-        return geometry_util.dist(self.node_xyz[i], self.node_xyz[j])
+        # Remove nodes too far from ground truth
+        d_gt, _ = gt_graph.kdtree.query(self.node_xyz)
+        nodes = np.where(d_gt > dist)[0]
+        self.remove_nodes_from(nodes)
 
-    def find_closest_node(self, xyz):
+        # Remove resulting small connected components
+        for nodes in list(nx.connected_components(self)):
+            if len(nodes) < 30:
+                self.remove_nodes_from(nodes)
+        self.relabel_nodes()
+
+    def closest_node(self, xyz):
         """
         Finds the closest node to the given xyz coordinate.
 
@@ -633,7 +501,418 @@ class SkeletonGraph(nx.Graph):
         _, node = self.kdtree.query(xyz)
         return node
 
-    def get_summary(self, prefix=""):
+    def component_id_from_swc_id(self, query_swc_id):
+        """
+        Gets the component ID corresponding to the given SWC ID.
+
+        Parameters
+        ----------
+        query_swc_id : str
+            SWC ID to query.
+
+        Returns
+        -------
+        component_id : int
+            Component ID corresponding to the given SWC ID.
+        """
+        for component_id, swc_id in self.component_id_to_swc_id.items():
+            if query_swc_id == swc_id:
+                return component_id
+        raise ValueError(f"SWC ID={query_swc_id} not found")
+
+    def connected_nodes(self, root):
+        """
+        Gets all nodes connected to the given root node.
+
+        Parameters
+        ----------
+        root : int
+            Node ID.
+
+        Returns
+        -------
+        visited : List[int]
+            Nodes connected to the given root.
+        """
+        queue = [root]
+        visited = set({root})
+        while queue:
+            i = queue.pop()
+            for j in self.neighbors(i):
+                if j not in visited:
+                    queue.append(j)
+                    visited.add(j)
+        return visited
+
+    def directed_path(self, start_node, next_node, max_depth=np.inf):
+        queue = [(next_node, 0)]
+        visited = [start_node, next_node]
+        path = list()
+        while queue:
+            # Visit node
+            i, dist_i = queue.pop()
+            if self.degree[i] != 2:
+                return path
+            else:
+                path.append(i)
+
+            # Update queue
+            for j in self.neighbors(i):
+                dist_j = dist_i + self.dist(i, j)
+                if dist_j < max_depth and j not in visited:
+                    queue.append((j, dist_j))
+                    visited.append(j)
+        return visited
+
+    def dist(self, i, j):
+        """
+        Computes the Euclidean distance between nodes "i" and "j".
+
+        Parameters
+        ----------
+        i : int
+            Node ID.
+        j : int
+            Node ID.
+
+        Returns
+        -------
+        float
+            Euclidean distance between nodes "i" and "j".
+        """
+        return distance.euclidean(self.node_xyz[i], self.node_xyz[j])
+
+    def get_irreducible_edge(self, node):
+        """
+        Finds the irreducible edge containing the given node.
+
+        Parameters
+        ----------
+        node : int
+            Node ID.
+
+        Returns
+        -------
+        edge : Tuple[int]
+            Irreducible edge containing the given node.
+        """
+        # Check node is non-branhching
+        assert self.degree[node] < 3
+
+        # Search
+        edge = list()
+        queue = [node]
+        visited = set(queue)
+        while queue:
+            # Visit node
+            i = queue.pop()
+            if self.degree[i] != 2:
+                edge.append(i)
+                continue
+
+            # Update queue
+            for j in self.neighbors(i):
+                if j not in visited:
+                    queue.append(j)
+                    visited.add(j)
+        assert len(edge) == 2
+        return edge
+
+    def irreducible_nodes(self):
+        """
+        Gets the set of irreducible nodes.
+
+        Returns
+        -------
+        Set[int]
+            Irreducible nodes.
+        """
+        return {i for i in map(int, self.nodes) if self.degree[i] != 2}
+
+    def leaf_nodes(self):
+        """
+        Gets all leaf nodes in the graph.
+
+        Returns
+        -------
+        List[int]
+            Leaf nodes in the graph.
+        """
+        return [i for i in self.nodes if self.degree[i] == 1]
+
+    def node_local_voxel(self, node, offset):
+        """
+        Computes the local voxel coordinate of the given node within the image
+        patch defined by "center" and "patch_shape".
+
+        Parameters
+        ----------
+        node : int
+            Node in image patch.
+        offset : Tuple[int]
+            Shift to be applied to the node's voxel coordinate.
+
+        Returns
+        -------
+        Tuple[int]
+            Local voxel coordinate of the given node within the image patch
+            defined by "center" and "patch_shape".
+        """
+        return tuple([v - o for v, o in zip(self.node_voxel(node), offset)])
+
+    def node_segment_id(self, node):
+        """
+        Gets the segment ID corresponding to the given node.
+
+        Parameters
+        ----------
+        node : int
+            Node ID.
+
+        Returns
+        -------
+        str
+            Segment ID corresponding to the given node.
+        """
+        return self.get_swc_id(node).split(".")[0]
+
+    def node_swc_id(self, i):
+        """
+        Gets the SWC ID of the given node.
+
+        Parameters
+        ----------
+        i : int
+            Node ID.
+
+        Returns
+        -------
+        str
+            SWC ID of the given node.
+        """
+        component_id = self.node_component_id[i]
+        return self.component_id_to_swc_id[component_id]
+
+    def node_voxel(self, i):
+        """
+        Gets the voxel coordinate of the given node.
+
+        Parameters
+        ----------
+        i : int
+            Node ID.
+
+        Returns
+        -------
+        float
+            Voxel coordinate of the given node.
+        """
+        return img_util.to_voxels(self.node_xyz[i], self.anisotropy)
+
+    def nodes_with_component_id(self, component_id):
+        """
+        Gets all nodes with the given componenet ID.
+
+        Parameters
+        ----------
+        component_id : int
+            Unique identifier of connected component to be queried.
+
+        Returns
+        -------
+        Set[int]
+            Nodes with the given component ID.
+        """
+        return set(np.where(self.node_component_id == component_id)[0])
+
+    def nodes_with_segment_id(self, segment_id):
+        """
+        Gets all nodes with the given segment ID.
+
+        Parameters
+        ----------
+        segment_id : int
+            Unique identifier of a segment to be queried.
+
+        Returns
+        -------
+        Set[int]
+            Nodes with the given segment ID.
+        """
+        nodes = set()
+        query_id = f"{segment_id}."
+        for swc_id in self.swc_ids():
+            segment_id = int(swc_id.replace(".0", ""))
+            if segment_id == query_id:
+                component_id = self.component_id_from_swc_id(swc_id)
+                nodes = nodes.union(
+                    self.nodes_with_component_id(component_id)
+                )
+        return nodes
+
+    def nodes_within_distance(self, root, max_dist):
+        """
+        Gets nodes connected to the given root node up to a certain depth.
+
+        Parameters
+        ----------
+        root : int
+            Node ID and root of search.
+        max_dist : float
+            Maximum distance (in microns) between returned nodes and root.
+
+        Returns
+        -------
+        visited : List[int]
+            Nodes connected to the given root node up to a certain depth.
+        """
+        queue = [(root, 0)]
+        visited = {root}
+        while queue:
+            # Visit node
+            i, dist_i = queue.pop()
+
+            # Populate queue
+            for j in self.neighbors(i):
+                dist_j = dist_i + self.dist(i, j)
+                if dist_j < max_dist and j not in visited:
+                    queue.append((j, dist_j))
+                    visited.add(j)
+        return list(visited)
+
+    def path_from_leaf(self, leaf, max_depth=np.inf):
+        """
+        Gets the path of nodes emanating from the given leaf up to a certain
+        depth if "max_depth" is provided.
+
+        Parameters
+        ----------
+        leaf : int
+            Node ID and start of path.
+        max_depth : float, optional
+            Maximum length (in microns) of path returned. Default is np.inf.
+
+        Returns
+        -------
+        path : List[int]
+            Path of nodes emanating from the given leaf up to a certain depth
+            if "max_depth" is provided.
+        """
+        queue = [(leaf, 0)]
+        path = [leaf]
+        while queue:
+            # Visit node
+            i, dist_i = queue.pop()
+            if self.degree[i] != 2 and dist_i > 0:
+                return path
+
+            # Update queue
+            for j in self.neighbors(i):
+                dist_j = dist_i + self.dist(i, j)
+                if dist_j < max_depth and j not in path:
+                    queue.append((j, dist_j))
+                    path.append(j)
+        return path
+
+    def path_length(self, path):
+        """
+        Computes the length of the given path.
+
+        Parameters
+        ----------
+        path : List[int]
+            List of nodes that forms a path.
+
+        Returns
+        -------
+        Length of the given path.
+        """
+        if len(path) > 1:
+            diffs = self.node_xyz[path[1:]] - self.node_xyz[path[:-1]]
+            return np.sqrt(np.sum(diffs ** 2))
+        else:
+            return 0
+
+    def path_thru_node(self, i, max_depth=np.inf):
+        if self.degree[i] == 1:
+            return self.path_from_leaf(i, max_depth)
+        else:
+            assert self.degree[i] == 2
+            j, k = self.neighbors(i)
+            path_ij = self.directed_path(i, j, max_depth=max_depth)
+            path_ik = self.directed_path(i, k, max_depth=max_depth)
+            return path_ij[::-1] + path_ik[1:]
+
+    def rooted_subgraph(self, root, radius):
+        """
+        Gets a rooted subgraph with the given radius (in microns).
+
+        Parameters
+        ----------
+        root : int
+            Node ID of root.
+        radius : float
+            Depth (in microns) of subgraph.
+
+        Returns
+        -------
+        subgraph : SkeletonGraph
+            Rooted subgraph.
+        """
+        # Initializations
+        subgraph = SkeletonGraph(anisotropy=self.anisotropy)
+        subgraph.add_node(0)
+        idxs = [root]
+
+        # Extract graph
+        node_mapping = {root: 0}
+        queue = [(root, 0)]
+        visited = {root}
+        while queue:
+            # Visit node
+            i, dist_i = queue.pop()
+
+            # Populate queue
+            for j in self.neighbors(i):
+                dist_j = dist_i + self.dist(i, j)
+                if j not in visited and dist_j < radius:
+                    node_mapping[j] = subgraph.number_of_nodes()
+                    subgraph.add_edge(node_mapping[i], node_mapping[j])
+                    queue.append((j, dist_j))
+                    visited.add(j)
+                    idxs.append(j)
+
+        # Store coordinates
+        idxs = np.array(idxs, dtype=int)
+        subgraph.node_radius = self.node_radius[idxs]
+        subgraph.node_xyz = self.node_xyz[idxs]
+        return subgraph
+
+    def set_kdtree(self):
+        """
+        Initializes KD-Tree from node xyz coordinates.
+        """
+        self.kdtree = KDTree(self.node_xyz)
+
+    def summary(self, prefix=""):
+        """
+        Generate a human-readable summary of the graph.
+
+        Parameters
+        ----------
+        prefix : str, optional
+            Optional string to prepend to the summary title.
+
+        Returns
+        -------
+        summary : str
+            Formatted multi-line string containing:
+            - Graph label
+            - Number of connected components
+            - Number of nodes
+            - Number of edges
+            - Memory consumption (in GB)
+        """
         # Compute values
         n_components = format(nx.number_connected_components(self), ",")
         n_nodes = format(self.number_of_nodes(), ",")
@@ -648,35 +927,30 @@ class SkeletonGraph(nx.Graph):
         summary.append(f"Memory Consumption: {memory:.2f} GBs")
         return "\n".join(summary)
 
-    def path_length(self, max_depth=np.inf, root=None):
+    def swc_ids(self):
         """
-        Computes the path length of the connected component that contains the
-        given root node.
-
-        Parameters
-        ----------
-        root : int
-            Node that belongs to connected component to be searched.
-        max_depth : float
-            Maximum depth (in microns) to search in the connected component.
-            Useful if only checking that a connected component is has path
-            length above some threshold.
+        Gets the set of all unique SWC IDs of nodes in the graph.
 
         Returns
         -------
-        length : float
-            Path length of the connected component containing the given root
-            node.
+        Set[str]
+            Set of all unique SWC IDs of nodes in the graph.
         """
-        length = 0
-        for i, j in nx.dfs_edges(self, source=root):
-            length += self.dist(i, j)
-            if length > max_depth:
-                break
-        return length
+        return set(self.component_id_to_swc_id.values())
 
-    def set_kdtree(self):
+    def tangent_from_leaf(self, leaf, max_depth=np.inf):
         """
-        Initializes KD-Tree from node xyz coordinates.
+        Computes the tangent vector of the path emanating from the given leaf.
+
+        Parameters
+        ----------
+        leaf : int
+            Node ID and starting point of path extracted.
+        max_depth : float
+            Maximum depth (in microns) of path extracted.
+
+        Returns
+        -------
         """
-        self.kdtree = KDTree(self.node_xyz)
+        path = self.path_from_leaf(leaf, max_depth=max_depth)
+        return geometry_util.tangent(self.node_xyz[np.array(path)])

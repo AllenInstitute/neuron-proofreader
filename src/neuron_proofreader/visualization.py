@@ -1,270 +1,203 @@
 """
-Created on Sat July 15 9:00:00 2023
+Created on Sat Sep 30 10:00:00 2025
 
 @author: Anna Grim
 @email: anna.grim@alleninstitute.org
 
-Code for visualizing FragmentsGraph.
+Code for visualizing SkeletonGraphs.
 
 """
 
-from plotly.subplots import make_subplots
-
 import networkx as nx
+import numpy as np
 import plotly.colors as plc
 import plotly.graph_objects as go
 
 
-def visualize_connected_components(
-    graph, width=3, return_data=False, title=""
-):
+def visualize(graph):
     """
-    Visualizes the connected components in "graph".
+    Visualizes the given graph using Plotly.
+
+    Parameters
+    ----------
+    graph : SkeletonGraph
+        Graph to be visualized.
+    """
+    # Initializations
+    data = get_edge_trace(graph)
+    layout = get_layout()
+
+    # Generate plot
+    fig = go.Figure(data=data, layout=layout)
+    fig.show()
+
+
+def visualize_proposals(graph, gt_graph=None, proposals=list()):
+    """
+    Visualizes a graph along with its proposals.
 
     Parameters
     ----------
     graph : networkx.Graph
         Graph to be visualized.
-    width : int, optional
-        Line width used to plot edges in "subset". The default is 5.
-    return_data : bool, optional
-        Indication of whether to return data object that is used to generate
-        plot. The default is False.
-    title : str
-        Title of plot. The default is an empty string.
+    groundtruth_graph : networkx.Graph, optional
+        Graph generated from groundtruth tracings. Default is None.
+    proposals : List[Frozenset[int]], optional
+        List of proposals to visualize. Default is an empty list.
+    """
+    # Initializations
+    proposals = proposals or graph.list_proposals()
+    gt_graph = gt_graph or nx.Graph()
+
+    # Generate traces
+    data = [get_edge_trace(graph, color="black")]
+    data.append(get_node_trace(graph, graph.leaf_nodes()))
+    data.append(get_node_trace(graph, graph.branching_nodes()))
+    data.extend(get_component_traces(gt_graph))
+    data.extend(get_proposal_traces(graph, proposals))
+
+    # Plot traces
+    layout = get_layout()
+    fig = go.Figure(data=data, layout=layout)
+    fig.show()
+
+
+def get_component_traces(graph, use_color=True):
+    """
+    Generates edge traces to visualize the connected components of a graph.
+
+    Parameters
+    ----------
+    graph : SkeletonGraph
+        Graph to be visualized.
+    """
+    colors = plc.qualitative.Bold
+    traces = list()
+    for nodes in map(list, nx.connected_components(graph)):
+        # Extract data
+        color = colors[len(traces) % len(colors)] if use_color else "black"
+        name = graph.node_swc_id(nodes[0])
+        subgraph = graph.subgraph(nodes)
+        edges = subgraph.edges
+
+        # Create trace
+        traces.append(
+            get_edge_trace(graph, color=color, edges=edges, name=name)
+        )
+    return traces
+
+
+def get_edge_trace(graph, color="blue", edges=list(), name=None):
+    """
+    Gets the edge traces for visualizing a graph.
+
+    Parameters
+    ----------
+    graph : SkeletonGraph
+        Graph to be visualized.
+    color : str, optional
+        Color to use for the edge lines in the plot. Default is "blue".
+    name : str, optional
+        Name of the edge trace. Default is an empty string.
 
     Returns
     -------
-    None or List[graph_objects]
+    edge_trace : plotly.graph_objects.Scatter3d
+        Scatter3d object that represents the 3D trace of the graph edges.
     """
-    # Initializations
-    colors = plc.qualitative.Bold
-    connected_components = nx.connected_components(graph)
+    # Build coordinate lists
+    edges = edges or graph.edges()
+    x, y, z = list(), list(), list()
+    for i, j in edges:
+        x0, y0, z0 = graph.node_xyz[i]
+        x1, y1, z1 = graph.node_xyz[j]
+        x.extend([x0, x1, None])
+        y.extend([y0, y1, None])
+        z.extend([z0, z1, None])
 
-    # Generate plot data
-    data = []
-    while True:
-        try:
-            component = next(connected_components)
-            subgraph = graph.subgraph(component)
-            color = colors[len(data) % len(colors)]
-            data.extend(
-                get_edge_traces(
-                    graph, subgraph.edges, color=color, width=width
-                )
-            )
-        except StopIteration:
-            break
-
-    # Finish
-    if return_data:
-        return data
-    else:
-        plot(data, title)
+    # Set edge trace
+    line = dict(color=color, width=3)
+    trace = go.Scatter3d(x=x, y=y, z=z, mode="lines", line=line, name=name)
+    return trace
 
 
-def visualize_graph(graph, title=""):
+def get_node_trace(graph, nodes, color="black"):
     """
-    Visualizes the graph with nodes and edges.
+    Gets a scatter plot trace for the given nodes.
 
     Parameters
     ----------
-    graph : networkx.Graph
-        Graph to be visualized.
-    title : str, optional
-        Title of the plot. Default is "".
+    graph : SkeletonGraph
+        Graph containing the given nodes.
+    nodes : List[int]
+        Nodes to be visualized.
+    color : str, optional
+        Color that nodes are plotted with. Default is "black".
+
+    Returns
+    -------
+    trace : go.Scatter3d
+        Scatter plot trace for the given nodes.
     """
-    data = get_edge_traces(graph, graph.edges)
-    data.append(get_node_traces(graph))
-    plot(data, title)
-
-
-def visualize_proposals(
-    graph, color=None, groundtruth_graph=None, title="Proposals"
-):
-    """
-    Visualizes a graph and its proposals.
-
-    Parameters
-    ----------
-    graph : networkx.Graph
-        Graph to be visualized.
-    groundtruth_graph : networkx.Graph, optional
-        Graph generated from groundtruth tracings. The default is None.
-    title : str, optional
-        Title of the plot. Default is "Proposals".
-    """
-    visualize_subset(
-        graph,
-        graph.proposals,
-        color=color,
-        is_proposal_subset=True,
-        groundtruth_graph=groundtruth_graph,
-        title=title,
-    )
-
-
-def visualize_groundtruth(
-    graph, groundtruth_graph=None, title="Ground Truth - Accepted Proposals"
-):
-    """
-    Visualizes a graph and its groundtruth accepted proposals.
-
-    Parameters
-    ----------
-    graph : networkx.Graph
-        Graph to be visualized.
-    groundtruth_graph : networkx.Graph, optional
-        Graph generated from groundtruth tracings. The default is None.
-    title : str, optional
-        Title of the plot. Default is "Ground Truth - Accepted Proposals".
-    """
-    visualize_subset(
-        graph,
-        graph.target_edges,
-        is_proposal_subset=True,
-        groundtruth_graph=groundtruth_graph,
-        title=title,
-    )
-
-
-def visualize_subset(
-    graph,
-    subset,
-    color=None,
-    width=5,
-    is_proposal_subset=False,
-    groundtruth_graph=None,
-    title="",
-):
-    """
-    Visualizes a graph and a subset of edges or proposals.
-
-    Parameters
-    ----------
-    graph : networkx.Graph
-        Graph to be visualized.
-    subset : container
-        Subset of edges or proposals to be visualized.
-    width : int, optional
-        Line width used to plot "subset". The default is 5.
-    proposals_subset : bool, optional
-        Indication of whether "subset" is a subset of proposals. The default
-        is False.
-    groundtruth_graph : networkx.Graph, optional
-        Graph generated from ground truth tracings. The default is None.
-    title : str, optional
-        Title of the plot. Default is "Proposals".
-    """
-    # Plot graph
-    data = get_edge_traces(graph, graph.edges, color="black")
-    data.append(get_node_traces(graph))
-    if is_proposal_subset:
-        data.extend(
-            get_proposal_traces(graph, subset, color=color, width=width)
-        )
-    else:
-        data.extend(get_edge_traces(graph, subset, width=width))
-
-    # Add target graph (if applicable)
-    if groundtruth_graph:
-        data.extend(
-            visualize_connected_components(
-                groundtruth_graph, return_data=True
-            )
-        )
-    plot(data, title)
-
-
-# --- Helpers ---
-def get_node_traces(graph):
+    nodes = np.array(nodes)
     trace = go.Scatter3d(
-        x=graph.node_xyz[:, 0],
-        y=graph.node_xyz[:, 1],
-        z=graph.node_xyz[:, 2],
+        x=graph.node_xyz[nodes, 0],
+        y=graph.node_xyz[nodes, 1],
+        z=graph.node_xyz[nodes, 2],
         mode="markers",
-        name="Nodes",
-        marker=dict(size=2, color="red"),
+        marker=dict(size=1.5, color=color),
+        text=[str(int(n)) for n in nodes],
+        hovertemplate="node: %{text}<extra></extra>",
     )
     return trace
 
 
-def get_proposal_traces(graph, proposals, color=None, width=5):
-    # Set preferences
-    if color is None:
-        line = dict(width=width)
-    else:
-        line = dict(color=color, width=width)
+def get_proposal_traces(graph, proposals):
+    """
+    Gets scatter plot traces for the given proposals.
 
-    # Add traces
+    Parameters
+    ----------
+    graph : ProposalGraph
+        Graph containing the given proposals.
+    proposals : List[Frozenset[int]]
+        Proposals to be visualized.
+
+    Returns
+    -------
+    traces : List[go.Scatter3d]
+        Scatter plots of the given proposals.
+    """
     traces = []
-    for p in proposals:
-        xyz = graph.proposal_attr(p, "xyz")
+    for proposal in map(tuple, proposals):
+        xyz = graph.node_xyz[np.array(proposal)]
         trace = go.Scatter3d(
             x=xyz[:, 0],
             y=xyz[:, 1],
             z=xyz[:, 2],
             mode="lines",
-            line=line,
-            name="{}".format(tuple(p)),
+            line=dict(width=5),
+            name=str(proposal),
         )
         traces.append(trace)
     return traces
 
 
-def get_edge_traces(graph, edges, color=None, width=3):
-    traces = []
-    line = (
-        dict(width=5) if color is None else dict(color=color, width=width)
-    )
-    for i, j in edges:
-        trace = go.Scatter3d(
-            x=graph.edges[i, j]["xyz"][:, 0],
-            y=graph.edges[i, j]["xyz"][:, 1],
-            z=graph.edges[i, j]["xyz"][:, 2],
-            mode="lines",
-            line=line,
-            name=f"({i},{j})",
-        )
-        traces.append(trace)
-    return traces
+# --- Helpers ---
+def get_layout():
+    """
+    Generates the layout for a 3D plot using Plotly.
 
-
-def plot(data, title):
-    fig = go.Figure(data=data)
-    fig.update_layout(
-        title=title,
-        template="plotly_white",
+    Returns
+    -------
+    plotly.graph_objects.Layout
+        Layout object that defines the appearance and properties of the plot.
+    """
+    layout = go.Layout(
         scene=dict(aspectmode="manual", aspectratio=dict(x=1, y=1, z=1)),
-        width=1200,
+        showlegend=True,
+        template="plotly_white",
         height=700,
+        width=1200,
     )
-    fig.show()
-
-
-def subplot(data_1, data_2, title=""):
-    fig = make_subplots(
-        rows=1, cols=2, specs=[[{"type": "scene"}, {"type": "scene"}]]
-    )
-    for data in data_1:
-        fig.add_trace(data, row=1, col=1)
-
-    for data in data_2:
-        fig.add_trace(data, row=1, col=2)
-
-    fig.update_layout(title_text=title, showlegend=True)
-    fig.update_xaxes(row=1, col=1, matches="y", showgrid=False)
-    fig.update_yaxes(row=1, col=1, matches="x", showgrid=False)
-    fig.update_layout(
-        scene_aspectmode="manual", scene_aspectratio=dict(x=1, y=1, z=1)
-    )
-
-    # Update the size of the second subplot
-    fig.update_xaxes(row=1, col=2, matches="y")
-    fig.update_yaxes(row=1, col=2, matches="x")
-    fig.update_layout(
-        scene_aspectmode="manual", scene_aspectratio=dict(x=1, y=1, z=1)
-    )
-
-    fig.update_layout(width=1500, height=800)
-    fig.show()
+    return layout

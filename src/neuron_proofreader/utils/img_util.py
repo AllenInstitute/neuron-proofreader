@@ -50,7 +50,7 @@ class ImageReader(ABC):
 
     def read(self, center, shape):
         """
-        Reads an image patch center at the given voxel coordinate.
+        Reads an image patch centered at the given voxel coordinate.
 
         Parameters
         ----------
@@ -171,7 +171,7 @@ class TensorStoreReader(ImageReader):
 
     def read(self, center, shape):
         """
-        Reads an image patch center at the given voxel coordinate.
+        Reads an image patch centered at the given voxel coordinate.
 
         Parameters
         ----------
