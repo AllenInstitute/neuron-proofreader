@@ -29,12 +29,10 @@ from neuron_proofreader.utils import geometry_util, graph_util
 
 class ProposalGraph(SkeletonGraph):
     """
-    Custom subclass of NetworkX.Graph constructed from neuron fragments. The
-    graph's nodes are irreducible, meaning each node has either degree 1
-    (leaf) or degree 3+ (branching points). Each edge has an attribute that
-    stores a dense path of points connecting irreducible nodes. Additionally,
-    the graph has an attribute called "proposals", which is a set of potential
-    connections between pairs of neuron fragments.
+    Custom subclass of SkeletonGraph constructed from neuron fragments. This
+    graph has an attribute called "proposals", which is a set of potential
+    connections between pairs of neuron fragments. This class has subroutines
+    for generating, processing, and operating on proposals.
     """
 
     def __init__(
@@ -48,7 +46,7 @@ class ProposalGraph(SkeletonGraph):
         prune_depth=20.0,
         remove_high_risk_merges=False,
         segmentation_path=None,
-        soma_centroids=None,
+        soma_centroids=list(),
         verbose=True,
     ):
         """
@@ -116,37 +114,32 @@ class ProposalGraph(SkeletonGraph):
         )
 
     # --- Update Structure ---
-    def connect_soma_fragments(self, soma_centroids):
-        # MUST BE UPDATED!
-        merge_cnt = 0
-        soma_cnt = 0
-        self.set_kdtree()
-        for soma_xyz in soma_centroids:
-            node_ids = self.find_fragments_near_xyz(soma_xyz, 25)
-            if len(node_ids) > 1:
-                # Find closest node to soma location
-                soma_cnt += 1
-                best_dist = np.inf
-                best_node = None
-                for i in node_ids:
-                    dist = geometry_util.dist(soma_xyz, self.node_xyz[i])
-                    if dist < best_dist:
-                        best_dist = dist
-                        best_node = i
-                soma_component_id = self.node_component_id[best_node]
-                self.soma_ids.add(soma_component_id)
-                node_ids.remove(best_node)
+    def connect_soma_fragments(self, soma_centroids, max_dist=25):
+        merge_cnt, soma_cnt = 0, 0
+        somas_dict = self.add_soma_nodes(soma_centroids, max_dist=max_dist)
+        for soma_xyz, soma_id in somas_dict.items():
+            # Extract nearby nodes
+            soma_xyz = np.array(soma_xyz)
+            ids = self.kdtree.query_ball_point(soma_xyz, max_dist)
+            soma_component_id = self.node_component_id[soma_id]
+            self.soma_ids.add(soma_component_id)
 
-                # Merge fragments to soma
-                soma_xyz = self.node_xyz[best_node]
-                for i in node_ids:
-                    attrs = {
-                        "radius": np.array([2, 2]),
-                        "xyz": np.array([soma_xyz, self.node_xyz[i]]),
-                    }
-                    self._add_edge((best_node, i), attrs)
-                    self.update_component_ids(soma_component_id, i)
-                    merge_cnt += 1
+            # Connect to soma by connected component
+            if len(ids) > 1:
+                soma_cnt += 1
+                ids = np.array(ids, dtype=int)
+                for cid in np.unique(self.node_component_id[ids]):
+                    # Find node closest to soma
+                    idxs = np.where(self.node_component_id[ids] == cid)[0]
+                    dists = np.sum((self.node_xyz[ids[idxs]] - soma_xyz) ** 2, axis=1)
+                    node_id = ids[idxs[np.argmin(dists)]]
+
+                    # Connect closest node to soma
+                    if not nx.has_path(self, node_id, soma_id):
+                        self.add_edge(node_id, soma_id)
+                        self.update_component_ids(soma_component_id, node_id)
+                        merge_cnt += 1
+        self.set_kdtree()
 
         # Summarize results
         results = [f"# Somas Connected: {soma_cnt}"]
@@ -166,6 +159,13 @@ class ProposalGraph(SkeletonGraph):
         for proposal in old_proposals:
             i, j = proposal
             self.add_proposal(int(old_to_new[i]), int(old_to_new[j]))
+
+    def resize_node_attr(self, new_shape, attr_name):
+        node_attr = getattr(self, attr_name)
+        new_node_attr = np.empty(new_shape, dtype=node_attr.dtype)
+        new_node_attr[:len(node_attr)] = node_attr
+        new_node_attr[len(node_attr):] = 0
+        setattr(self, attr_name, new_node_attr)
 
     # --- Proposal Operations ---
     def add_proposal(self, i, j):
@@ -270,14 +270,8 @@ class ProposalGraph(SkeletonGraph):
     def merge_proposal(self, proposal):
         i, j = tuple(proposal)
         if self.is_mergeable(i, j):
-            # Update attributes
-            attrs = {
-                "radius": self.node_radius[np.array([i, j], dtype=int)],
-                "xyz": self.node_xyz[np.array([i, j], dtype=int)]
-            }
-
             # Update component_ids
-            self.merged_ids.add((self.get_swc_id(i), self.get_swc_id(j)))
+            self.merged_ids.add((self.node_swc_id(i), self.node_swc_id(j)))
             if self.is_soma(i):
                 component_id = self.node_component_id[i]
                 self.update_component_ids(component_id, j)
@@ -286,7 +280,7 @@ class ProposalGraph(SkeletonGraph):
                 self.update_component_ids(component_id, i)
 
             # Update graph
-            self._add_edge((i, j), attrs)
+            self.add_edge(i, j)
             self.accepts.add(proposal)
             self.proposals.remove(proposal)
         else:
@@ -424,16 +418,6 @@ class ProposalGraph(SkeletonGraph):
                 for a, b in zip(path[:-1], path[1:]):
                     visited.add(frozenset({a, b}))
         return graph
-
-    def find_fragments_near_xyz(self, query_xyz, max_dist):
-        hits = dict()
-        xyz_list = geometry_util.query_ball(self.kdtree, query_xyz, max_dist)
-        for xyz in xyz_list:
-            i, j = self.xyz_to_edge[tuple(xyz)]
-            dist_i = geometry_util.dist(self.node_xyz[i], query_xyz)
-            dist_j = geometry_util.dist(self.node_xyz[j], query_xyz)
-            hits[self.node_component_id[i]] = i if dist_i < dist_j else j
-        return list(hits.values())
 
     def is_soma(self, i):
         """

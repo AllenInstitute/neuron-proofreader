@@ -48,6 +48,7 @@ class SkeletonGraph(nx.Graph):
         min_size=0,
         node_spacing=1,
         prune_depth=20,
+        soma_centroids=list(),
         use_anisotropy=True,
         verbose=False,
     ):
@@ -78,10 +79,11 @@ class SkeletonGraph(nx.Graph):
         super().__init__()
 
         # Instance attributes
-        self.anisotropy = anisotropy
+        self.anisotropy = np.array(anisotropy)
         self.component_id_to_swc_id = dict()
         self.kdtree = None
         self.node_spacing = node_spacing
+        self.soma_centroids = soma_centroids
 
         # Graph Loader
         anisotropy = anisotropy if use_anisotropy else (1.0, 1.0, 1.0)
@@ -105,13 +107,9 @@ class SkeletonGraph(nx.Graph):
         """
         # Extract irreducible components from SWC files
         irreducibles = self.graph_loader(swc_pointer)
-        n = 0
-        for irr in irreducibles:
-            n += len(irr["nodes"])
-            for attrs in irr["edges"].values():
-                n += len(attrs["xyz"]) - 2
 
         # Initialize node attribute data structures
+        n = graph_util.count_nodes(irreducibles) + len(self.soma_centroids)
         self.node_component_id = np.zeros((n), dtype=int)
         self.node_radius = np.zeros((n), dtype=np.float16)
         self.node_xyz = np.zeros((n, 3), dtype=np.float32)
@@ -171,9 +169,9 @@ class SkeletonGraph(nx.Graph):
         node_id_mapping = dict()
         for node_id, attrs in node_dict.items():
             new_id = self.number_of_nodes()
-            self.node_xyz[new_id] = attrs["xyz"]
-            self.node_radius[new_id] = attrs["radius"]
             self.node_component_id[new_id] = component_id
+            self.node_radius[new_id] = attrs["radius"]
+            self.node_xyz[new_id] = attrs["xyz"]
             self.add_node(new_id)
             node_id_mapping[node_id] = new_id
         return node_id_mapping
@@ -215,9 +213,9 @@ class SkeletonGraph(nx.Graph):
                     self.add_edge(new_id, new_id - 1)
 
                 # Store attributes
-                self.node_xyz[new_id] = xyz
-                self.node_radius[new_id] = radius
                 self.node_component_id[new_id] = component_id
+                self.node_radius[new_id] = radius
+                self.node_xyz[new_id] = xyz
         self.add_edge(new_id, end)
 
     # --- Update Structure ---

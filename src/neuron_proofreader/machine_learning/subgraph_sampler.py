@@ -159,7 +159,6 @@ class SubgraphSampler:
                 edge_id = frozenset({i, curr})
                 subgraph.edge_to_path[edge_id] = np.array(path, dtype=int)
                 subgraph.add_edge(i, curr)
-                visited.discard(curr)
 
     def add_proposals(self, subgraph, queue, visited, i):
         nodes = list(self.graph.node_proposals[i])

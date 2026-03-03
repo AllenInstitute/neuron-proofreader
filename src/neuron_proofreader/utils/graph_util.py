@@ -57,7 +57,7 @@ class GraphLoader:
         prune_depth=24.0,
         remove_high_risk_merges=False,
         segmentation_path=None,
-        soma_centroids=None,
+        soma_centroids=list(),
         verbose=False,
     ):
         """
@@ -83,8 +83,8 @@ class GraphLoader:
             branching points). Default is False.
         segmentation_path : str, optional
             Path to segmentation stored in GCS bucket. Default is None.
-        soma_centroids : List[Tuple[float]] or None, optional
-            Physcial coordinates of soma centroids. Default is None.
+        soma_centroids : List[Tuple[float]], optional
+            Physcial coordinates of soma centroids. Default is an empty list.
         verbose : bool, optional
             Indication of whether to display a progress bar while building
             FragmentsGraph. Default is True.
@@ -99,9 +99,7 @@ class GraphLoader:
         self.verbose = verbose
 
         # SWC reader
-        self.swc_reader = swc_util.Reader(
-            anisotropy, min_size, verbose=verbose
-        )
+        self.swc_reader = swc_util.Reader(anisotropy, min_size, verbose)
 
         # Load somas
         if segmentation_path and soma_centroids:
@@ -125,8 +123,7 @@ class GraphLoader:
             # Assign threads
             threads = list()
             for xyz in self.soma_centroids:
-                # CHANGE THIS
-                voxel = img_util.to_voxels(xyz, (0.748, 0.748, 1.0))
+                voxel = img_util.to_voxels(xyz, self.anisotropy)
                 threads.append(executor.submit(reader.read_voxel, voxel, xyz))
 
             # Store results
@@ -583,6 +580,15 @@ def set_edge_attrs(graph, attrs):
 
 
 # --- Miscellaneous ---
+def count_nodes(irreducibles):
+    n = 0
+    for irr in irreducibles:
+        n += len(irr["nodes"])
+        for attrs in irr["edges"].values():
+            n += len(attrs["xyz"]) - 2
+    return n
+
+
 def cycle_exists(graph):
     """
     Checks if the given graph has a cycle.
@@ -746,7 +752,7 @@ def find_nearby_branching_node(graph, root, max_depth=10):
 
         # Update queue
         for j in graph.neighbors(i):
-            dist_j = dist_i + euclidean(graph, i, j)
+            dist_j = dist_i + dist(graph, i, j)
             if dist_j < max_depth and j not in visited:
                 queue.append((j, dist_j))
                 visited.add(j)

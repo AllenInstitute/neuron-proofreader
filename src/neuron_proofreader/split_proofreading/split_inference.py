@@ -137,7 +137,7 @@ class InferencePipeline:
 
         # Log results
         elapsed, unit = util.time_writer(time() - t0)
-        self.log(self.dataset.graph.get_summary(prefix="\nInitial"))
+        self.log(self.dataset.graph.summary(prefix="\nInitial"))
         self.log(f"Module Runtime: {elapsed:.2f} {unit}\n")
 
     # --- Core Routines ---
@@ -157,7 +157,7 @@ class InferencePipeline:
 
         # Report results
         t, unit = util.time_writer(time() - t0)
-        self.log(self.dataset.graph.get_summary(prefix="\nFinal"))
+        self.log(self.dataset.graph.summary(prefix="\nFinal"))
         self.log(f"Total Runtime: {t:.2f} {unit}\n")
         self.save_results()
 
@@ -202,6 +202,7 @@ class InferencePipeline:
         self.log("Step 3: Run Inference")
 
         # Main
+        n_proposals = self.dataset.graph.n_proposals()
         new_threshold = 0.99
         preds = self.predict_proposals()
         while True:
@@ -219,8 +220,8 @@ class InferencePipeline:
         t, unit = util.time_writer(time() - t0)
         self.log(f"# Merges Blocked: {self.dataset.graph.n_merges_blocked}")
         self.log(f"# Accepted: {format(n_accepts, ',')}")
-        self.log(f"% Accepted: {n_accepts / len(preds):.4f}")
-        self.log(f"Module Runtime: {t:.4f} {unit}\n")
+        self.log(f"% Accepted: {100 * n_accepts / n_proposals:.2f}")
+        self.log(f"Module Runtime: {t:.2f} {unit}\n")
 
     def predict_proposals(self):
         """
@@ -336,8 +337,8 @@ class InferencePipeline:
         id_to_pred = dict()
         for proposal, pred in preds_dict.items():
             node1, node2 = tuple(proposal)
-            id1 = self.dataset.graph.get_swc_id(node1)
-            id2 = self.dataset.graph.get_swc_id(node2)
+            id1 = self.dataset.graph.node_swc_id(node1)
+            id2 = self.dataset.graph.node_swc_id(node2)
             id_to_pred[str((id1, id2))] = pred
         return id_to_pred
 
