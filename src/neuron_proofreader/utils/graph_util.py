@@ -28,6 +28,7 @@ from concurrent.futures import (
 )
 from random import sample
 from scipy.spatial import KDTree
+from scipy.spatial.distance import euclidean
 from tqdm import tqdm
 
 import multiprocessing
@@ -56,7 +57,7 @@ class GraphLoader:
         prune_depth=24.0,
         remove_high_risk_merges=False,
         segmentation_path=None,
-        soma_centroids=None,
+        soma_centroids=list(),
         verbose=False,
     ):
         """
@@ -82,8 +83,8 @@ class GraphLoader:
             branching points). Default is False.
         segmentation_path : str, optional
             Path to segmentation stored in GCS bucket. Default is None.
-        soma_centroids : List[Tuple[float]] or None, optional
-            Physcial coordinates of soma centroids. Default is None.
+        soma_centroids : List[Tuple[float]], optional
+            Physcial coordinates of soma centroids. Default is an empty list.
         verbose : bool, optional
             Indication of whether to display a progress bar while building
             FragmentsGraph. Default is True.
@@ -98,7 +99,7 @@ class GraphLoader:
         self.verbose = verbose
 
         # SWC reader
-        self.swc_reader = swc_util.Reader(anisotropy, min_size)
+        self.swc_reader = swc_util.Reader(anisotropy, min_size, verbose)
 
         # Load somas
         if segmentation_path and soma_centroids:
@@ -122,8 +123,7 @@ class GraphLoader:
             # Assign threads
             threads = list()
             for xyz in self.soma_centroids:
-                # CHANGE THIS
-                voxel = img_util.to_voxels(xyz, (0.748, 0.748, 1.0))
+                voxel = img_util.to_voxels(xyz, self.anisotropy)
                 threads.append(executor.submit(reader.read_voxel, voxel, xyz))
 
             # Store results
@@ -214,7 +214,7 @@ class GraphLoader:
         graph = self.to_graph(swc_dict)
         irreducibles_list = deque()
         high_risk_cnt = 0
-        if self.satifies_path_length_condition(graph):
+        if self.satisfies_cable_length_condition(graph):
             # Check for soma merges
             if len(graph.graph["soma_nodes"]) > 1:
                 self.remove_soma_merges(graph)
@@ -273,7 +273,7 @@ class GraphLoader:
             float
                 Distance between nodes.
             """
-            return geometry.dist(graph.graph["xyz"][i], graph.graph["xyz"][j])
+            return euclidean(graph.graph["xyz"][i], graph.graph["xyz"][j])
 
         # Initializations
         irreducible_nodes = set({source})
@@ -451,7 +451,7 @@ class GraphLoader:
                 soma_nodes.add(find_nearby_branching_node(graph, node, 20))
         return soma_nodes
 
-    def satifies_path_length_condition(self, graph):
+    def satisfies_cable_length_condition(self, graph):
         """
         Determines whether the total path length of the given graph is greater
         than "self.min_size".
@@ -467,7 +467,12 @@ class GraphLoader:
             Indication of whether the total path length of the given graph is
             greater than "self.min_size".
         """
-        return path_length(graph, self.min_size) > self.min_size
+        length = 0
+        for i, j in nx.dfs_edges(graph):
+            length += euclidean(graph.graph["xyz"][i], graph.graph["xyz"][j])
+            if length > self.min_size:
+                return True
+        return False
 
     def resample_curve_3d(self, graph, attrs, edge, n_pts):
         """
@@ -575,6 +580,15 @@ def set_edge_attrs(graph, attrs):
 
 
 # --- Miscellaneous ---
+def count_nodes(irreducibles):
+    n = 0
+    for irr in irreducibles:
+        n += len(irr["nodes"])
+        for attrs in irr["edges"].values():
+            n += len(attrs["xyz"]) - 2
+    return n
+
+
 def cycle_exists(graph):
     """
     Checks if the given graph has a cycle.
@@ -614,7 +628,7 @@ def dist(graph, i, j):
     float
         Euclidean distance between nodes i and j.
     """
-    return geometry.dist(graph.graph["xyz"][i], graph.graph["xyz"][j])
+    return euclidean(graph.graph["xyz"][i], graph.graph["xyz"][j])
 
 
 def edges_to_line_graph(edges):
@@ -657,7 +671,7 @@ def find_closest_node(graph, xyz):
     best_dist = np.inf
     best_node = None
     for i in graph.nodes:
-        cur_dist = geometry.dist(xyz, graph.graph["xyz"][i])
+        cur_dist = euclidean(xyz, graph.graph["xyz"][i])
         if cur_dist < best_dist:
             best_dist = cur_dist
             best_node = i
@@ -821,32 +835,6 @@ def largest_components(graph, k):
     return node_ids
 
 
-def path_length(graph, max_length=np.inf):
-    """
-    Computes the path length of the given graph.
-
-    Parameters
-    ----------
-    graph : networkx.Graph
-        Graph whose nodes have an attribute called "xyz" which represents
-        a 3d coordinate.
-    max_length : float
-        Maximum physical distance to search along the graph. Limits traversal
-        depth and can improve performance.
-
-    Returns
-    -------
-    length : float
-        Path length of graph.
-    """
-    length = 0
-    for i, j in nx.dfs_edges(graph):
-        length += dist(graph, i, j)
-        if length > max_length:
-            break
-    return length
-
-
 def prune_branches(graph, depth):
     """
     Prunes branches with length less than "depth" microns.
@@ -863,7 +851,7 @@ def prune_branches(graph, depth):
         length = 0
         for (i, j) in nx.dfs_edges(graph, source=leaf):
             # Visit edge
-            length += dist(graph, i, j)
+            length += euclidean(graph.graph["xyz"][i], graph.graph["xyz"][j])
             if length > depth:
                 break
 

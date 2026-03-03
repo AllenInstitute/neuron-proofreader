@@ -157,7 +157,9 @@ class MergeDetector:
         nodes = np.where(self.node_preds >= threshold)[0]
         return [self.dataset.graph.node_xyz[i] for i in nodes]
 
-    def save_results(self, output_dir, output_prefix_s3=None, save_fragments=True):
+    def save_results(
+        self, output_dir, output_prefix_s3=None, save_fragments=True
+    ):
         # Get predicted merge sites
         nodes = np.where(self.node_preds >= self.threshold)[0]
         detected_sites = [self.dataset.graph.node_xyz[i] for i in nodes]
@@ -249,7 +251,7 @@ class GraphDataset(IterableDataset, ABC):
 
         # Search graph
         visited_ids = set()
-        for u in self.graph.get_leafs():
+        for u in self.graph.leaf_nodes():
             component_id = self.graph.node_component_id[u]
             if component_id not in visited_ids and component_id in valid_ids:
                 visited_ids.add(component_id)
@@ -286,7 +288,7 @@ class GraphDataset(IterableDataset, ABC):
         return component_ids
 
     def get_patch_centers(self, nodes):
-        patch_centers = [self.graph.get_voxel(i) for i in nodes]
+        patch_centers = [self.graph.node_voxel(i) for i in nodes]
         return np.array(patch_centers, dtype=int)
 
     def get_label_mask(self, nodes, img_shape, offset):
@@ -302,8 +304,8 @@ class GraphDataset(IterableDataset, ABC):
         # Annotate mask
         subgraph = self.get_contained_subgraph(nodes, img_shape, offset)
         for i, j in subgraph.edges:
-            voxel_i = self.graph.get_voxel(i) - offset
-            voxel_j = self.graph.get_voxel(j) - offset
+            voxel_i = self.graph.node_voxel(i) - offset
+            voxel_j = self.graph.node_voxel(j) - offset
             voxels = geometry_util.make_digital_line(voxel_i, voxel_j)
             img_util.annotate_voxels(segment_mask, voxels)
         return segment_mask
@@ -315,13 +317,13 @@ class GraphDataset(IterableDataset, ABC):
         while queue:
             # Visit node
             i = queue.pop()
-            voxel_i = self.graph.get_voxel(i) - offset
+            voxel_i = self.graph.node_voxel(i) - offset
             if not img_util.is_contained(voxel_i, img_shape, buffer=1):
                 continue
 
             # Update queue
             for j in self.graph.neighbors(i):
-                voxel_j = self.graph.get_voxel(j) - offset
+                voxel_j = self.graph.node_voxel(j) - offset
                 if img_util.is_contained(voxel_j, img_shape):
                     subgraph.add_edge(i, j)
                     if j not in visited:
@@ -330,7 +332,7 @@ class GraphDataset(IterableDataset, ABC):
         return subgraph
 
     def is_contained(self, node):
-        voxel = self.graph.get_voxel(node)
+        voxel = self.graph.node_voxel(node)
         shape = self.img_reader.shape()[2::]
         buffer = np.max(self.patch_shape) + 1
         return img_util.is_contained(voxel, shape, buffer=buffer)
@@ -518,9 +520,7 @@ class DenseGraphDataset(GraphDataset):
             patches[i, 0, ...] = img_util.normalize(img[s])
             patches[i, 1, ...] = label_mask[s]
 
-            subgraph = self.graph.get_rooted_subgraph(
-                node, self.subgraph_radius
-            )
+            subgraph = self.graph.rooted_subgraph(node, self.subgraph_radius)
             point_clouds[i] = subgraph_to_point_cloud(subgraph)
 
         # Build batch dictionary
@@ -542,17 +542,19 @@ class DenseGraphDataset(GraphDataset):
         int
             Estimated number of iterations required to search graph.
         """
-        # Set min size
-        length = 0
-        n_componenets = 0
+        # Search graph
+        total_cable_length = 0
+        n_fragments = 0
         for nodes in map(list, nx.connected_components(self.graph)):
-            node = util.sample_once(nodes)
-            length_component = self.graph.path_length(root=node)
-            if length_component > self.min_size:
-                length += length_component
-                n_componenets += 1
-        print("# Fragments to Search:", n_componenets)
-        return int(length / self.step_size)
+            cable_length = self.graph.cable_length(root=nodes[0])
+            if cable_length > self.min_size:
+                total_cable_length += cable_length
+                n_fragments += 1
+
+        # Report results
+        print("# Fragments:", n_fragments)
+        print(f"Total Cable Length: {total_cable_length / 1000:.2f}mm")
+        return int(total_cable_length / self.step_size)
 
 
 class SparseGraphDataset(GraphDataset):
@@ -599,7 +601,7 @@ class SparseGraphDataset(GraphDataset):
             if len(patch_centers) == 0 and self.graph.degree[i] > 2:
                 root = i
                 nodes.append(i)
-                patch_centers.append(self.graph.get_voxel(i))
+                patch_centers.append(self.graph.node_voxel(i))
 
             # Check whether to yield batch
             is_node_far = self.graph.dist(root, j) > 256
@@ -617,7 +619,7 @@ class SparseGraphDataset(GraphDataset):
             # Visit j
             if self.graph.degree[j] > 2:
                 nodes.append(j)
-                patch_centers.append(self.graph.get_voxel(j))
+                patch_centers.append(self.graph.node_voxel(j))
                 if len(patch_centers) == 1:
                     root = j
 

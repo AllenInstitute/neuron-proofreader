@@ -32,13 +32,13 @@ from time import time
 from tqdm import tqdm
 
 import networkx as nx
+import numpy as np
 import os
 import torch
 
 from neuron_proofreader.split_proofreading.split_datasets import (
     FragmentsDataset
 )
-from neuron_proofreader.machine_learning.gnn_models import VisionHGAT
 from neuron_proofreader.utils import ml_util, util
 
 
@@ -137,7 +137,7 @@ class InferencePipeline:
 
         # Log results
         elapsed, unit = util.time_writer(time() - t0)
-        self.log(self.dataset.graph.get_summary(prefix="\nInitial"))
+        self.log(self.dataset.graph.summary(prefix="\nInitial"))
         self.log(f"Module Runtime: {elapsed:.2f} {unit}\n")
 
     # --- Core Routines ---
@@ -157,7 +157,7 @@ class InferencePipeline:
 
         # Report results
         t, unit = util.time_writer(time() - t0)
-        self.log(self.dataset.graph.get_summary(prefix="\nFinal"))
+        self.log(self.dataset.graph.summary(prefix="\nFinal"))
         self.log(f"Total Runtime: {t:.2f} {unit}\n")
         self.save_results()
 
@@ -202,6 +202,7 @@ class InferencePipeline:
         self.log("Step 3: Run Inference")
 
         # Main
+        n_proposals = self.dataset.graph.n_proposals()
         new_threshold = 0.99
         preds = self.predict_proposals()
         while True:
@@ -219,8 +220,8 @@ class InferencePipeline:
         t, unit = util.time_writer(time() - t0)
         self.log(f"# Merges Blocked: {self.dataset.graph.n_merges_blocked}")
         self.log(f"# Accepted: {format(n_accepts, ',')}")
-        self.log(f"% Accepted: {n_accepts / len(preds):.4f}")
-        self.log(f"Module Runtime: {t:.4f} {unit}\n")
+        self.log(f"% Accepted: {100 * n_accepts / n_proposals:.2f}")
+        self.log(f"Module Runtime: {t:.2f} {unit}\n")
 
     def predict_proposals(self):
         """
@@ -256,7 +257,7 @@ class InferencePipeline:
             Threshold used to determine which proposals to accept based on
             model prediction.
         """
-        for proposal in self.dataset.graph.get_sorted_proposals():
+        for proposal in self.dataset.graph.sorted_proposals():
             # Check if proposal has been visited
             if proposal not in preds:
                 continue
@@ -278,7 +279,8 @@ class InferencePipeline:
         """
         # Save temp result on local machine
         temp_dir = os.path.join(self.output_dir, "temp")
-        self.dataset.graph.to_zipped_swcs(temp_dir, sampling_rate=2)
+        self.reconfigure_node_radius()
+        self.dataset.graph.to_zipped_swcs_multithreaded(temp_dir)
 
         # Merge ZIPs
         swc_path = os.path.join(self.output_dir, "corrected-swcs.zip")
@@ -335,10 +337,17 @@ class InferencePipeline:
         id_to_pred = dict()
         for proposal, pred in preds_dict.items():
             node1, node2 = tuple(proposal)
-            id1 = self.dataset.graph.get_swc_id(node1)
-            id2 = self.dataset.graph.get_swc_id(node2)
+            id1 = self.dataset.graph.node_swc_id(node1)
+            id2 = self.dataset.graph.node_swc_id(node2)
             id_to_pred[str((id1, id2))] = pred
         return id_to_pred
+
+    def reconfigure_node_radius(self):
+        n_nodes = len(self.dataset.graph.node_radius)
+        self.dataset.graph.node_radius = np.ones((n_nodes), dtype=np.float16)
+        for i, j in self.dataset.graph.accepts:
+            self.dataset.graph.node_radius[i] = 6
+            self.dataset.graph.node_radius[j] = 6
 
     def save_connections(self, round_id=None):
         """
