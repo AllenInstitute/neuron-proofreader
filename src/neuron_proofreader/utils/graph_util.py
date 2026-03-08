@@ -104,11 +104,11 @@ class GraphLoader:
         # Load somas
         if segmentation_path and soma_centroids:
             self.soma_kdtree = KDTree(self.soma_centroids)
-            self.ingest_somas(segmentation_path)
+            self.ingest_somas(segmentation_path, anisotropy)
         else:
             self.soma_kdtree = None
 
-    def ingest_somas(self, segmentation_path):
+    def ingest_somas(self, segmentation_path, anisotropy):
         """
         Loads soma locations from a specified file and search for interestions
         between soma locations and objects in segmentation mask.
@@ -123,7 +123,7 @@ class GraphLoader:
             # Assign threads
             threads = list()
             for xyz in self.soma_centroids:
-                voxel = img_util.to_voxels(xyz, self.anisotropy)
+                voxel = img_util.to_voxels(xyz, anisotropy)
                 threads.append(executor.submit(reader.read_voxel, voxel, xyz))
 
             # Store results
