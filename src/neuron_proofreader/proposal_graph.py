@@ -114,6 +114,9 @@ class ProposalGraph(SkeletonGraph):
         )
 
     # --- Update Structure ---
+    def add_soma_nodes(self, soma_centroids):
+        pass
+
     def connect_soma_fragments(self, soma_centroids, max_dist=25):
         merge_cnt, soma_cnt = 0, 0
         somas_dict = self.add_soma_nodes(soma_centroids, max_dist=max_dist)
@@ -156,8 +159,7 @@ class ProposalGraph(SkeletonGraph):
 
         # Update proposals
         self.reset_proposals()
-        for proposal in old_proposals:
-            i, j = proposal
+        for i, j in old_proposals:
             self.add_proposal(int(old_to_new[i]), int(old_to_new[j]))
 
     def resize_node_attr(self, new_shape, attr_name):
@@ -179,10 +181,9 @@ class ProposalGraph(SkeletonGraph):
         j : int
             Node ID
         """
-        proposal = frozenset({i, j})
         self.node_proposals[i].add(j)
         self.node_proposals[j].add(i)
-        self.proposals.add(proposal)
+        self.proposals.add(frozenset({i, j}))
 
     def generate_proposals(self, search_radius, allow_nonleaf_targets=False):
         """
@@ -197,6 +198,7 @@ class ProposalGraph(SkeletonGraph):
             with degree 2. Default is False.
         """
         # Proposal generation
+        assert len(self.kdtree.data) == self.number_of_nodes()
         proposals = self.proposal_generator(
             search_radius, allow_nonleaf_targets=allow_nonleaf_targets
         )
@@ -204,7 +206,6 @@ class ProposalGraph(SkeletonGraph):
         self.search_radius = search_radius
         self.store_proposals(proposals)
         self.trim_proposals()
-        self.relabel_nodes()
 
         # Set groundtruth (if applicable)
         if self.gt_path:
@@ -234,12 +235,12 @@ class ProposalGraph(SkeletonGraph):
             True if "proposal" is the only proposal generated for the
             corresponding nodes; otherwise, False
         """
-        i, j = tuple(proposal)
+        i, j = proposal
         single_i = len(self.node_proposals[i]) == 1
         single_j = len(self.node_proposals[j]) == 1
         return single_i and single_j
 
-    def leaf_to_leaf(self, proposal):
+    def is_leaf_to_leaf(self, proposal):
         """
         Checks if both nodes in a proposal are leafs.
 
@@ -336,10 +337,15 @@ class ProposalGraph(SkeletonGraph):
 
     def trim_proposals(self):
         for proposal in self.list_proposals():
-            leaf_to_leaf = self.leaf_to_leaf(proposal)
+            is_leaf_to_leaf = self.is_leaf_to_leaf(proposal)
             is_single = self.is_single_proposal(proposal)
-            if leaf_to_leaf and is_single:
+            if is_leaf_to_leaf and is_single:
                 trim_proposal_endpoints(self, proposal)
+
+        for i, j in self.list_proposals():
+            assert i in self.nodes
+            assert j in self.nodes
+        self.relabel_nodes()
 
     # --- Proposal Feature Generation ---
     def proposal_directionals(self, proposal, depth):
@@ -358,11 +364,11 @@ class ProposalGraph(SkeletonGraph):
         # Compute features
         dot_i = abs(np.dot(dir_proposal, dir_i))
         dot_j = abs(np.dot(dir_proposal, dir_j))
-        if self.leaf_to_leaf(proposal):
+        if self.is_leaf_to_leaf(proposal):
             dot_ij = np.dot(dir_i, dir_j)
         else:
             dot_ij = np.dot(dir_i, dir_j)
-            if not self.leaf_to_leaf(proposal):
+            if not self.is_leaf_to_leaf(proposal):
                 dot_ij = max(dot_ij, -dot_ij)
         return np.array([dot_i, dot_j, dot_ij])
 

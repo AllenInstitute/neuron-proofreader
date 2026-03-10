@@ -458,7 +458,7 @@ class SkeletonGraph(nx.Graph):
             self.remove_nodes_from(nodes)
             self.relabel_nodes()
 
-    def clip_to_groundtruth(self, gt_graph, dist):
+    def clip_to_skeleton(self, gt_graph, dist):
         """
         Removes nodes that are more than "dist" microns from "gt_graph".
 

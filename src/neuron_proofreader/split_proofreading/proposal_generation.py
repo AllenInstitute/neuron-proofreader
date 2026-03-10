@@ -348,10 +348,31 @@ def trim_proposal_endpoints(graph, proposal, max_depth=20):
     proposal : Frozenset[int]
         Proposal used to specify endpoints to be trimmed.
     """
+    def get_path(leaf):
+        """
+        Gets path of nodes emanating from the given node and ensures that
+        there are no nodes with a proposal in this path.
+
+        Parameters
+        ----------
+        leaf : int
+            Node ID.
+
+        Returns
+        -------
+        path : List[int]
+        
+        """
+        idx = 1
+        path = graph.path_from_leaf(leaf, max_depth=max_depth)
+        while idx < len(path) and len(graph.node_proposals[path[idx]]) == 0:
+            idx += 1
+        return np.array(path[:idx], dtype=int)
+
     # Extract paths from nodes
-    i, j = tuple(proposal)
-    path_i = np.array(graph.path_from_leaf(i, max_depth=max_depth))
-    path_j = np.array(graph.path_from_leaf(j, max_depth=max_depth))
+    i, j = proposal
+    path_i = get_path(i)
+    path_j = get_path(j)
 
     # Find closest pair of points
     pts_i = graph.node_xyz[path_i]
@@ -364,6 +385,8 @@ def trim_proposal_endpoints(graph, proposal, max_depth=20):
             # Update proposals
             graph.remove_proposal(proposal)
             graph.add_proposal(path_i[ii], path_j[jj])
+            assert path_i[ii] in graph.nodes
+            assert path_j[jj] in graph.nodes
 
             # Remove nodes
             graph.remove_nodes_from(path_i[0:ii])

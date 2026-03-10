@@ -275,6 +275,7 @@ class FragmentsDatasetCollection(IterableDataset):
         """
         # Proposal generation
         for key in self.datasets:
+            print(key)
             self.datasets[key].graph.generate_proposals(
                 search_radius, allow_nonleaf_targets=True
             )

@@ -227,8 +227,7 @@ def remove_doubles(graph, max_cable_length):
             nodes_to_remove.extend(nodes)
 
     # Update graph
-    graph.remove_nodes_from(nodes_to_remove)
-    graph.relabel_nodes()
+    graph.remove_nodes(nodes_to_remove)
 
 
 def is_double(graph, nodes):
