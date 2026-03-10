@@ -341,10 +341,6 @@ class ProposalGraph(SkeletonGraph):
             is_single = self.is_single_proposal(proposal)
             if is_leaf_to_leaf and is_single:
                 trim_proposal_endpoints(self, proposal)
-
-        for i, j in self.list_proposals():
-            assert i in self.nodes
-            assert j in self.nodes
         self.relabel_nodes()
 
     # --- Proposal Feature Generation ---

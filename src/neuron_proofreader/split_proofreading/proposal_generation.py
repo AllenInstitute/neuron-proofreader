@@ -386,12 +386,9 @@ def trim_proposal_endpoints(graph, proposal, max_depth=20):
             # Update proposals
             graph.remove_proposal(proposal)
             graph.add_proposal(path_i[ii], path_j[jj])
-            assert path_i[ii] in graph.nodes
-            assert path_j[jj] in graph.nodes
 
             # Remove nodes
-            graph.remove_nodes_from(path_i[0:ii])
-            graph.remove_nodes_from(path_j[0:jj])
+            graph.remove_nodes_from(path_i[0:ii] + path_j[0:jj])
 
 
 def compute_dot(branch1, branch2, idx1, idx2):
