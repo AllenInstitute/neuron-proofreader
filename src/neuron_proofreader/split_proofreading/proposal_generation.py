@@ -27,7 +27,7 @@ class ProposalGenerator:
         max_attempts=2,
         max_proposals_per_leaf=3,
         min_size_with_proposals=0,
-        search_scaling_factor=1.5
+        search_scaling_factor=1.5,
     ):
         """
         Instantiates a ProposalGenerator object.
@@ -94,7 +94,7 @@ class ProposalGenerator:
             while len(node_candidates) == 0 and cnt < self.max_attempts:
                 # Search for candidates
                 cnt += 1
-                radius = initial_radius * self.search_scaling_factor ** cnt
+                radius = initial_radius * self.search_scaling_factor**cnt
                 node_candidates = self.find_node_candidates(leaf, radius)
 
                 # Parse candidates
@@ -265,7 +265,7 @@ class ProposalGenerator:
             Indication of whether proposal is valid.
         """
         if i is not None:
-            is_soma = (self.graph.is_soma(i) and self.graph.is_soma(leaf))
+            is_soma = self.graph.is_soma(i) and self.graph.is_soma(leaf)
             self.graph.n_proposals_blocked += 1 if is_soma else 0
             return not is_soma
         else:
@@ -348,6 +348,7 @@ def trim_proposal_endpoints(graph, proposal, max_depth=20):
     proposal : Frozenset[int]
         Proposal used to specify endpoints to be trimmed.
     """
+
     def get_path(leaf):
         """
         Gets path of nodes emanating from the given node and ensures that
@@ -361,7 +362,7 @@ def trim_proposal_endpoints(graph, proposal, max_depth=20):
         Returns
         -------
         path : List[int]
-        
+
         """
         idx = 1
         path = graph.path_from_leaf(leaf, max_depth=max_depth)
