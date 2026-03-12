@@ -294,6 +294,7 @@ class ProposalGenerator:
             nodes = list()
             for idx in self.kdtree.query_ball_point(xyz, radius):
                 node = self.graph.closest_node(self.kdtree.data[idx])
+                nodes.append(node)
             return nodes
 
     def select_closest_components(self, pts_dict):
