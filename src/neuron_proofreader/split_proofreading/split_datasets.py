@@ -10,6 +10,7 @@ generation for training and inference in split-correction tasks.
 """
 
 from torch.utils.data import IterableDataset
+from tqdm import tqdm
 
 import os
 import pandas as pd
@@ -274,8 +275,7 @@ class FragmentsDatasetCollection(IterableDataset):
             Search radius used to generate proposals.
         """
         # Proposal generation
-        for key in self.datasets:
-            print(key)
+        for key in tqdm(self.datasets, desc="Generate Proposals"):
             self.datasets[key].graph.generate_proposals(
                 search_radius, allow_nonleaf_targets=True
             )

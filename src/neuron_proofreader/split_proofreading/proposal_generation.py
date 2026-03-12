@@ -267,7 +267,7 @@ class ProposalGenerator:
         if i is not None:
             is_soma = self.graph.is_soma(i) and self.graph.is_soma(leaf)
             self.graph.n_proposals_blocked += 1 if is_soma else 0
-            return not is_soma
+            return not is_soma and self.graph.degree[i] < 3
         else:
             return False
 
@@ -294,7 +294,6 @@ class ProposalGenerator:
             nodes = list()
             for idx in self.kdtree.query_ball_point(xyz, radius):
                 node = self.graph.closest_node(self.kdtree.data[idx])
-                nodes.append(node)
             return nodes
 
     def select_closest_components(self, pts_dict):
@@ -388,7 +387,8 @@ def trim_proposal_endpoints(graph, proposal, max_depth=20):
             graph.add_proposal(path_i[ii], path_j[jj])
 
             # Remove nodes
-            graph.remove_nodes_from(path_i[0:ii] + path_j[0:jj])
+            graph.remove_nodes_from(path_i[0:ii])
+            graph.remove_nodes_from(path_j[0:jj])
 
 
 def compute_dot(branch1, branch2, idx1, idx2):
