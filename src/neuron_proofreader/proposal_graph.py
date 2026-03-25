@@ -132,6 +132,7 @@ class ProposalGraph(SkeletonGraph):
 
             # Add attributes
             self.add_node(node_id)
+            self.component_id_to_swc_id[num_components + cnt] = "soma-{cnt}"
             self.node_component_id[node_id] = num_components + cnt
             self.node_radius[node_id] = 10
             self.node_xyz[node_id] = xyz
