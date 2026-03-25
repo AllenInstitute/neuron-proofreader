@@ -129,7 +129,6 @@ class InferencePipeline:
         self.save_fragment_ids()
 
         # Connect fragments very close to soma
-        self.log(f"# Soma Fragments: {len(self.dataset.graph.soma_ids)}")
         if len(self.soma_centroids) > 0:
             somas = self.soma_centroids
             results = self.dataset.graph.connect_soma_fragments(somas)

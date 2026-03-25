@@ -84,7 +84,7 @@ class ProposalGraph(SkeletonGraph):
         self.anisotropy = anisotropy
         self.component_id_to_swc_id = dict()
         self.gt_path = gt_path
-        self.soma_ids = set()
+        self.soma_component_ids = set()
         self.verbose = verbose
 
         # Instance attributes - Proposals
@@ -115,17 +115,38 @@ class ProposalGraph(SkeletonGraph):
 
     # --- Update Structure ---
     def add_soma_nodes(self, soma_centroids):
-        pass
+        # Resize attributes
+        num_nodes = self.number_of_nodes()
+        num_somas = len(soma_centroids)
+        self.resize_node_attr((num_nodes + num_somas), "node_component_id")
+        self.resize_node_attr((num_nodes + num_somas), "node_radius")
+        self.resize_node_attr((num_nodes + num_somas, 3), "node_xyz")
+
+        # Add soma nodes
+        num_components = nx.number_connected_components(self)
+        somas_dict = dict()
+        for cnt, xyz in enumerate(soma_centroids, start=1):
+            # Set node ID
+            node_id = self.number_of_nodes()
+            assert node_id not in self.nodes
+
+            # Add attributes
+            self.add_node(node_id)
+            self.node_component_id[node_id] = num_components + cnt
+            self.node_radius[node_id] = 10
+            self.node_xyz[node_id] = xyz
+
+            somas_dict[node_id] = np.array(xyz)
+        return somas_dict
 
     def connect_soma_fragments(self, soma_centroids, max_dist=25):
         merge_cnt, soma_cnt = 0, 0
-        somas_dict = self.add_soma_nodes(soma_centroids, max_dist=max_dist)
-        for soma_xyz, soma_id in somas_dict.items():
+        somas_dict = self.add_soma_nodes(soma_centroids)
+        for soma_node_id, xyz in somas_dict.items():
             # Extract nearby nodes
-            soma_xyz = np.array(soma_xyz)
-            ids = self.kdtree.query_ball_point(soma_xyz, max_dist)
-            soma_component_id = self.node_component_id[soma_id]
-            self.soma_ids.add(soma_component_id)
+            ids = self.kdtree.query_ball_point(xyz, max_dist)
+            soma_component_id = self.node_component_id[soma_node_id]
+            self.soma_component_ids.add(soma_component_id)
 
             # Connect to soma by connected component
             if len(ids) > 1:
@@ -134,19 +155,22 @@ class ProposalGraph(SkeletonGraph):
                 for cid in np.unique(self.node_component_id[ids]):
                     # Find node closest to soma
                     idxs = np.where(self.node_component_id[ids] == cid)[0]
-                    dists = np.sum((self.node_xyz[ids[idxs]] - soma_xyz) ** 2, axis=1)
+                    dists = np.sum((self.node_xyz[ids[idxs]] - xyz) ** 2, axis=1)
                     node_id = ids[idxs[np.argmin(dists)]]
 
                     # Connect closest node to soma
-                    if not nx.has_path(self, node_id, soma_id):
-                        self.add_edge(node_id, soma_id)
+                    if not nx.has_path(self, node_id, soma_node_id):
+                        self.add_edge(node_id, soma_node_id)
                         self.update_component_ids(soma_component_id, node_id)
                         merge_cnt += 1
         self.set_kdtree()
 
         # Summarize results
-        results = [f"# Somas Connected: {soma_cnt}"]
-        results.append(f"# Soma Fragments Merged: {merge_cnt}")
+        results = [
+            f"# Soma Fragments: {len(self.soma_component_ids)}",
+            f"# Somas Connected: {soma_cnt}",
+            f"# Soma Fragments Merged: {merge_cnt}",
+        ]
         return "\n".join(results)
 
     def relabel_nodes(self):
@@ -166,7 +190,6 @@ class ProposalGraph(SkeletonGraph):
         node_attr = getattr(self, attr_name)
         new_node_attr = np.empty(new_shape, dtype=node_attr.dtype)
         new_node_attr[:len(node_attr)] = node_attr
-        new_node_attr[len(node_attr):] = 0
         setattr(self, attr_name, new_node_attr)
 
     # --- Proposal Operations ---
@@ -436,7 +459,7 @@ class ProposalGraph(SkeletonGraph):
             True if the node belongs to a connected component with a soma;
             False otherwise.
         """
-        return self.node_component_id[i] in self.soma_ids
+        return self.node_component_id[i] in self.soma_component_ids
 
     def update_component_ids(self, component_id, root):
         """
