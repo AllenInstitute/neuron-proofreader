@@ -174,7 +174,11 @@ class InferencePipeline:
         t0 = time()
         self.log("\nStep 2: Generate Proposals")
         self.log(f"Search Radius: {search_radius}")
-        self.dataset.graph.generate_proposals(search_radius)
+        self.dataset.graph.generate_proposals(
+            search_radius,
+            allow_nonleaf_targets=self.config.graph.allow_nonleaf_targets,
+        )
+
         n_proposals = format(self.dataset.graph.n_proposals(), ",")
         n_proposals_blocked = self.dataset.graph.n_proposals_blocked
 
@@ -186,8 +190,8 @@ class InferencePipeline:
 
     def classify_proposals(self, accept_threshold, dt=0.05):
         """
-        Classifies and iteratively merges accepted proposals using a
-        decreasing confidence threshold.
+        Classifies and iteratively merges proposals using a decreasing
+        confidence threshold.
 
         Parameters
         ----------
