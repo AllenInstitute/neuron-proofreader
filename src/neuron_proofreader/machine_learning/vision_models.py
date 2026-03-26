@@ -16,6 +16,7 @@ from einops import rearrange
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from neuron_proofreader.utils import ml_util
 from neuron_proofreader.utils.ml_util import FeedForwardNet, init_mlp
@@ -136,36 +137,69 @@ class CNN3D(nn.Module):
 # --- Transformers ---
 class MAE3D(nn.Module):
 
-    def __init__(self, checkpoint_path, model_config, freeze_encoder=True):
-        # Call parent closs
+    def __init__(
+        self,
+        checkpoint_path,
+        model_config,
+        freeze_encoder=True,
+        pool_power=2,
+    ):
         super().__init__()
 
-        # Load model
         self.model = BinaryClassifier(
             checkpoint_path=checkpoint_path,
             model_config=model_config,
-            freeze_encoder=freeze_encoder
+            freeze_encoder=freeze_encoder,
         )
 
-        # Instance attributes
-#        self.encoder = full_model.encoder
-#        self.output = ml_util.init_feedforward(384, 1, 2)
+        # Remove the unused BinaryClassifier head to avoid orphaned
+        # parameters (crashes DDP with find_unused_parameters=False)
+        self.model.classifier = nn.Identity()
+
+        # Cache encoder properties for mask-guided pooling
+        encoder = self.model.encoder
+        self.encoder_dim = self.model.encoder_dim
+        self.n_prefix_tokens = 1 + encoder.n_register_tokens
+        self.grid_size = tuple(int(g) for g in encoder.grid_size)
+        self.pool_power = pool_power
+
+        # Dual-stream classifier: [CLS, mask-pooled] → 1
+        self.classifier = nn.Sequential(
+            nn.Linear(2 * self.encoder_dim, 256),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(256, 1),
+        )
 
     def forward(self, x):
-#       latent0 = self.encoder(x[:, 0:1, ...])
-#       latent1 = self.encoder(x[:, 1:2, ...])
-#        x0 = latent0["latents"][:, 0, :]
-#        x1 = latent1["latents"][:, 0, :]
-#        x = torch.cat((x0, x1), dim=1)
-#        x = self.output(x)
-#        return x
+        img = x[:, 0:1, ...]   # (B, 1, D, H, W)
+        mask = x[:, 1:2, ...]  # (B, 1, D, H, W)
 
-        img = x[:, 0:1, ...]
-        mask = x[:, 1:2, ...]
+        # Encode image + mask → encoder sees spatial mask signal
+        latents = self.model.encode(img + mask)
 
-        combined_input = img + mask
+        # CLS token
+        cls_token = latents[:, 0, :]  # (B, encoder_dim)
 
-        return self.model(combined_input)
+        # Patch tokens
+        patch_tokens = latents[:, self.n_prefix_tokens:, :]
+
+        # Downsample mask to patch grid via max pool (preserves 0/0.5/1 hierarchy)
+        weights = F.adaptive_max_pool3d(mask, self.grid_size)
+        weights = weights.reshape(weights.shape[0], -1)  # (B, n_patches)
+
+        # Power-scale: skeleton=1.0, segment=0.25, bg=0.0 (with power=2)
+        weights = weights ** self.pool_power
+
+        # Normalize weights to sum to 1
+        weights = weights / (weights.sum(dim=1, keepdim=True) + 1e-8)
+
+        # Weighted average pooling of patch tokens
+        pooled = (patch_tokens * weights.unsqueeze(-1)).sum(dim=1)
+
+        # Concatenate [CLS, pooled] and classify
+        combined = torch.cat([cls_token, pooled], dim=1)  # (B, 2*encoder_dim)
+        return self.classifier(combined)
 
 
 class ViT3D(nn.Module):

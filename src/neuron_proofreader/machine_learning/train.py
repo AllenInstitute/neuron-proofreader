@@ -13,13 +13,19 @@ from datetime import datetime
 from sklearn.metrics import precision_score, recall_score, accuracy_score
 from torch.nn.parallel import DistributedDataParallel
 from torch.nn.utils import clip_grad_norm_
-from torch.optim.lr_scheduler import CosineAnnealingLR, LinearLR, SequentialLR
+from torch.optim.lr_scheduler import (
+    CosineAnnealingLR,
+    LinearLR,
+    ReduceLROnPlateau,
+    SequentialLR,
+)
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 
 import numpy as np
 import os
+import pandas as pd
 import torch
 import torch.distributed as dist
 import torch.nn as nn
@@ -67,10 +73,14 @@ class Trainer:
         output_dir,
         device="cuda",
         lr=1e-3,
+        head_lr=None,
         max_epochs=200,
         min_recall=0,
         patience=8,
         warmup_epochs=5,
+        scheduler_type="cosine",
+        pos_weight=None,
+        save_val_logits=False,
         save_mistake_mips=False
     ):
         """
@@ -86,6 +96,9 @@ class Trainer:
             Directory that tensorboard and model checkpoints are written to.
         lr : float, optional
             Learning rate. Default is 1e-3.
+        head_lr : float, optional
+            Learning rate for the classifier head. If None, uses lr for all
+            parameters. Default is None.
         max_epochs : int, optional
             Maximum number of training epochs. Default is 200.
         min_recall : float, optional
@@ -106,29 +119,78 @@ class Trainer:
 
         # Instance attributes
         self.best_f1 = 0
+        self.best_val_loss = float("inf")
         self.device = device
         self.log_dir = log_dir
         self.max_epochs = max_epochs
         self.min_recall = min_recall
         self.patience = patience
         self.warmup_epochs = warmup_epochs
+        self.scheduler_type = scheduler_type
         self.epochs_without_improvement = 0
         self.mistakes_dir = os.path.join(log_dir, "mistakes")
         self.model_name = model_name
+        self.save_val_logits = save_val_logits
         self.save_mistake_mips = save_mistake_mips
 
-        self.criterion = nn.BCEWithLogitsLoss()
+        if pos_weight is None:
+            self.criterion = nn.BCEWithLogitsLoss()
+        else:
+            pos_weight_tensor = torch.tensor([pos_weight], device=device)
+            self.criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight_tensor)
         self.model = model.to(device)
-        # Only pass trainable parameters to optimizer (handles frozen encoder)
         self.optimizer = optim.AdamW(
-            filter(lambda p: p.requires_grad, self.model.parameters()),
-            lr=lr,
+            self._build_param_groups(self.model, lr, head_lr),
         )
         self.scaler = torch.cuda.amp.GradScaler(enabled=True)
-        self.scheduler = self._create_scheduler(max_epochs, warmup_epochs)
+        self.scheduler = self._create_scheduler(max_epochs, warmup_epochs, scheduler_type)
         self.writer = SummaryWriter(log_dir=log_dir)
 
-    def _create_scheduler(self, max_epochs, warmup_epochs):
+    @staticmethod
+    def _build_param_groups(model, lr, head_lr=None):
+        """
+        Builds optimizer parameter groups with optional differential LR.
+
+        If head_lr is provided and the model has a ``classifier`` attribute,
+        the classifier parameters use head_lr while all other trainable
+        parameters use lr.
+
+        Parameters
+        ----------
+        model : torch.nn.Module
+            The model (may be DDP-wrapped).
+        lr : float
+            Base learning rate for the encoder / backbone.
+        head_lr : float, optional
+            Learning rate for the classifier head. If None, all parameters
+            share the base lr.
+
+        Returns
+        -------
+        List[dict]
+            Parameter groups for torch.optim.
+        """
+        base_model = model.module if hasattr(model, "module") else model
+        if head_lr is not None and hasattr(base_model, "classifier"):
+            head_ids = set(id(p) for p in base_model.classifier.parameters())
+            backbone = [
+                p for p in base_model.parameters()
+                if p.requires_grad and id(p) not in head_ids
+            ]
+            head = [
+                p for p in base_model.classifier.parameters()
+                if p.requires_grad
+            ]
+            print(f"Param groups: backbone lr={lr}, head lr={head_lr}")
+            return [
+                {"params": backbone, "lr": lr},
+                {"params": head, "lr": head_lr},
+            ]
+        return [
+            {"params": [p for p in base_model.parameters() if p.requires_grad], "lr": lr}
+        ]
+
+    def _create_scheduler(self, max_epochs, warmup_epochs, scheduler_type):
         """
         Creates a learning rate scheduler with linear warmup and cosine
         annealing.
@@ -145,6 +207,16 @@ class Trainer:
         torch.optim.lr_scheduler.SequentialLR
             Combined scheduler with warmup and cosine annealing phases.
         """
+        if scheduler_type == "plateau":
+            # Reduce on validation loss; warmup not supported here.
+            return ReduceLROnPlateau(
+                self.optimizer,
+                mode="min",
+                factor=0.5,
+                patience=5,
+                min_lr=1e-7,
+            )
+
         warmup_scheduler = LinearLR(
             self.optimizer,
             start_factor=0.1,
@@ -179,24 +251,47 @@ class Trainer:
             # Train-Validate
             train_stats = self.train_step(train_dataloader, epoch)
             val_stats = self.validate_step(val_dataloader, epoch)
-            new_best = self.check_model_performance(val_stats, epoch)
+            new_best_loss = val_stats["loss"] < self.best_val_loss
+            if new_best_loss:
+                self.best_val_loss = val_stats["loss"]
+                self.save_model(epoch, tag="best_loss")
+                if self.save_val_logits:
+                    self._save_val_logits(
+                        val_dataloader,
+                        self._last_val_y,
+                        self._last_val_hat_y,
+                        epoch,
+                    )
+
+            # Log learning rate
+            current_lr = self.optimizer.param_groups[0]["lr"]
+            if self.writer is not None:
+                self.writer.add_scalar("lr", current_lr, epoch)
 
             # Report results
-            print(f"\nEpoch {epoch}: " + ("New Best!" if new_best else " "))
+            print(f"\nEpoch {epoch}: " + ("New Best!" if new_best_loss else " "))
             self.report_stats(train_stats, is_train=True)
             self.report_stats(val_stats, is_train=False)
 
+            # Step scheduler (before early stopping so LR reductions take effect)
+            old_lrs = [g["lr"] for g in self.optimizer.param_groups]
+            if self.scheduler_type == "plateau":
+                self.scheduler.step(val_stats["loss"])
+            else:
+                self.scheduler.step()
+            new_lrs = [g["lr"] for g in self.optimizer.param_groups]
+            for i, (old, new) in enumerate(zip(old_lrs, new_lrs)):
+                if new != old:
+                    print(f"   LR reduced: group {i} {old:.2e} -> {new:.2e}")
+
             # Early stopping check
-            if new_best:
+            if new_best_loss:
                 self.epochs_without_improvement = 0
             else:
                 self.epochs_without_improvement += 1
                 if self.epochs_without_improvement >= self.patience:
                     print(f"Early stopping: no improvement for {self.patience} epochs")
                     break
-
-            # Step scheduler
-            self.scheduler.step()
 
     def train_step(self, train_dataloader, epoch):
         """
@@ -215,10 +310,32 @@ class Trainer:
             Dictionary of aggregated training metrics.
         """
         self.model.train()
-        loss, y, hat_y = list(), list(), list()
+        loss_sum = 0.0
+        loss_count = 0
+        y, hat_y = list(), list()
         rank = getattr(self, "rank", 0)
         pbar = tqdm(train_dataloader, desc="Training", unit="batch", disable=rank != 0)
+        batch_idx = 0
         for x_i, y_i in pbar:
+            # Save first 5 batches of epoch 0 for debugging
+            if epoch == 0 and batch_idx < 5 and rank == 0:
+                save_dir = os.path.join(self.log_dir, "debug_batches", "train")
+                os.makedirs(save_dir, exist_ok=True)
+                torch.save(
+                    {"x": x_i.cpu(), "y": y_i.cpu()},
+                    os.path.join(save_dir, f"batch_{batch_idx}.pt"),
+                )
+                x_np = x_i.cpu().numpy()
+                for i in range(x_np.shape[0]):
+                    label = int(y_i[i].item())
+                    path = os.path.join(
+                        save_dir, f"batch_{batch_idx}_ex{i}_label{label}.png"
+                    )
+                    img_util.plot_image_and_segmentation_mips(
+                        x_np[i, 0], 2 * x_np[i, 1], path
+                    )
+            batch_idx += 1
+
             # Forward pass
             self.optimizer.zero_grad()
             hat_y_i, loss_i = self.forward_pass(x_i, y_i)
@@ -235,13 +352,15 @@ class Trainer:
             # Store results
             y.extend(ml_util.to_cpu(y_i, True).flatten().tolist())
             hat_y.extend(ml_util.to_cpu(hat_y_i, True).flatten().tolist())
-            loss.append(float(ml_util.to_cpu(loss_i)))
+            batch_size = int(y_i.size(0))
+            loss_sum += float(ml_util.to_cpu(loss_i)) * batch_size
+            loss_count += batch_size
             if rank == 0:
-                pbar.set_postfix(loss=f"{loss[-1]:.4f}")
+                pbar.set_postfix(loss=f"{loss_sum / max(loss_count, 1):.4f}")
 
         # Write stats to tensorboard
         stats = self.compute_stats(y, hat_y)
-        stats["loss"] = np.mean(loss)
+        stats["loss"] = loss_sum / max(loss_count, 1)
         self.update_tensorboard(stats, epoch, "train_")
         return stats
 
@@ -265,7 +384,8 @@ class Trainer:
         """
         # Initializations
         idx_offset = 0
-        loss_accum = 0
+        loss_sum = 0.0
+        loss_count = 0
         y_accum = list()
         hat_y_accum = list()
         rank = getattr(self, "rank", 0)
@@ -274,9 +394,29 @@ class Trainer:
 
         # Iterate over dataset
         self.model.eval()
+        batch_idx = 0
         with torch.no_grad():
             pbar = tqdm(val_dataloader, desc="Validating", unit="batch", disable=rank != 0)
             for x, y in pbar:
+                # Save first 5 batches of epoch 0 for debugging
+                if epoch == 0 and batch_idx < 5 and rank == 0:
+                    save_dir = os.path.join(self.log_dir, "debug_batches", "val")
+                    os.makedirs(save_dir, exist_ok=True)
+                    torch.save(
+                        {"x": x.cpu(), "y": y.cpu()},
+                        os.path.join(save_dir, f"batch_{batch_idx}.pt"),
+                    )
+                    x_np = x.cpu().numpy()
+                    for i in range(x_np.shape[0]):
+                        label = int(y[i].item())
+                        path = os.path.join(
+                            save_dir, f"batch_{batch_idx}_ex{i}_label{label}.png"
+                        )
+                        img_util.plot_image_and_segmentation_mips(
+                            x_np[i, 0], 2 * x_np[i, 1], path
+                        )
+                batch_idx += 1
+
                 # Run model
                 hat_y, loss = self.forward_pass(x, y)
 
@@ -287,9 +427,11 @@ class Trainer:
                 # Store predictions
                 y_accum.extend(y)
                 hat_y_accum.extend(hat_y)
-                loss_accum += float(ml_util.to_cpu(loss))
+                batch_size = len(y)
+                loss_sum += float(ml_util.to_cpu(loss)) * batch_size
+                loss_count += batch_size
                 if rank == 0:
-                    pbar.set_postfix(loss=f"{loss_accum / len(y_accum):.4f}")
+                    pbar.set_postfix(loss=f"{loss_sum / max(loss_count, 1):.4f}")
 
                 # Save MIPs of mistakes (only rank 0 in distributed mode)
                 if rank == 0:
@@ -298,8 +440,12 @@ class Trainer:
 
         # Write stats to tensorboard
         stats = self.compute_stats(y_accum, hat_y_accum)
-        stats["loss"] = loss_accum / len(y_accum)
+        stats["loss"] = loss_sum / max(loss_count, 1)
         self.update_tensorboard(stats, epoch, "val_")
+
+        # Stash for saving on best epoch
+        self._last_val_y = y_accum
+        self._last_val_hat_y = hat_y_accum
         return stats
 
     def forward_pass(self, x, y):
@@ -345,20 +491,27 @@ class Trainer:
         stats : Dict[str, float]
             Dictionary of metric names to values.
         """
+        # Logit distribution
+        hat_y_arr = np.array(hat_y)
+        pos_prob = 1.0 / (1.0 + np.exp(-hat_y_arr))
+
         # Reformat predictions
-        hat_y = (np.array(hat_y) > 0).astype(int)
+        hat_y = (hat_y_arr > 0).astype(int)
         y = np.array(y, dtype=int)
 
         # Compute stats
         avg_prec = precision_score(y, hat_y, zero_division=np.nan)
         avg_recall = recall_score(y, hat_y, zero_division=np.nan)
-        avg_f1 = 2 * avg_prec * avg_recall / max((avg_prec + avg_recall), 1)
+        avg_f1 = 2 * avg_prec * avg_recall / max((avg_prec + avg_recall), 1e-8)
         avg_acc = accuracy_score(y, hat_y)
         stats = {
             "f1": avg_f1,
             "precision": avg_prec,
             "recall": avg_recall,
-            "accuracy": avg_acc
+            "accuracy": avg_acc,
+            "logit_mean": float(np.mean(hat_y_arr)),
+            "logit_std": float(np.std(hat_y_arr)),
+            "pos_prob_mean": float(np.mean(pos_prob)),
         }
         return stats
 
@@ -379,31 +532,7 @@ class Trainer:
             summary += f"{key}={value:.4f}, "
         print(summary)
 
-    def check_model_performance(self, stats, epoch):
-        """
-        Checks whether the current model's performance (based on F1 score)
-        surpasses the previous best, and saves the model if it does.
-
-        Parameters
-        ----------
-        stats : Dict[str, float]
-            Dictionary of evaluation metrics from the current epoch.
-            Must contain the key "f1" representing the F1 score.
-        epoch : int
-            Current training epoch.
-
-        Returns
-        -------
-        bool
-            True if the model achieved a new best F1 score and was saved.
-            False otherwise.
-        """
-        if stats["f1"] > self.best_f1 and stats["recall"] > self.min_recall:
-            self.best_f1 = stats["f1"]
-            self.save_model(epoch)
-            return True
-        else:
-            return False
+    # check_model_performance removed: checkpointing is based on val loss now.
 
     def load_pretrained_weights(self, model_path):
         """
@@ -474,7 +603,42 @@ class Trainer:
                         x[i, 0], 2 * x[i, 1], output_path
                     )
 
-    def save_model(self, epoch):
+    def _save_val_logits(self, val_dataloader, y_accum, hat_y_accum, epoch):
+        """
+        Saves per-sample validation logits to CSV for later analysis.
+
+        Parameters
+        ----------
+        val_dataloader : DataLoader or PrefetchingDataLoader
+            Validation dataloader used for iteration.
+        y_accum : List[float]
+            Accumulated validation labels.
+        hat_y_accum : List[float]
+            Accumulated validation logits.
+        epoch : int
+            Current epoch.
+        """
+        dataset = getattr(val_dataloader, "dataset", None)
+        if dataset is None and hasattr(val_dataloader, "dataloader"):
+            dataset = val_dataloader.dataloader.dataset
+
+        examples_summary = getattr(dataset, "examples_summary", None)
+        if examples_summary is not None:
+            df = pd.DataFrame(examples_summary)
+        else:
+            df = pd.DataFrame({"index": np.arange(len(hat_y_accum))})
+
+        logits = np.array(hat_y_accum)
+        df["label"] = y_accum
+        df["logit"] = logits
+        df["prob"] = 1.0 / (1.0 + np.exp(-logits))
+        df["predicted"] = (logits > 0).astype(int)
+        df["epoch"] = epoch
+
+        out_path = os.path.join(self.log_dir, "val_logits_best.csv")
+        df.to_csv(out_path, index=False)
+
+    def save_model(self, epoch, tag="best_f1"):
         """
         Saves the current model state to a file.
 
@@ -486,8 +650,7 @@ class Trainer:
         epoch : int
             Current training epoch.
         """
-        date = datetime.today().strftime("%Y%m%d")
-        filename = f"{self.model_name}-{date}-{epoch}-{self.best_f1:.4f}.pth"
+        filename = "best_model.pth"
         path = os.path.join(self.log_dir, filename)
 
         # Unwrap DDP model if necessary for checkpoint compatibility
@@ -579,14 +742,14 @@ class DistributedTrainer(Trainer):
 
         return y_gathered, hat_y_gathered
 
-    def _gather_loss(self, loss_accum, n_samples_local):
+    def _gather_loss(self, loss_sum, n_samples_local):
         """
         Gather and properly normalize loss across all ranks.
 
         Parameters
         ----------
-        loss_accum : float
-            Accumulated loss on this rank.
+        loss_sum : float
+            Sum of per-sample losses on this rank.
         n_samples_local : int
             Number of samples processed on this rank.
 
@@ -596,10 +759,10 @@ class DistributedTrainer(Trainer):
             Properly normalized global loss.
         """
         if not dist.is_initialized():
-            return loss_accum / n_samples_local
+            return loss_sum / n_samples_local
 
         # Gather total loss and sample counts from all ranks
-        loss_tensor = torch.tensor([loss_accum], device=self.device)
+        loss_tensor = torch.tensor([loss_sum], device=self.device)
         count_tensor = torch.tensor([n_samples_local], device=self.device)
 
         dist.all_reduce(loss_tensor, op=dist.ReduceOp.SUM)
@@ -614,9 +777,13 @@ class DistributedTrainer(Trainer):
         output_dir,
         device="cuda",
         lr=1e-3,
+        head_lr=None,
         max_epochs=200,
         patience=8,
         warmup_epochs=5,
+        scheduler_type="cosine",
+        pos_weight=None,
+        save_val_logits=False,
         save_mistake_mips=False
     ):
         """
@@ -632,6 +799,9 @@ class DistributedTrainer(Trainer):
             Directory that tensorboard and model checkpoints are written to.
         lr : float, optional
             Learning rate. Default is 1e-3.
+        head_lr : float, optional
+            Learning rate for the classifier head. If None, uses lr for all
+            parameters. Default is None.
         max_epochs : int, optional
             Maximum number of training epochs. Default is 200.
         patience : int, optional
@@ -688,18 +858,25 @@ class DistributedTrainer(Trainer):
 
         # Now initialize parent class attributes without creating directories
         self.best_f1 = 0
+        self.best_val_loss = float("inf")
         self.device = device
         self.log_dir = log_dir
         self.max_epochs = max_epochs
         self.min_recall = 0
         self.patience = patience
         self.warmup_epochs = warmup_epochs
+        self.scheduler_type = scheduler_type
         self.epochs_without_improvement = 0
         self.mistakes_dir = mistakes_dir
         self.model_name = model_name
+        self.save_val_logits = save_val_logits
         self.save_mistake_mips = save_mistake_mips
 
-        self.criterion = nn.BCEWithLogitsLoss()
+        if pos_weight is None:
+            self.criterion = nn.BCEWithLogitsLoss()
+        else:
+            pos_weight_tensor = torch.tensor([pos_weight], device=device)
+            self.criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight_tensor)
         self.model = model.to(device)
         self.scaler = torch.cuda.amp.GradScaler(enabled=True)
 
@@ -711,6 +888,7 @@ class DistributedTrainer(Trainer):
 
         # Store lr for optimizer creation after DDP setup
         self._lr = lr
+        self._head_lr = head_lr
 
         # Set up DDP (process group already initialized)
         # Optimizer and scheduler are created after DDP wrapping
@@ -739,12 +917,14 @@ class DistributedTrainer(Trainer):
         )
 
         # Create optimizer and scheduler AFTER DDP wrapping
-        # Only pass trainable parameters to optimizer
         self.optimizer = optim.AdamW(
-            filter(lambda p: p.requires_grad, self.model.parameters()),
-            lr=self._lr,
+            self._build_param_groups(self.model, self._lr, self._head_lr),
         )
-        self.scheduler = self._create_scheduler(self.max_epochs, self.warmup_epochs)
+        self.scheduler = self._create_scheduler(
+            self.max_epochs,
+            self.warmup_epochs,
+            self.scheduler_type,
+        )
 
         print(f"Initialized rank {self.rank}/{self.world_size}")
 
@@ -775,7 +955,8 @@ class DistributedTrainer(Trainer):
         """
         # Initializations
         idx_offset = 0
-        loss_accum = 0
+        loss_sum = 0.0
+        loss_count = 0
         y_accum = list()
         hat_y_accum = list()
         if self.save_mistake_mips and self.rank == 0:
@@ -783,9 +964,29 @@ class DistributedTrainer(Trainer):
 
         # Iterate over dataset
         self.model.eval()
+        batch_idx = 0
         with torch.no_grad():
             pbar = tqdm(val_dataloader, desc="Validating", unit="batch", disable=self.rank != 0)
             for x, y in pbar:
+                # Save first 5 batches of epoch 0 for debugging
+                if epoch == 0 and batch_idx < 5 and self.rank == 0:
+                    save_dir = os.path.join(self.log_dir, "debug_batches", "val")
+                    os.makedirs(save_dir, exist_ok=True)
+                    torch.save(
+                        {"x": x.cpu(), "y": y.cpu()},
+                        os.path.join(save_dir, f"batch_{batch_idx}.pt"),
+                    )
+                    x_np = x.cpu().numpy()
+                    for i in range(x_np.shape[0]):
+                        label = int(y[i].item())
+                        path = os.path.join(
+                            save_dir, f"batch_{batch_idx}_ex{i}_label{label}.png"
+                        )
+                        img_util.plot_image_and_segmentation_mips(
+                            x_np[i, 0], 2 * x_np[i, 1], path
+                        )
+                batch_idx += 1
+
                 # Run model
                 hat_y, loss = self.forward_pass(x, y)
 
@@ -796,9 +997,11 @@ class DistributedTrainer(Trainer):
                 # Store predictions
                 y_accum.extend(y)
                 hat_y_accum.extend(hat_y)
-                loss_accum += float(ml_util.to_cpu(loss))
+                batch_size = len(y)
+                loss_sum += float(ml_util.to_cpu(loss)) * batch_size
+                loss_count += batch_size
                 if self.rank == 0:
-                    pbar.set_postfix(loss=f"{loss_accum / len(y_accum):.4f}")
+                    pbar.set_postfix(loss=f"{loss_sum / max(loss_count, 1):.4f}")
 
                 # Save MIPs of mistakes (only rank 0)
                 if self.rank == 0:
@@ -809,7 +1012,7 @@ class DistributedTrainer(Trainer):
         y_gathered, hat_y_gathered = self._gather_predictions(y_accum, hat_y_accum)
 
         # Compute properly normalized loss across all ranks
-        global_loss = self._gather_loss(loss_accum, len(y_accum))
+        global_loss = self._gather_loss(loss_sum, loss_count)
 
         # Compute stats on gathered predictions (only meaningful on rank 0,
         # but all ranks compute to stay synchronized)
@@ -820,6 +1023,9 @@ class DistributedTrainer(Trainer):
         if self.rank == 0:
             self.update_tensorboard(stats, epoch, "val_")
 
+        # Stash for saving on best epoch
+        self._last_val_y = y_accum
+        self._last_val_hat_y = hat_y_accum
         return stats
 
     def run(self, train_dataloader, val_dataloader):
@@ -855,16 +1061,44 @@ class DistributedTrainer(Trainer):
             # completed validation
             dist.barrier()
 
+            # Log learning rate (rank 0 only)
+            if rank == 0 and self.writer is not None:
+                current_lr = self.optimizer.param_groups[0]["lr"]
+                self.writer.add_scalar("lr", current_lr, epoch)
+
             # Report results and save model (rank 0 only)
             should_stop = torch.tensor([0], device=self.device)
             if rank == 0:
-                new_best = self.check_model_performance(val_stats, epoch)
-                print(f"\nEpoch {epoch}: ", "New Best!" if new_best else "")
+                new_best_loss = val_stats["loss"] < self.best_val_loss
+                if new_best_loss:
+                    self.best_val_loss = val_stats["loss"]
+                    self.save_model(epoch, tag="best_loss")
+                    if self.save_val_logits:
+                        self._save_val_logits(
+                            val_dataloader,
+                            self._last_val_y,
+                            self._last_val_hat_y,
+                            epoch,
+                        )
+                print(f"\nEpoch {epoch}: ", "New Best!" if new_best_loss else "")
                 self.report_stats(train_stats, is_train=True)
                 self.report_stats(val_stats, is_train=False)
 
+            # Step scheduler (before early stopping so LR reductions take effect)
+            old_lrs = [g["lr"] for g in self.optimizer.param_groups]
+            if self.scheduler_type == "plateau":
+                self.scheduler.step(val_stats["loss"])
+            else:
+                self.scheduler.step()
+            if rank == 0:
+                new_lrs = [g["lr"] for g in self.optimizer.param_groups]
+                for i, (old, new) in enumerate(zip(old_lrs, new_lrs)):
+                    if new != old:
+                        print(f"   LR reduced: group {i} {old:.2e} -> {new:.2e}")
+
+            if rank == 0:
                 # Early stopping check
-                if new_best:
+                if new_best_loss:
                     self.epochs_without_improvement = 0
                 else:
                     self.epochs_without_improvement += 1
@@ -877,12 +1111,8 @@ class DistributedTrainer(Trainer):
             if should_stop[0] == 1:
                 break
 
-            # Barrier after saving to ensure checkpoint is written before
-            # proceeding to next epoch
+            # Barrier to ensure checkpoint is written before next epoch
             dist.barrier()
-
-            # Step scheduler
-            self.scheduler.step()
 
 
 # --- Helpers ---

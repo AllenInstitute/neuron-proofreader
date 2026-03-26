@@ -14,6 +14,7 @@ from scipy.spatial import KDTree
 from torch.utils.data import Dataset, DataLoader
 
 import copy
+import math
 import networkx as nx
 import numpy as np
 import os
@@ -331,6 +332,10 @@ class MergeSiteDataset(Dataset):
         except ValueError:
             img_patch = img_util.pad_to_shape(img_patch, self.patch_shape)
             patches = np.stack([img_patch, segment_mask], axis=0)
+
+        # Normalize image channel to zero mean and unit variance
+        patches[0] = (patches[0] - patches[0].mean()) / (patches[0].std() + 1e-8)
+
         return patches, subgraph, label
 
     def sample_brain_id(self):
@@ -678,7 +683,7 @@ class MergeSiteTrainDataset(MergeSiteDataset):
             1 if the example is positive and 0 otherwise.
         """
         patches, subgraph, label = super().__getitem__(idx)
-        self.transform(patches)
+        patches = self.transform(patches)
         return patches, subgraph, label
 
     def get_site(self, idx):
@@ -965,10 +970,25 @@ class MergeSiteDataLoader(DataLoader):
         iterator
             Generates batch of examples used during training and validation.
         """
-        # Set indices
+        # Set indices (handle negative indices for training)
         idxs = self.dataset.get_idxs()
         if self.use_shuffle:
             random.shuffle(idxs)
+
+        # If using a DistributedSampler, shard the full index list by rank
+        if self.sampler is not None:
+            try:
+                rank = self.sampler.rank
+                world_size = self.sampler.num_replicas
+                # Pad so all ranks get the same number of indices
+                total = len(idxs)
+                padded_total = math.ceil(total / world_size) * world_size
+                if padded_total > total:
+                    idxs = np.concatenate([idxs, idxs[:padded_total - total]])
+                idxs = idxs[rank::world_size]
+            except AttributeError:
+                # Fallback: if sampler doesn't expose rank info, keep idxs
+                pass
 
         # Iterate over indices
         for start in range(0, len(idxs), self.batch_size):

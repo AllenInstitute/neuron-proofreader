@@ -20,12 +20,19 @@ class ImageTransforms:
     patch.
     """
 
-    def __init__(self):
+    def __init__(self, p=0.8):
         """
         Initializes an ImageTransforms instance that applies augmentation to
         an image and segmentation patch.
+
+        Parameters
+        ----------
+        p : float, optional
+            Probability of applying the full augmentation pipeline to a given
+            sample. Default is 0.8.
         """
         # Instance attributes
+        self.p = p
         self.transforms = [
             RandomFlip3D(),
             RandomRotation3D(),
@@ -44,8 +51,9 @@ class ImageTransforms:
             Image with the shape (2, H, W, D), where the first channel is the
             input image and second is the segmentation.
         """
-        for transform in self.transforms:
-            patches = transform(patches)
+        if random.random() < self.p:
+            for transform in self.transforms:
+                patches = transform(patches)
         return patches
 
 
@@ -116,8 +124,12 @@ class RandomRotation3D:
         for axes in self.axes:
             if random.random() < 0.5:
                 angle = random.uniform(*self.angles)
-                self.rotate3d(patches[0, ...], angle, axes, False)
-                self.rotate3d(patches[1, ...], angle, axes, True)
+                patches[0, ...] = self.rotate3d(
+                    patches[0, ...], angle, axes, False
+                )
+                patches[1, ...] = self.rotate3d(
+                    patches[1, ...], angle, axes, True
+                )
         return patches
 
     @staticmethod
@@ -149,6 +161,7 @@ class RandomRotation3D:
             order=order,
         )
         img_patch /= multipler
+        return img_patch
 
 
 class RandomScale3D:
@@ -232,7 +245,8 @@ class RandomContrast3D:
         lo = np.percentile(patches[0], np.random.uniform(*self.p_low))
         hi = np.percentile(patches[0], np.random.uniform(*self.p_high))
         patches[0] = (patches[0] - lo) / (hi - lo + 1e-5)
-        patches[0] = np.clip(patches[0], 0, 1)
+        # Re-z-score to maintain consistent distribution
+        patches[0] = (patches[0] - patches[0].mean()) / (patches[0].std() + 1e-8)
         return patches
 
 
@@ -265,5 +279,4 @@ class RandomNoise3D:
         """
         std = self.max_std * random.random()
         img_patches[0] += np.random.uniform(-std, std, img_patches[0].shape)
-        img_patches[0] = np.clip(img_patches[0], 0, 1)
         return img_patches
