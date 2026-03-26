@@ -48,7 +48,7 @@ class ProposalGenerator:
             Default is 2.
         """
         # Instance attributes
-        self.allow_nonleaf_targets = None
+        self.allow_nonleaf_proposals = None
         self.graph = graph
         self.kdtree = None
         self.max_attempts = max_attempts
@@ -56,7 +56,7 @@ class ProposalGenerator:
         self.min_size_with_proposals = min_size_with_proposals
         self.search_scaling_factor = search_scaling_factor
 
-    def __call__(self, initial_radius, allow_nonleaf_targets=False):
+    def __call__(self, initial_radius, allow_nonleaf_proposals=False):
         """
         Generates edge proposals between fragments within the given search
         radius.
@@ -66,12 +66,12 @@ class ProposalGenerator:
         initial_radius : float
             Initial search radius used to generate proposals between endpoints
             of proposal.
-        allow_nonleaf_targets : bool, optional
+        allow_nonleaf_proposals : bool, optional
             Indication of whether to generate proposals between leaf and nodes
             with degree 2. Default is False.
         """
         # Initializations
-        self.allow_nonleaf_targets = allow_nonleaf_targets
+        self.allow_nonleaf_proposals = allow_nonleaf_proposals
         self.set_kdtree()
         iterator = self.graph.leaf_nodes()
         if self.graph.verbose:
@@ -288,7 +288,7 @@ class ProposalGenerator:
             Node IDs within the specified radius.
         """
         xyz = self.graph.node_xyz[node]
-        if self.allow_nonleaf_targets:
+        if self.allow_nonleaf_proposals:
             return self.kdtree.query_ball_point(xyz, radius)
         else:
             nodes = list()
@@ -329,7 +329,7 @@ class ProposalGenerator:
         Sets the KD-Tree used to search for nearby nodes to generate proposals
         between.
         """
-        if self.allow_nonleaf_targets:
+        if self.allow_nonleaf_proposals:
             self.kdtree = self.graph.kdtree
         else:
             leafs = np.array(self.graph.leaf_nodes())

@@ -209,7 +209,9 @@ class ProposalGraph(SkeletonGraph):
         self.node_proposals[j].add(i)
         self.proposals.add(frozenset({i, j}))
 
-    def generate_proposals(self, search_radius, allow_nonleaf_targets=False):
+    def generate_proposals(
+        self, search_radius, allow_nonleaf_proposals=False
+    ):
         """
         Generates proposals from leaf nodes.
 
@@ -217,14 +219,14 @@ class ProposalGraph(SkeletonGraph):
         ----------
         search_radius : float
             Search radius used to generate proposals.
-        allow_nonleaf_targets : bool, optional
+        allow_nonleaf_proposals : bool, optional
             Indication of whether to generate proposals between leaf and nodes
             with degree 2. Default is False.
         """
         # Proposal generation
         assert len(self.kdtree.data) == self.number_of_nodes()
         proposals = self.proposal_generator(
-            search_radius, allow_nonleaf_targets=allow_nonleaf_targets
+            search_radius, allow_nonleaf_proposals=allow_nonleaf_proposals
         )
 
         self.search_radius = search_radius
