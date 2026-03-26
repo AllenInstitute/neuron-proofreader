@@ -179,7 +179,7 @@ class SkeletonFeatureExtractor:
         for p in subgraph.proposals:
             proposal_features[p] = np.concatenate(
                 (
-                    int(self.graph.is_leaf_to_leaf(p)),
+                    int(self.graph.is_leaf2leaf(p)),
                     self.count_nearby_leafs(p),
                     self.graph.proposal_length(p) / self.graph.search_radius,
                     self.graph.proposal_radius(p),

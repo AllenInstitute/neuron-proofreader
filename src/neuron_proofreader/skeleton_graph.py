@@ -191,7 +191,7 @@ class SkeletonGraph(nx.Graph):
             "self.component_id_to_swc_id".
         """
         # Determine orientation of attributes
-        i, j = tuple(edge_id)
+        i, j = edge_id
         dist_i = distance.euclidean(self.node_xyz[i], attrs["xyz"][0])
         dist_j = distance.euclidean(self.node_xyz[j], attrs["xyz"][0])
         if dist_i < dist_j:
@@ -244,7 +244,8 @@ class SkeletonGraph(nx.Graph):
 
         # Reset graph
         self.clear()
-        for (i, j) in old_edge_ids:
+        self.add_nodes_from(new_node_ids)
+        for i, j in old_edge_ids:
             self.add_edge(old_to_new[i], old_to_new[j])
 
         # Update attributes
@@ -254,6 +255,7 @@ class SkeletonGraph(nx.Graph):
 
         self.reassign_component_ids()
         self.set_kdtree()
+        assert len(self.node_xyz) == self.number_of_nodes()
         return old_to_new
 
     def remove_nodes(self, nodes, relabel_nodes=True):
@@ -294,7 +296,7 @@ class SkeletonGraph(nx.Graph):
     def to_zipped_swcs_multithreaded(self, output_dir, preserve_radius=True):
         # Set batch size
         n = nx.number_connected_components(self)
-        batch_size = max(1, n // 1000) if n > 10 ** 4 else n
+        batch_size = max(1, n // 1000) if n > 10**4 else n
         util.mkdir(output_dir)
 
         # Main
@@ -333,9 +335,7 @@ class SkeletonGraph(nx.Graph):
                     zip_writer, nodes[0], preserve_radius
                 )
 
-    def component_to_zipped_swc(
-        self, zip_writer, root, preserve_radius=False
-    ):
+    def component_to_zipped_swc(self, zip_writer, root, preserve_radius=False):
         """
         Writes the connected component containing the given root node to a
         zipped SWC file.
@@ -350,6 +350,7 @@ class SkeletonGraph(nx.Graph):
             Indication of whether to preserve radii of nodes or use default
             radius of 2μm. Default is False.
         """
+
         # Subroutines
         def write_entry(node, parent):
             """
@@ -362,7 +363,7 @@ class SkeletonGraph(nx.Graph):
             parent : int
                 Node ID of parent.
             """
-            x, y, z = tuple(self.node_xyz[node])
+            x, y, z = self.node_xyz[node]
             r = self.node_radius[node] if preserve_radius else 2
             node_id = cnt
             parent_id = node_to_idx[parent]
@@ -743,9 +744,7 @@ class SkeletonGraph(nx.Graph):
             segment_id = int(swc_id.replace(".0", ""))
             if segment_id == query_id:
                 component_id = self.component_id_from_swc_id(swc_id)
-                nodes = nodes.union(
-                    self.nodes_with_component_id(component_id)
-                )
+                nodes = nodes.union(self.nodes_with_component_id(component_id))
         return nodes
 
     def nodes_within_distance(self, root, max_dist):
@@ -781,7 +780,8 @@ class SkeletonGraph(nx.Graph):
     def path_from_leaf(self, leaf, max_depth=np.inf):
         """
         Gets the path of nodes emanating from the given leaf up to a certain
-        depth if "max_depth" is provided.
+        depth if "max_depth" is provided. Note that the path is truncated
+        before reaching a branching node.
 
         Parameters
         ----------
@@ -802,7 +802,7 @@ class SkeletonGraph(nx.Graph):
             # Visit node
             i, dist_i = queue.pop()
             if self.degree[i] != 2 and dist_i > 0:
-                return path
+                return path[:-1] if self.degree(i) > 2 else path
 
             # Update queue
             for j in self.neighbors(i):
@@ -827,7 +827,7 @@ class SkeletonGraph(nx.Graph):
         """
         if len(path) > 1:
             diffs = self.node_xyz[path[1:]] - self.node_xyz[path[:-1]]
-            return np.sqrt(np.sum(diffs ** 2))
+            return np.sqrt(np.sum(diffs**2))
         else:
             return 0
 
@@ -905,11 +905,11 @@ class SkeletonGraph(nx.Graph):
         -------
         summary : str
             Formatted multi-line string containing:
-            - Graph label
+            - Graph Name
             - Number of connected components
             - Number of nodes
             - Number of edges
-            - Memory consumption (in GB)
+            - Memory consumption (in GBs)
         """
         # Compute values
         n_components = format(nx.number_connected_components(self), ",")
@@ -949,6 +949,8 @@ class SkeletonGraph(nx.Graph):
 
         Returns
         -------
+        numpy.ndarray
+            Tangent vector of the path emanating from the given leaf.
         """
         path = self.path_from_leaf(leaf, max_depth=max_depth)
         return geometry_util.tangent(self.node_xyz[np.array(path)])

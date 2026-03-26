@@ -205,6 +205,7 @@ class ProposalGraph(SkeletonGraph):
         j : int
             Node ID
         """
+        assert i in self.nodes and j in self.nodes
         self.node_proposals[i].add(j)
         self.node_proposals[j].add(i)
         self.proposals.add(frozenset({i, j}))
@@ -266,7 +267,7 @@ class ProposalGraph(SkeletonGraph):
         single_j = len(self.node_proposals[j]) == 1
         return single_i and single_j
 
-    def is_leaf_to_leaf(self, proposal):
+    def is_leaf2leaf(self, proposal):
         """
         Checks if both nodes in a proposal are leafs.
 
@@ -280,7 +281,7 @@ class ProposalGraph(SkeletonGraph):
         bool
             True if both nodes in a proposal are leafs; otherwise, False.
         """
-        i, j = tuple(proposal)
+        i, j = proposal
         return self.degree[i] == 1 and self.degree[j] == 1
 
     def list_proposals(self):
@@ -295,7 +296,7 @@ class ProposalGraph(SkeletonGraph):
         return list(self.proposals)
 
     def merge_proposal(self, proposal):
-        i, j = tuple(proposal)
+        i, j = proposal
         if self.is_mergeable(i, j):
             # Update component_ids
             self.merged_ids.add((self.node_swc_id(i), self.node_swc_id(j)))
@@ -309,7 +310,7 @@ class ProposalGraph(SkeletonGraph):
             # Update graph
             self.add_edge(i, j)
             self.accepts.add(proposal)
-            self.proposals.remove(proposal)
+            self.remove_proposal(proposal)
         else:
             self.n_merges_blocked += 1
 
@@ -333,7 +334,7 @@ class ProposalGraph(SkeletonGraph):
         proposal : Frozenset[int]
             Pair of node IDs corresponding to a proposal.
         """
-        i, j = tuple(proposal)
+        i, j = proposal
         self.node_proposals[i].remove(j)
         self.node_proposals[j].remove(i)
         self.proposals.remove(proposal)
@@ -358,21 +359,21 @@ class ProposalGraph(SkeletonGraph):
     def store_proposals(self, proposals):
         self.node_proposals = defaultdict(set)
         for proposal in proposals:
-            i, j = tuple(proposal)
+            i, j = proposal
             self.add_proposal(i, j)
 
     def trim_proposals(self):
         for proposal in self.list_proposals():
-            is_leaf_to_leaf = self.is_leaf_to_leaf(proposal)
+            is_leaf2leaf = self.is_leaf2leaf(proposal)
             is_single = self.is_single_proposal(proposal)
-            if is_leaf_to_leaf and is_single:
+            if is_leaf2leaf and is_single:
                 trim_proposal_endpoints(self, proposal)
         self.relabel_nodes()
 
     # --- Proposal Feature Generation ---
     def proposal_directionals(self, proposal, depth):
         # Extract points along branches
-        i, j = tuple(proposal)
+        i, j = proposal
         path_i = self.path_thru_node(i, depth)
         path_j = self.path_thru_node(j, depth)
         path_xyz_i = self.node_xyz[np.array(path_i)]
@@ -386,11 +387,11 @@ class ProposalGraph(SkeletonGraph):
         # Compute features
         dot_i = abs(np.dot(dir_proposal, dir_i))
         dot_j = abs(np.dot(dir_proposal, dir_j))
-        if self.is_leaf_to_leaf(proposal):
+        if self.is_leaf2leaf(proposal):
             dot_ij = np.dot(dir_i, dir_j)
         else:
             dot_ij = np.dot(dir_i, dir_j)
-            if not self.is_leaf_to_leaf(proposal):
+            if not self.is_leaf2leaf(proposal):
                 dot_ij = max(dot_ij, -dot_ij)
         return np.array([dot_i, dot_j, dot_ij])
 
@@ -401,11 +402,11 @@ class ProposalGraph(SkeletonGraph):
         return geometry_util.midpoint(*self.proposal_xyz(proposal))
 
     def proposal_radius(self, proposal):
-        i, j = tuple(proposal)
+        i, j = proposal
         return self.node_radius[i], self.node_radius[j]
 
     def proposal_xyz(self, proposal):
-        i, j = tuple(proposal)
+        i, j = proposal
         return self.node_xyz[i], self.node_xyz[j]
 
     # --- Helpers ---

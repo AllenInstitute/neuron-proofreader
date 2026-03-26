@@ -266,7 +266,7 @@ class InferencePipeline:
                 continue
 
             # Check if proposal satifies threshold
-            i, j = tuple(proposal)
+            i, j = proposal
             if preds[proposal] < threshold:
                 continue
 
@@ -339,7 +339,7 @@ class InferencePipeline:
     def reformat_preds(self, preds_dict):
         id_to_pred = dict()
         for proposal, pred in preds_dict.items():
-            node1, node2 = tuple(proposal)
+            node1, node2 = proposal
             id1 = self.dataset.graph.node_swc_id(node1)
             id2 = self.dataset.graph.node_swc_id(node2)
             id_to_pred[str((id1, id2))] = pred
