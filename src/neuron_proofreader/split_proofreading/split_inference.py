@@ -176,7 +176,7 @@ class InferencePipeline:
         self.log(f"Search Radius: {search_radius}")
         self.dataset.graph.generate_proposals(
             search_radius,
-            allow_nonleaf_targets=self.config.graph.allow_nonleaf_targets,
+            allow_nonleaf_proposals=self.config.graph.allow_nonleaf_proposals,
         )
 
         n_proposals = format(self.dataset.graph.n_proposals(), ",")
