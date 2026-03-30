@@ -317,12 +317,7 @@ class ImageFeatureExtractor:
 
         # Create patch feature extractor
         extractor = PatchFeatureExtractor(
-            self.graph,
-            img,
-            mask,
-            proposal,
-            offset,
-            self.patch_shape
+            self.graph, img, mask, proposal, offset, self.patch_shape
         )
         return extractor
 
@@ -588,6 +583,7 @@ class FeatureSet:
     A class for storing features and reformatting them into a form suitable
     for GNN input.
     """
+
     _FEATURE_TABLE = {
         "node": ("node_features", "node_index_mapping"),
         "edge": ("edge_features", "edge_index_mapping"),
@@ -843,7 +839,7 @@ class HeteroGraphData(HeteroData):
         """
         feature_dict = {
             "branch": FeatureSet.n_branch_features,
-            "proposal": FeatureSet.n_proposal_features
+            "proposal": FeatureSet.n_proposal_features,
         }
         return feature_dict
 
@@ -860,7 +856,7 @@ class HeteroGraphData(HeteroData):
             {
                 "x_dict": self.x_dict,
                 "img": self.x_img,
-                "edge_index_dict": self.edge_index_dict
+                "edge_index_dict": self.edge_index_dict,
             }
         )
         return inputs_dict

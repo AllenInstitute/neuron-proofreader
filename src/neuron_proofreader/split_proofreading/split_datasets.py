@@ -18,11 +18,11 @@ import pandas as pd
 from neuron_proofreader.proposal_graph import ProposalGraph
 from neuron_proofreader.machine_learning.augmentation import ImageTransforms
 from neuron_proofreader.machine_learning.subgraph_sampler import (
-    SubgraphSampler
+    SubgraphSampler,
 )
 from neuron_proofreader.split_proofreading.split_feature_extraction import (
     FeaturePipeline,
-    HeteroGraphData
+    HeteroGraphData,
 )
 from neuron_proofreader.utils import geometry_util, util
 
@@ -43,7 +43,7 @@ class FragmentsDataset(IterableDataset):
         gt_path=None,
         metadata_path=None,
         segmentation_path=None,
-        soma_centroids=None
+        soma_centroids=None,
     ):
         """
         Instantiates a FragmentsDataset object.
@@ -77,7 +77,7 @@ class FragmentsDataset(IterableDataset):
             fragments_path,
             metadata_path=metadata_path,
             segmentation_path=segmentation_path,
-            soma_centroids=soma_centroids
+            soma_centroids=soma_centroids,
         )
 
         # Feature extractor
@@ -86,7 +86,7 @@ class FragmentsDataset(IterableDataset):
             img_path,
             brightness_clip=self.config.ml.brightness_clip,
             patch_shape=self.config.ml.patch_shape,
-            segmentation_path=segmentation_path
+            segmentation_path=segmentation_path,
         )
 
     def _load_graph(
@@ -94,7 +94,7 @@ class FragmentsDataset(IterableDataset):
         fragments_path,
         metadata_path=None,
         segmentation_path=None,
-        soma_centroids=None
+        soma_centroids=None,
     ):
         """
         Loads a graph by reading and processing SWC files specified by the
@@ -130,7 +130,7 @@ class FragmentsDataset(IterableDataset):
             remove_high_risk_merges=self.config.graph.remove_high_risk_merges,
             segmentation_path=segmentation_path,
             soma_centroids=soma_centroids,
-            verbose=self.config.graph.verbose
+            verbose=self.config.graph.verbose,
         )
         graph.load(fragments_path)
 
@@ -201,7 +201,7 @@ class FragmentsDatasetCollection(IterableDataset):
         gt_path=None,
         metadata_path=None,
         segmentation_path=None,
-        soma_centroids=None
+        soma_centroids=None,
     ):
         """
         Adds a dataset to the collection of datasets.
@@ -235,7 +235,7 @@ class FragmentsDatasetCollection(IterableDataset):
             gt_path=gt_path,
             metadata_path=metadata_path,
             segmentation_path=segmentation_path,
-            soma_centroids=soma_centroids
+            soma_centroids=soma_centroids,
         )
 
     def __iter__(self):

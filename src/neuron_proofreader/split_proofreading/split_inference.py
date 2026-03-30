@@ -33,11 +33,12 @@ from tqdm import tqdm
 
 import networkx as nx
 import numpy as np
+import pandas as pd
 import os
 import torch
 
 from neuron_proofreader.split_proofreading.split_datasets import (
-    FragmentsDataset
+    FragmentsDataset,
 )
 from neuron_proofreader.utils import ml_util, util
 
@@ -97,7 +98,7 @@ class InferencePipeline:
         # Logger
         util.mkdir(self.output_dir)
         log_path = os.path.join(self.output_dir, "runtimes.txt")
-        self.log_handle = open(log_path, 'a')
+        self.log_handle = open(log_path, "a")
         self.log(log_preamble)
 
         # Load data
@@ -124,7 +125,7 @@ class InferencePipeline:
             img_path,
             self.config,
             segmentation_path=segmentation_path,
-            soma_centroids=self.soma_centroids
+            soma_centroids=self.soma_centroids,
         )
         self.save_fragment_ids()
 
@@ -243,8 +244,7 @@ class InferencePipeline:
             pbar.update(data.n_proposals())
 
         # Save results
-        path = os.path.join(self.output_dir, "proposal_predictions.json")
-        util.write_json(path, self.reformat_preds(preds))
+        self.save_proposal_results(preds)
         return preds
 
     def merge_proposals(self, preds, threshold):
@@ -336,14 +336,29 @@ class InferencePipeline:
         hat_y = ml_util.tensor_to_list(hat_y)
         return {idx_to_id[i]: y_i for i, y_i in enumerate(hat_y)}
 
-    def reformat_preds(self, preds_dict):
-        id_to_pred = dict()
+    def save_proposal_results(self, preds_dict):
+        summary  = list()
         for proposal, pred in preds_dict.items():
-            node1, node2 = proposal
-            id1 = self.dataset.graph.node_swc_id(node1)
-            id2 = self.dataset.graph.node_swc_id(node2)
-            id_to_pred[str((id1, id2))] = pred
-        return id_to_pred
+            # Extract info
+            i, j = proposal
+            segment_i = self.dataset.graph.node_swc_id(i)
+            segment_j = self.dataset.graph.node_swc_id(j)
+
+            # Add info
+            summary.append(
+                {
+                    "Proposal": (segment_i, segment_j),
+                    "Leaf2Leaf": self.dataset.graph.is_leaf2leaf(proposal),
+                    "Length": self.dataset.graph.proposal_length(proposal),
+                    "Prediction": pred
+                }
+            )
+
+        # Save results
+        path = os.path.join(self.output_dir, "proposal_summary.csv")
+        df = pd.DataFrame(summary)
+        df = df.set_index("Proposal")
+        df.to_csv(path)
 
     def reconfigure_node_radius(self):
         n_nodes = len(self.dataset.graph.node_radius)
