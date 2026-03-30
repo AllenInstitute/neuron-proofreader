@@ -118,6 +118,7 @@ class SubgraphSampler:
         while queue:
             # Visit node
             i, d_i = queue.popleft()
+            subgraph.add_node(i)
             self.add_nbhd(i, subgraph, visited)
             self.add_proposals(subgraph, queue, visited, i)
 

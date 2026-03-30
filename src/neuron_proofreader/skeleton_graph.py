@@ -832,7 +832,9 @@ class SkeletonGraph(nx.Graph):
             return 0
 
     def path_thru_node(self, i, max_depth=np.inf):
-        if self.degree[i] == 1:
+        if self.degree[i] == 0:
+            return [i]
+        elif self.degree[i] == 1:
             return self.path_from_leaf(i, max_depth)
         else:
             assert self.degree[i] == 2

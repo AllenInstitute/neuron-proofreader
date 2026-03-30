@@ -440,7 +440,9 @@ def tangent(pts):
     numpy.ndarray
         Tangent vector at the specified point or along the curve.
     """
-    if len(pts) == 2:
+    if len(pts) == 1:
+        tangent_vec = np.zeros((3))
+    elif len(pts) == 2:
         d = max(distance.euclidean(pts[1], pts[0]), 0.1)
         tangent_vec = (pts[1] - pts[0]) / d
     else:
