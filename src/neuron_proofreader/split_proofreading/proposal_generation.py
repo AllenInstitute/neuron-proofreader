@@ -120,8 +120,6 @@ class ProposalGenerator:
                     # Add proposal
                     proposals.add(pair_id)
                     connections[pair_component_id] = pair_id
-            if len(proposals) > 0:
-                break 
         return proposals
 
     def find_node_candidates(self, leaf, radius):
