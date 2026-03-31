@@ -802,7 +802,7 @@ class SkeletonGraph(nx.Graph):
             # Visit node
             i, dist_i = queue.pop()
             if self.degree[i] != 2 and dist_i > 0:
-                return path[:-1] if self.degree(i) > 2 else path
+                return path
 
             # Update queue
             for j in self.neighbors(i):

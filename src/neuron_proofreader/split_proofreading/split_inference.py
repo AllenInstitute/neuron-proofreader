@@ -337,7 +337,7 @@ class InferencePipeline:
         return {idx_to_id[i]: y_i for i, y_i in enumerate(hat_y)}
 
     def save_proposal_results(self, preds_dict):
-        summary  = list()
+        summary = list()
         for proposal, pred in preds_dict.items():
             # Extract info
             i, j = proposal
