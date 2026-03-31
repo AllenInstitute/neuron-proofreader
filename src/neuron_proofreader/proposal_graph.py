@@ -382,14 +382,14 @@ class ProposalGraph(SkeletonGraph):
         except:
             print("Degree(i):", self.degree[i])
             print("Path:", path_i)
-            path_xyz_i = np.zeros((2, 3))
+            path_xyz_i = np.zeros((3))
 
         try:
             path_xyz_j = self.node_xyz[np.array(path_j, dtype=int)]
         except:
             print("Degree(j):", self.degree[j])
             print("Path:", path_j)
-            path_xyz_j = np.zeros((2, 3))
+            path_xyz_j = np.zeros((3))
 
         # Compute tangent vectors - branches
         dir_i = geometry_util.tangent(path_xyz_i)

@@ -66,7 +66,7 @@ class GraphLoader:
 
         Parameters
         ----------
-        anisotropy : List[float], optional
+        anisotropy : Tuple[float], optional
             Image to physical coordinates scaling factors to account for the
             anisotropy of the microscope. Default is (1.0, 1.0, 1.0).
         min_size : float, optional
@@ -117,6 +117,9 @@ class GraphLoader:
         ----------
         segmentation_path : str
             Path to a segmentation stored in a GCS bucket.
+        anisotropy : Tuple[float]
+            Image to physical coordinates scaling factors to account for the
+            anisotropy of the microscope.
         """
         reader = img_util.TensorStoreReader(segmentation_path)
         with ThreadPoolExecutor() as executor:
@@ -168,7 +171,7 @@ class GraphLoader:
         with ProcessPoolExecutor() as executor:
             # Start processes
             pending = set()
-            for _ in range(min(512, len(swc_dicts))):
+            for _ in range(min(256, len(swc_dicts))):
                 pending.add(executor.submit(self.extract, swc_dicts.pop()))
 
             # Yield processes
@@ -227,8 +230,8 @@ class GraphLoader:
             i = 0
             leafs = set(get_leafs(graph))
             while leafs:
-                # Extract for connected component
-                leaf = util.sample_once(list(leafs))
+                # Extract connected component
+                leaf = util.sample_once(leafs)
                 irreducibles, visited = self.get_irreducibles(graph, leaf)
                 leafs -= visited
 
@@ -458,8 +461,8 @@ class GraphLoader:
 
         Parameters
         ----------
-        xyz : ArrayLike
-            Physical coordinate to be queried.
+        graph : networkx.Graph
+            Graph to be checked.
 
         Returns
         -------
