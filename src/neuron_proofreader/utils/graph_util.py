@@ -39,7 +39,10 @@ import networkx as nx
 import numpy as np
 
 from neuron_proofreader.utils import (
-    geometry_util as geometry, img_util, swc_util, util
+    geometry_util as geometry,
+    img_util,
+    swc_util,
+    util,
 )
 
 
@@ -282,6 +285,7 @@ while pending:
             Dictionary containing the irreducible components of a connected
             graph.
         """
+
         def dist(i, j):
             """
             Computes distance between the given nodes.
@@ -308,7 +312,7 @@ while pending:
 
         # Main
         root, path_length = None, 0
-        for (i, j) in nx.dfs_edges(graph, source=source):
+        for i, j in nx.dfs_edges(graph, source=source):
             # Check for start of irreducible edge
             if root is None:
                 root, edge_length = i, 0
@@ -545,7 +549,9 @@ while pending:
         prune_branches(graph, self.prune_depth)
 
         # Check if original segment intersects with soma
-        graph.graph["segment_id"] = swc_util.get_segment_id(swc_dict["swc_name"])
+        graph.graph["segment_id"] = swc_util.get_segment_id(
+            swc_dict["swc_name"]
+        )
         if graph.graph["segment_id"] in self.id_to_soma:
             graph.graph["soma_nodes"] = self.find_soma_nodes(graph)
         else:
@@ -574,7 +580,8 @@ def set_node_attrs(graph, nodes):
     attrs = dict()
     for i in nodes:
         attrs[i] = {
-            "radius": graph.graph["radius"][i], "xyz": graph.graph["xyz"][i]
+            "radius": graph.graph["radius"][i],
+            "xyz": graph.graph["xyz"][i],
         }
     return attrs
 
@@ -723,9 +730,7 @@ def find_connecting_path(graph, nodes):
     path = set()
     if len(nodes) > 1:
         for i in range(1, len(nodes)):
-            subpath = nx.shortest_path(
-                graph, source=nodes[0], target=nodes[i]
-            )
+            subpath = nx.shortest_path(graph, source=nodes[0], target=nodes[i])
             path = path.union(set(subpath))
     return path
 
@@ -874,7 +879,7 @@ def prune_branches(graph, depth):
     for leaf in get_leafs(graph):
         branch = [leaf]
         length = 0
-        for (i, j) in nx.dfs_edges(graph, source=leaf):
+        for i, j in nx.dfs_edges(graph, source=leaf):
             # Visit edge
             length += euclidean(graph.graph["xyz"][i], graph.graph["xyz"][j])
             if length > depth:

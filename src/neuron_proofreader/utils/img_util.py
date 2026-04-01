@@ -261,7 +261,7 @@ def plot_image_and_segmentation_mips(img, segmentation, output_path=None):
     for i in range(3):
         mip = np.max(img, axis=i)
         ax = axs[0, i]
-        ax.imshow(mip, vmax=vmax, aspect='equal')
+        ax.imshow(mip, vmax=vmax, aspect="equal")
         ax.set_title(axes_names[i], fontsize=16)
         ax.set_xticks([])
         ax.set_yticks([])
@@ -270,7 +270,7 @@ def plot_image_and_segmentation_mips(img, segmentation, output_path=None):
     for i in range(3):
         mip = np.max(segmentation, axis=i)
         ax = axs[1, i]
-        ax.imshow(mip, cmap=cmap, interpolation="none", aspect='equal')
+        ax.imshow(mip, cmap=cmap, interpolation="none", aspect="equal")
         ax.set_title(axes_names[i], fontsize=16)
         ax.set_xticks([])
         ax.set_yticks([])
@@ -702,7 +702,7 @@ def pad_to_shape(img, target_shape, pad_value=0):
     pads = list()
     for s, t in zip(img.shape, target_shape):
         pads.append(((t - s) // 2, (t - s + 1) // 2))
-    return np.pad(img, pads, mode='constant', constant_values=pad_value)
+    return np.pad(img, pads, mode="constant", constant_values=pad_value)
 
 
 def remove_small_segments(segmentation, min_size):

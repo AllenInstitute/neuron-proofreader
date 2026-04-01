@@ -200,17 +200,17 @@ def load_model(model, model_path, device="cuda"):
 
 def tensor_to_list(tensor):
     """
-    Converts the given tensor to a list.
+     Converts the given tensor to a list.
 
-    Parameters
-    ----------
-    tensor : torch.Tensor
-        Tensor with shape Nx1 to be converted.
+     Parameters
+     ----------
+     tensor : torch.Tensor
+         Tensor with shape Nx1 to be converted.
 
-    Returns
-    -------
-   tensor : List[float]
-        Tensor converted to a list.
+     Returns
+     -------
+    tensor : List[float]
+         Tensor converted to a list.
     """
     return to_cpu(tensor).flatten().tolist()
 

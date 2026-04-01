@@ -19,7 +19,6 @@ from zipfile import ZipFile
 
 import boto3
 import json
-import numpy as np
 import os
 import psutil
 import shutil
@@ -116,7 +115,7 @@ def list_subdirs(path, keyword=None, return_paths=False):
     subdirs = list()
     for subdir in os.listdir(path):
         is_dir = os.path.isdir(os.path.join(path, subdir))
-        is_hidden = subdir.startswith('.')
+        is_hidden = subdir.startswith(".")
         if is_dir and not is_hidden:
             subdir = os.path.join(path, subdir) if return_paths else subdir
             if (keyword and keyword in subdir) or not keyword:
@@ -229,13 +228,15 @@ def combine_zips(zip_paths, output_zip_path):
         Path to ZIP archive to be written.
     """
     seen_files = set()
-    with ZipFile(output_zip_path, 'w') as out_zip:
+    with ZipFile(output_zip_path, "w") as out_zip:
         for zip_path in tqdm(zip_paths, desc="Combine ZIPs"):
-            with ZipFile(zip_path, 'r') as zip_in:
+            with ZipFile(zip_path, "r") as zip_in:
                 for item in zip_in.infolist():
                     if item.filename not in seen_files:
                         seen_files.add(item.filename)
                         out_zip.writestr(item, zip_in.read(item.filename))
+                    else:
+                        print("skipping", item.filename)
 
 
 def read_json(path):
@@ -566,7 +567,7 @@ def upload_file_to_s3(source_path, bucket_name, destination_path):
     destination_path : str
         Path within S3 bucket that source file is to be written to.
     """
-    s3 = boto3.client('s3')
+    s3 = boto3.client("s3")
     s3.upload_file(source_path, bucket_name, destination_path)
 
 
@@ -588,6 +589,7 @@ def find_best(my_dict, maximize=True):
     hashable
         Key associated with the longest list or largest integer in "my_dict".
     """
+
     def score(v):
         """
         Assigns a score to a given value.
@@ -664,14 +666,11 @@ def parse_cloud_path(path):
     prefix : str
         Cloud prefix.
     """
-    # Remove s3:// if present
-    if path.startswith("s3://"):
+    # Remove s3:// or gs:// if present
+    if path.startswith("s3://") or path.startswith("gs://"):
         path = path[len("s3://"):]
 
-    # Remove gs:// if present
-    if path.startswith("gs://"):
-        path = path[len("gs://"):]
-
+    # Split path
     parts = path.split("/", 1)
     bucket_name = parts[0]
     prefix = parts[1] if len(parts) > 1 else ""
@@ -680,7 +679,7 @@ def parse_cloud_path(path):
 
 def sample_once(my_container):
     """
-    Samples a single element from "my_container".
+    Samples a single element from the given container.
 
     Parameters
     ----------
@@ -690,36 +689,12 @@ def sample_once(my_container):
     Returns
     -------
     hashable
+        Single element from the given container.
     """
     if not isinstance(my_container, list):
         return sample(list(my_container), 1)[0]
     else:
         return sample(my_container, 1)[0]
-
-
-def spaced_idxs(arr_length, k):
-    """
-    Generates an array of indices based on a specified step size and ensures
-    the last index is included.
-
-    Parameters:
-    ----------
-    arr_length : int
-        Length of array to be sampled from.
-    k : int
-        Step size for generating indices.
-
-    Returns:
-    -------
-    idxs : numpy.ndarray
-        Array of indices starting from 0 up to (but not including) the length
-        of "container" spaced by "k". The last index before the length of
-        "container" is guaranteed to be included in the output.
-    """
-    idxs = np.arange(0, arr_length + k, k)[:-1]
-    if idxs[-1] != arr_length - 1:
-        idxs = np.append(idxs, arr_length - 1)
-    return idxs
 
 
 def time_writer(t, unit="seconds"):
