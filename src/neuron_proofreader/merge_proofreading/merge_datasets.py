@@ -207,10 +207,16 @@ class MergeSiteDataset(Dataset):
         segmentation_path : str
             Path to segmentation of whole-brain image.
         """
+        from time import time
+        t0 = time()
+        print(f"  [{brain_id}] Opening img reader: {img_path}", flush=True)
         self.img_readers[brain_id] = img_util.TensorStoreReader(img_path)
+        t1 = time()
+        print(f"  [{brain_id}] img reader opened in {t1 - t0:.1f}s; opening seg reader", flush=True)
         self.segmentation_readers[brain_id] = img_util.TensorStoreReader(
             segmentation_path
         )
+        print(f"  [{brain_id}] seg reader opened in {time() - t1:.1f}s", flush=True)
 
     # --- Create Subclass Dataset ---
     def subset(self, cls, idxs):
@@ -230,7 +236,11 @@ class MergeSiteDataset(Dataset):
             New dataset instance containing only the specified subset.
         """
         new_dataset = cls.__new__(cls)
+        from time import time
+        t0 = time()
+        print(f"subset(): deepcopy starting ({len(self.img_readers)} img_readers)...", flush=True)
         new_dataset.__dict__ = copy.deepcopy(self.__dict__)
+        print(f"subset(): deepcopy done in {time() - t0:.1f}s", flush=True)
         new_dataset.remove_nonindexed_fragments(idxs)
         new_dataset.remove_isolated_sites()
         return new_dataset
