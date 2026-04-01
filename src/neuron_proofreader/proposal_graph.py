@@ -377,19 +377,15 @@ class ProposalGraph(SkeletonGraph):
         path_i = self.path_thru_node(i, depth)
         path_j = self.path_thru_node(j, depth)
 
-        try:
-            path_xyz_i = self.node_xyz[np.array(path_i, dtype=int)]
-        except:
-            print("Degree(i):", self.degree[i])
-            print("Path:", path_i)
-            path_xyz_i = np.zeros((3))
+        if len(path_i) == 0:
+            print(self.degree[i])
+            stop
+        if len(path_j) == 0:
+            print(self.degree[j])
+            stop
 
-        try:
-            path_xyz_j = self.node_xyz[np.array(path_j, dtype=int)]
-        except:
-            print("Degree(j):", self.degree[j])
-            print("Path:", path_j)
-            path_xyz_j = np.zeros((3))
+        path_xyz_i = self.node_xyz[np.array(path_i, dtype=int)]
+        path_xyz_j = self.node_xyz[np.array(path_j, dtype=int)]
 
         # Compute tangent vectors - branches
         dir_i = geometry_util.tangent(path_xyz_i)
