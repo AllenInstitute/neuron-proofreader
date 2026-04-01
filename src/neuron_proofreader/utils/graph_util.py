@@ -24,23 +24,23 @@ Note: We use the term "branch" to refer to a path in a graph from a branching
 
 from collections import defaultdict, deque
 from concurrent.futures import (
-    as_completed, ProcessPoolExecutor, ThreadPoolExecutor
+    as_completed,
+    FIRST_COMPLETED,
+    ProcessPoolExecutor,
+    ThreadPoolExecutor,
+    wait,
 )
 from random import sample
 from scipy.spatial import KDTree
 from scipy.spatial.distance import euclidean
 from tqdm import tqdm
 
-import multiprocessing
 import networkx as nx
 import numpy as np
-import os
 
 from neuron_proofreader.utils import (
     geometry_util as geometry, img_util, swc_util, util
 )
-
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
 
 
 class GraphLoader:
@@ -54,6 +54,7 @@ class GraphLoader:
         anisotropy=(1.0, 1.0, 1.0),
         min_size=40.0,
         node_spacing=1,
+        prefetch=128,
         prune_depth=24.0,
         remove_high_risk_merges=False,
         segmentation_path=None,
@@ -69,6 +70,8 @@ class GraphLoader:
         anisotropy : Tuple[float], optional
             Image to physical coordinates scaling factors to account for the
             anisotropy of the microscope. Default is (1.0, 1.0, 1.0).
+        prefetch : int, optional
+            Number of jobs to prefetch. Default is 128.
         min_size : float, optional
             Minimum path length of swc files that are loaded into the
             FragmentsGraph. Default is 24.0 microns.
@@ -93,6 +96,7 @@ class GraphLoader:
         self.id_to_soma = defaultdict(list)
         self.min_size = min_size
         self.node_spacing = node_spacing
+        self.prefetch = prefetch
         self.prune_depth = prune_depth
         self.remove_high_risk_merges_bool = remove_high_risk_merges
         self.soma_centroids = soma_centroids
@@ -163,25 +167,43 @@ class GraphLoader:
         """
         # Read SWC files
         swc_dicts = self.swc_reader(fragments_pointer)
+        """
+while pending:
+        done, pending = wait(pending, return_when=FIRST_COMPLETED)
 
+        for future in done:
+            try:
+                result, cnt = future.result()
+            except Exception:
+                continue
+
+            high_risk_cnt += cnt
+            if result:
+                irreducibles.extend(result)
+
+            if pbar:
+                pbar.update(1)
+
+            if swc_dicts:
+                pending.add(executor.submit(self.extract, swc_dicts.pop()))
+        """
         # Load graphs
         desc = "Extract Graphs"
         pbar = tqdm(total=len(swc_dicts), desc=desc) if self.verbose else None
-        multiprocessing.set_start_method('spawn', force=True)
         with ProcessPoolExecutor() as executor:
             # Start processes
             pending = set()
-            for _ in range(min(256, len(swc_dicts))):
+            while len(pending) < self.prefetch and swc_dicts:
                 pending.add(executor.submit(self.extract, swc_dicts.pop()))
 
             # Yield processes
             irreducibles = deque()
             high_risk_cnt = 0
-            while pending or swc_dicts:
-                for process in as_completed(pending):
+            while pending:
+                done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                for future in done:
                     # Store completed processes
-                    result, cnt = process.result()
-                    pending.remove(process)
+                    result, cnt = future.result()
                     high_risk_cnt += cnt
                     irreducibles.extend(result)
                     pbar.update(1) if self.verbose else None

@@ -546,14 +546,11 @@ class SkeletonGraph(nx.Graph):
     def directed_path(self, start_node, next_node, max_depth=np.inf):
         queue = [(next_node, 0)]
         visited = [start_node, next_node]
-        path = list()
         while queue:
             # Visit node
             i, dist_i = queue.pop()
             if self.degree[i] != 2:
-                return path
-            else:
-                path.append(i)
+                return visited
 
             # Update queue
             for j in self.neighbors(i):
