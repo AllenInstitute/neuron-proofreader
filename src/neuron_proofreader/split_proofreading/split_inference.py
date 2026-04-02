@@ -152,8 +152,8 @@ class InferencePipeline:
         """
         # Main
         t0 = time()
-        #self.generate_proposals(search_radius)
-        #self.classify_proposals(self.config.ml.threshold)
+        self.generate_proposals(search_radius)
+        self.classify_proposals(self.config.ml.threshold)
 
         # Report results
         t, unit = util.time_writer(time() - t0)

@@ -356,11 +356,12 @@ class SkeletonGraph(nx.Graph):
 
             # Submit last batch
             if batch:
-                threads.append(create_job(batch, i + 1))
+                threads.append(create_job(list(batch), i + 1))
 
             # Watch progress
             pbar = tqdm(total=len(threads), desc="Write SWCs")
-            for _ in as_completed(threads):
+            for thread in as_completed(threads):
+                thread.result()
                 pbar.update(1)
 
     def _batch_to_zipped_swcs(self, nodes_list, zip_path, preserve_radius):
@@ -423,7 +424,8 @@ class SkeletonGraph(nx.Graph):
                 write_entry(j, i)
 
             # Finish
-            zip_writer.writestr(self.node_swc_id(i), text_buffer.getvalue())
+            filename = self.node_swc_id(root)
+            zip_writer.writestr(filename, text_buffer.getvalue())
 
     # --- Helpers ---
     def branching_nodes(self):
