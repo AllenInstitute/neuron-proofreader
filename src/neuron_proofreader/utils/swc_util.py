@@ -458,6 +458,10 @@ class Reader:
         with ZipFile(BytesIO(zip_content), "r") as zip_file:
             filenames = zip_file.namelist() if filenames is None else filenames
             for filename in filenames:
+
+                if "915251512" in filename:
+                    print("Found", filename)
+
                 result = self.read_from_zipped_file(zip_file, filename)
                 if result:
                     swc_dicts.append(result)
