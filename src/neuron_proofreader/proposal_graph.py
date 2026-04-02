@@ -123,17 +123,17 @@ class ProposalGraph(SkeletonGraph):
         self.resize_node_attr((num_nodes + num_somas, 3), "node_xyz")
 
         # Add soma nodes
-        num_components = nx.number_connected_components(self)
+        cnt = nx.number_connected_components(self)
         somas_dict = dict()
-        for cnt, xyz in enumerate(soma_centroids, start=1):
+        for i, xyz in enumerate(soma_centroids, start=1):
             # Set node ID
             node_id = self.number_of_nodes()
             assert node_id not in self.nodes
 
             # Add attributes
             self.add_node(node_id)
-            self.component_id_to_swc_id[num_components + cnt] = "soma-{cnt}"
-            self.node_component_id[node_id] = num_components + cnt
+            self.component_id_to_swc_id[cnt + i] = "soma-component-{cnt}"
+            self.node_component_id[node_id] = cnt + i
             self.node_radius[node_id] = 10
             self.node_xyz[node_id] = xyz
 

@@ -119,6 +119,8 @@ class SkeletonGraph(nx.Graph):
         while irreducibles:
             self.add_connected_component(irreducibles.pop(), component_id)
             component_id += 1
+
+        self.check_swc_ids()
         self.set_kdtree()
 
     def add_connected_component(self, irreducibles, component_id):
@@ -230,6 +232,26 @@ class SkeletonGraph(nx.Graph):
             self.node_component_id[nodes] = i + 1
         self.component_id_to_swc_id = component_id_to_swc_id
 
+    def check_swc_ids(self):
+        visited = set()
+        for nodes in map(list, nx.connected_components(self)):
+            # Check if SWC ID exists
+            swc_id = self.node_swc_id(nodes[0])
+            if swc_id not in visited:
+                visited.add(swc_id)
+                continue
+
+            # Find new SWC ID
+            swc_ids = set(self.component_id_to_swc_id.values())
+            while swc_id in visited and swc_id in swc_ids:
+                swc_name, cnt = swc_id.split(".")
+                swc_id = f"{swc_name}.{int(cnt) + 1}"
+
+            # Update graph
+            component_id = self.node_component_id[nodes[0]]
+            self.component_id_to_swc_id[component_id] = swc_id
+            visited.add(swc_id)
+
     def relabel_nodes(self):
         """
         Reassigns contiguous node IDs and update all dependent structures.
@@ -294,6 +316,18 @@ class SkeletonGraph(nx.Graph):
                 )
 
     def to_zipped_swcs_multithreaded(self, output_dir, preserve_radius=True):
+        """
+        Writes the graph to a ZIP archive of SWC files using mutlithreading,
+        where each file corresponds to a single connected component.
+
+        Parameters
+        ----------
+        output_dir : str
+            Path to directory that ZIP archives with SWC files are written to.
+        preserve_radius : bool, optional
+            Indication of whether to set radius as node radius or 2μm.
+            Default is False.
+        """
         def create_job(batch, i):
             zip_path = os.path.join(output_dir, f"{i}.zip")
             thread = executor.submit(
@@ -389,9 +423,7 @@ class SkeletonGraph(nx.Graph):
                 write_entry(j, i)
 
             # Finish
-            filename = self.node_swc_id(i)
-            filename = util.set_zip_path(zip_writer, filename, ".swc")
-            zip_writer.writestr(filename, text_buffer.getvalue())
+            zip_writer.writestr(self.node_swc_id(i), text_buffer.getvalue())
 
     # --- Helpers ---
     def branching_nodes(self):
