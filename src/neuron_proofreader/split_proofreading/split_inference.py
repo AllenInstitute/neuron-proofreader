@@ -369,8 +369,8 @@ class InferencePipeline:
 
     def save_connections(self, round_id=None):
         """
-        Writes the accepted proposals from the graph to a text file. Each line
-        contains the two swc ids as comma separated values.
+        Writes the accepted proposals to a text file. Each line contains the
+        two SWC IDs as comma separated values.
         """
         suffix = f"-{round_id}" if round_id else ""
         path = os.path.join(self.output_dir, f"connections{suffix}.txt")
