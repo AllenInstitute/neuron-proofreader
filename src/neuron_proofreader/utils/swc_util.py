@@ -44,7 +44,7 @@ class Reader:
     archive, or (3) GCS directory, (4) GCS directory of ZIP archives.
     """
 
-    def __init__(self, anisotropy=(1.0, 1.0, 1.0), min_size=0):
+    def __init__(self, anisotropy=(1.0, 1.0, 1.0), min_size=0, verbose=True):
         """
         Initializes a Reader object that reads SWC files.
 
@@ -56,9 +56,13 @@ class Reader:
         min_size : int, optional
             Threshold on the number nodes in SWC files that are parsed and
             returned. Default is 0.
+        verbose : bool
+            Indication of whether to display a progress bar during loading.
+            Default is True.
         """
         self.anisotropy = anisotropy
         self.min_size = min_size
+        self.verbose = verbose
 
     def __call__(self, swc_pointer):
         """
@@ -150,9 +154,7 @@ class Reader:
             # Assign processes
             processes = list()
             for path in swc_paths:
-                processes.append(
-                    executor.submit(self.read, path)
-                )
+                processes.append(executor.submit(self.read, path))
 
             # Store results
             swc_dicts = deque()
@@ -202,23 +204,24 @@ class Reader:
         """
         # Initializations
         zip_names = [f for f in os.listdir(zip_dir) if f.endswith(".zip")]
-        pbar = tqdm(total=len(zip_names), desc="Read SWCs")
+        iterator = zip_names
+        if self.verbose:
+            pbar = tqdm(iterator, desc="Read SWCs")
 
         # Main
         with ProcessPoolExecutor() as executor:
             # Assign threads
             processes = list()
-            for f in zip_names:
+            for f in iterator:
                 zip_path = os.path.join(zip_dir, f)
-                processes.append(
-                    executor.submit(self.read_from_zip, zip_path)
-                )
+                processes.append(executor.submit(self.read_from_zip, zip_path))
 
             # Store results
             swc_dicts = deque()
             for process in as_completed(processes):
                 swc_dicts.extend(process.result())
-                pbar.update(1)
+                if self.verbose:
+                    pbar.update(1)
         return swc_dicts
 
     def read_from_zip(self, zip_path):
@@ -324,7 +327,9 @@ class Reader:
             List of dictionaries whose keys and values are the attribute
             names and values from an SWC file.
         """
-        pbar = tqdm(total=len(swc_paths), desc="Read SWCs")
+        if self.verbose:
+            pbar = tqdm(total=len(swc_paths), desc="Read SWCs")
+
         with ThreadPoolExecutor() as executor:
             # Assign threads
             threads = list()
@@ -339,7 +344,8 @@ class Reader:
                 result = thread.result()
                 if result:
                     swc_dicts.append(result)
-                pbar.update(1)
+                if self.verbose:
+                    pbar.update(1)
         return swc_dicts
 
     def read_from_gcs_swc(self, bucket_name, path):
@@ -392,7 +398,8 @@ class Reader:
         """
         # Initializations
         batch_size = 1000
-        pbar = tqdm(total=len(zip_paths), desc="Read SWCs")
+        if self.verbose:
+            pbar = tqdm(total=len(zip_paths), desc="Read SWCs")
 
         # Main
         swc_dicts = deque()
@@ -400,12 +407,10 @@ class Reader:
             for i in range(0, len(zip_paths), batch_size):
                 # Assign processes
                 processes = list()
-                for zip_path in zip_paths[i:i+batch_size]:
+                for zip_path in zip_paths[i: i + batch_size]:
                     processes.append(
                         executor.submit(
-                            self.read_from_gcs_zip,
-                            bucket_name,
-                            zip_path
+                            self.read_from_gcs_zip, bucket_name, zip_path
                         )
                     )
 
@@ -415,7 +420,8 @@ class Reader:
                         swc_dicts.extend(process.result())
                     except RefreshError:
                         pass
-                    pbar.update(1)
+                    if self.verbose:
+                        pbar.update(1)
         return swc_dicts
 
     def read_from_gcs_zip(self, bucket_name, zip_path, filenames=None):
@@ -452,6 +458,10 @@ class Reader:
         with ZipFile(BytesIO(zip_content), "r") as zip_file:
             filenames = zip_file.namelist() if filenames is None else filenames
             for filename in filenames:
+
+                if "915251512" in filename:
+                    print("Found", filename)
+
                 result = self.read_from_zipped_file(zip_file, filename)
                 if result:
                     swc_dicts.append(result)

@@ -25,6 +25,9 @@ class ProposalGraphConfig:
 
     Attributes
     ----------
+    allow_nonleaf_proposals : bool, optional
+        Indication of whether to generate proposals between leaf and nodes
+        with degree 2. Default is False.
     anisotropy : Tuple[float]
         Scaling factors used to transform physical to image coordinates
         Default is (1.0, 1.0, 1.0).
@@ -54,6 +57,7 @@ class ProposalGraphConfig:
         Indication of whether to display a progress bar. Default is True.
     """
 
+    allow_nonleaf_proposals: bool = False
     anisotropy: Tuple[float, float, float] = (1.0, 1.0, 1.0)
     max_proposals_per_leaf: int = 3
     min_size: float = 40.0
