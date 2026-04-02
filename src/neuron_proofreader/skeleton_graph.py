@@ -309,6 +309,7 @@ class SkeletonGraph(nx.Graph):
             Indication of whether to set radius as node radius or 2μm.
             Default is False.
         """
+        self.check_swc_ids()
         with zipfile.ZipFile(zip_path, "w") as zip_writer:
             for nodes in map(list, nx.connected_components(self)):
                 self.component_to_zipped_swc(
@@ -328,6 +329,7 @@ class SkeletonGraph(nx.Graph):
             Indication of whether to set radius as node radius or 2μm.
             Default is False.
         """
+
         def create_job(batch, i):
             zip_path = os.path.join(output_dir, f"{i}.zip")
             thread = executor.submit(
@@ -344,6 +346,7 @@ class SkeletonGraph(nx.Graph):
         util.mkdir(output_dir)
 
         # Main
+        self.check_swc_ids()
         with ThreadPoolExecutor() as executor:
             # Assign threads
             batch = list()

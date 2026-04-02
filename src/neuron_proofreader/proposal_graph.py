@@ -17,12 +17,10 @@ import networkx as nx
 import numpy as np
 
 from neuron_proofreader.skeleton_graph import SkeletonGraph
-from neuron_proofreader.split_proofreading import (
-    groundtruth_generation
-)
+from neuron_proofreader.split_proofreading import groundtruth_generation
 from neuron_proofreader.split_proofreading.proposal_generation import (
     ProposalGenerator,
-    trim_proposal_endpoints
+    trim_proposal_endpoints,
 )
 from neuron_proofreader.utils import geometry_util, graph_util
 
@@ -98,7 +96,7 @@ class ProposalGraph(SkeletonGraph):
         self.proposal_generator = ProposalGenerator(
             self,
             max_proposals_per_leaf=max_proposals_per_leaf,
-            min_size_with_proposals=min_size_with_proposals
+            min_size_with_proposals=min_size_with_proposals,
         )
 
         # Graph Loader
@@ -156,7 +154,9 @@ class ProposalGraph(SkeletonGraph):
                 for cid in np.unique(self.node_component_id[ids]):
                     # Find node closest to soma
                     idxs = np.where(self.node_component_id[ids] == cid)[0]
-                    dists = np.sum((self.node_xyz[ids[idxs]] - xyz) ** 2, axis=1)
+                    dists = np.sum(
+                        (self.node_xyz[ids[idxs]] - xyz) ** 2, axis=1
+                    )
                     node_id = ids[idxs[np.argmin(dists)]]
 
                     # Connect closest node to soma
@@ -190,7 +190,7 @@ class ProposalGraph(SkeletonGraph):
     def resize_node_attr(self, new_shape, attr_name):
         node_attr = getattr(self, attr_name)
         new_node_attr = np.empty(new_shape, dtype=node_attr.dtype)
-        new_node_attr[:len(node_attr)] = node_attr
+        new_node_attr[: len(node_attr)] = node_attr
         setattr(self, attr_name, new_node_attr)
 
     # --- Proposal Operations ---
@@ -210,9 +210,7 @@ class ProposalGraph(SkeletonGraph):
         self.node_proposals[j].add(i)
         self.proposals.add(frozenset({i, j}))
 
-    def generate_proposals(
-        self, search_radius, allow_nonleaf_proposals=False
-    ):
+    def generate_proposals(self, search_radius, allow_nonleaf_proposals=False):
         """
         Generates proposals from leaf nodes.
 
