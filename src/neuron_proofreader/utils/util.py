@@ -236,7 +236,7 @@ def combine_zips(zip_paths, output_zip_path):
                         seen_files.add(item.filename)
                         out_zip.writestr(item, zip_in.read(item.filename))
                     else:
-                        print("file conflict", item.filename)
+                        print("File Conflict:", item.filename)
 
 
 def read_json(path):
