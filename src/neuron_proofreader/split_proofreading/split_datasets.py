@@ -73,12 +73,8 @@ class FragmentsDataset(IterableDataset):
         self.transform = ImageTransforms() if config.ml.transform else False
 
         # Build graph
-        self.graph = self._load_graph(
-            fragments_path,
-            metadata_path=metadata_path,
-            segmentation_path=segmentation_path,
-            soma_centroids=soma_centroids,
-        )
+        self._load_graph(fragments_path, metadata_path)
+        self.graph.load_somas(soma_centroids)
 
         # Feature extractor
         self.feature_extractor = FeaturePipeline(
@@ -89,13 +85,7 @@ class FragmentsDataset(IterableDataset):
             segmentation_path=segmentation_path,
         )
 
-    def _load_graph(
-        self,
-        fragments_path,
-        metadata_path=None,
-        segmentation_path=None,
-        soma_centroids=None,
-    ):
+    def _load_graph(self, fragments_path, metadata_path=None):
         """
         Loads a graph by reading and processing SWC files specified by the
         given path.
@@ -107,40 +97,25 @@ class FragmentsDataset(IterableDataset):
         metadata_path : str, optional
             Patch to JSON file containing metadata on block that fragments
             were extracted from. Default is None
-        segmentation_path : str, optional
-            Path to the segmentation that fragments were generated from.
-            Default is None.
-        soma_centroids : List[Tuple[float]], optional
-            List of physical coordinates that represent soma centers. Default
-            is None.
-
-        Returns
-        -------
-        graph : ProposalGraph
-            Graph constructed from SWC files.
         """
         # Build graph
-        graph = ProposalGraph(
+        self.graph = ProposalGraph(
             anisotropy=self.config.graph.anisotropy,
             gt_path=self.gt_path,
             min_size=self.config.graph.min_size,
             min_size_with_proposals=self.config.graph.min_size_with_proposals,
             node_spacing=self.config.graph.node_spacing,
             prune_depth=self.config.graph.prune_depth,
-            remove_high_risk_merges=self.config.graph.remove_high_risk_merges,
-            segmentation_path=segmentation_path,
-            soma_centroids=soma_centroids,
             verbose=self.config.graph.verbose,
         )
-        graph.load(fragments_path)
+        self.graph.load(fragments_path)
 
         # Post process fragments
         if metadata_path:
-            graph.clip_to_bbox(metadata_path)
+            self.graph.clip_to_bbox(metadata_path)
 
         if self.config.graph.remove_doubles:
-            geometry_util.remove_doubles(graph, 200)
-        return graph
+            geometry_util.remove_doubles(self.graph, 200)
 
     # --- Get Data ---
     def __iter__(self):

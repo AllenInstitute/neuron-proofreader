@@ -43,8 +43,6 @@ class ProposalGraph(SkeletonGraph):
         node_spacing=1,
         prune_depth=20.0,
         remove_high_risk_merges=False,
-        segmentation_path=None,
-        soma_centroids=list(),
         verbose=True,
     ):
         """
@@ -67,10 +65,6 @@ class ProposalGraph(SkeletonGraph):
         remove_high_risk_merges : bool, optional
             Indication of whether to remove high risk merge sites (i.e. close
             branching points). Default is False.
-        segmentation_path : str, optional
-            Path to segmentation stored in GCS bucket. Default is None.
-        soma_centroids : List[Tuple[float]] or None, optional
-            Phyiscal coordinates of soma centroids. Default is None.
         verbose : bool, optional
             Indication of whether to display a progress bar while building
             graph. Default is True.
@@ -105,39 +99,10 @@ class ProposalGraph(SkeletonGraph):
             min_size=min_size,
             node_spacing=node_spacing,
             prune_depth=prune_depth,
-            remove_high_risk_merges=remove_high_risk_merges,
-            segmentation_path=segmentation_path,
-            soma_centroids=soma_centroids,
             verbose=verbose,
         )
 
     # --- Update Structure ---
-    def add_soma_nodes(self, soma_centroids):
-        # Resize attributes
-        num_nodes = self.number_of_nodes()
-        num_somas = len(soma_centroids)
-        self.resize_node_attr((num_nodes + num_somas), "node_component_id")
-        self.resize_node_attr((num_nodes + num_somas), "node_radius")
-        self.resize_node_attr((num_nodes + num_somas, 3), "node_xyz")
-
-        # Add soma nodes
-        cnt = nx.number_connected_components(self)
-        somas_dict = dict()
-        for i, xyz in enumerate(soma_centroids, start=1):
-            # Set node ID
-            node_id = self.number_of_nodes()
-            assert node_id not in self.nodes
-
-            # Add attributes
-            self.add_node(node_id)
-            self.component_id_to_swc_id[cnt + i] = f"soma-component-{i}"
-            self.node_component_id[node_id] = cnt + i
-            self.node_radius[node_id] = 10
-            self.node_xyz[node_id] = xyz
-
-            somas_dict[node_id] = np.array(xyz)
-        return somas_dict
-
     def connect_soma_fragments(self, soma_centroids, max_dist=25):
         merge_cnt, soma_cnt = 0, 0
         somas_dict = self.add_soma_nodes(soma_centroids)
@@ -374,16 +339,8 @@ class ProposalGraph(SkeletonGraph):
         i, j = proposal
         path_i = self.path_thru_node(i, depth)
         path_j = self.path_thru_node(j, depth)
-
-        if len(path_i) == 0:
-            print(self.degree[i])
-            stop
-        if len(path_j) == 0:
-            print(self.degree[j])
-            stop
-
-        path_xyz_i = self.node_xyz[np.array(path_i, dtype=int)]
-        path_xyz_j = self.node_xyz[np.array(path_j, dtype=int)]
+        path_xyz_i = self.node_xyz[np.array(path_i)]
+        path_xyz_j = self.node_xyz[np.array(path_j)]
 
         # Compute tangent vectors - branches
         dir_i = geometry_util.tangent(path_xyz_i)
