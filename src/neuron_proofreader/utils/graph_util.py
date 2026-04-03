@@ -28,7 +28,6 @@ from concurrent.futures import (
     ProcessPoolExecutor,
     wait,
 )
-from random import sample
 from scipy.spatial.distance import euclidean
 from tqdm import tqdm
 
@@ -259,11 +258,6 @@ class GraphLoader:
         max_dist : float, optional
             Maximum distance between branching points that qualifies a site to
             be considered "high risk". The default is 7.
-
-        Returns
-        -------
-        high_risk_cnt : int
-            Number of high risk merges detected.
         """
         nodes = set()
         branchings = set([i for i in graph.nodes if graph.degree[i] > 2])
@@ -296,7 +290,6 @@ class GraphLoader:
             # Determine whether to remove visited nodes
             if hit_branchings or graph.degree(root) > 3:
                 nodes = nodes.union(visited)
-                high_risk_cnt += 1
                 branchings -= hit_branchings
         graph.remove_nodes_from(nodes)
 
@@ -470,59 +463,6 @@ def edges_to_line_graph(edges):
     return nx.line_graph(graph)
 
 
-def find_closest_node(graph, xyz):
-    """
-    Finds the node in the graph that is closest to the given coordinates.
-
-    Parameters
-    ----------
-    graph : networkx.Graph
-        Graph to be search.
-    xyz : Tuple[float]
-        Coordinate to which the closest node in the graph will be found.
-
-    Returns
-    -------
-    best_node : int
-        Node in the graph that is closest to the given xyz coordinate.
-    best_dist : float
-        Distance between "best_node" and the given xyz coordinate.
-    """
-    best_dist = np.inf
-    best_node = None
-    for i in graph.nodes:
-        cur_dist = euclidean(xyz, graph.graph["xyz"][i])
-        if cur_dist < best_dist:
-            best_dist = cur_dist
-            best_node = i
-    return best_node, best_dist
-
-
-def find_connecting_path(graph, nodes):
-    """
-    Finds path that connects a set of nodes.
-
-    Parameters
-    ----------
-    graph : networkx.Graph
-        Graph to be searched.
-    nodes : List[int]
-        List of nodes to be connected.
-
-    Returns
-    -------
-    path : Set[int]
-        Nodes along the shortest paths between somas.
-    """
-    # Break merges between somas
-    path = set()
-    if len(nodes) > 1:
-        for i in range(1, len(nodes)):
-            subpath = nx.shortest_path(graph, source=nodes[0], target=nodes[i])
-            path = path.union(set(subpath))
-    return path
-
-
 def find_leaf(graph):
     """
     Finds a leaf node in the given graph.
@@ -534,7 +474,7 @@ def find_leaf(graph):
 
     Returns
     -------
-    int
+    i : int
         Leaf node.
     """
     for i in graph.nodes:
@@ -557,7 +497,7 @@ def find_nearby_branching_node(graph, root, max_depth=10):
 
     Returns
     -------
-    int
+    root : int
         Nearest branching node if one is found; otherwise, returns "root".
     """
     queue = [(root, 0)]
@@ -636,58 +576,6 @@ def prune_branches(graph, depth):
             elif graph.degree(j) > 2:
                 graph.remove_nodes_from(branch)
                 break
-
-
-def remove_nearby_nodes(graph, roots, max_dist=5.0):
-    """
-    Removes nodes from graph within a given radius from a set of root nodes.
-
-    Parameters
-    ----------
-    graph : networkx.Graph
-        Graph to be searched.
-    roots : List[int]
-        Root nodes.
-    max_dist : float, optional
-        Maximum distance within which nodes are removed. The default is 5.0.
-    """
-    nodes = set()
-    while len(roots) > 0:
-        root = roots.pop()
-        queue = [(root, 0)]
-        visited = set()
-        while len(queue) > 0:
-            # Visit node
-            i, dist_i = queue.pop()
-            visited.add(i)
-
-            # Update queue
-            for j in graph.neighbors(i):
-                dist_j = dist_i + dist(graph, i, j)
-                if j not in visited and dist_j <= max_dist:
-                    queue.append((j, dist_j))
-                elif j not in visited and graph.degree[j] > 2:
-                    queue.append((j, dist_i))
-        nodes = nodes.union(visited)
-    graph.remove_nodes_from(nodes)
-
-
-def sample_node(graph):
-    """
-    Samples a single node from a graph.
-
-    Parameters
-    ----------
-    graph : networkx.Graph
-        Graph to be sampled from.
-
-    Returns
-    -------
-    int
-        Node ID.
-    """
-    nodes = list(graph.nodes)
-    return sample(nodes, 1)[0]
 
 
 def to_numpy(attrs):
