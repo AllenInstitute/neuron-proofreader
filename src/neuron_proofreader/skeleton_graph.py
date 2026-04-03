@@ -48,7 +48,6 @@ class SkeletonGraph(nx.Graph):
         min_size=0,
         node_spacing=1,
         prune_depth=20,
-        soma_centroids=list(),
         use_anisotropy=True,
         verbose=False,
     ):
@@ -83,7 +82,8 @@ class SkeletonGraph(nx.Graph):
         self.component_id_to_swc_id = dict()
         self.kdtree = None
         self.node_spacing = node_spacing
-        self.soma_centroids = soma_centroids
+        self.soma_centroids = list()
+        self.soma_component_ids = list()
 
         # Graph Loader
         anisotropy = anisotropy if use_anisotropy else (1.0, 1.0, 1.0)
@@ -95,7 +95,7 @@ class SkeletonGraph(nx.Graph):
             verbose=verbose,
         )
 
-    # --- Build Graph ---
+    # --- Load SWC Files ---
     def load(self, swc_pointer):
         """
         Loads SWC files into graph.
@@ -103,16 +103,16 @@ class SkeletonGraph(nx.Graph):
         Parameters
         ----------
         swc_pointer : str
-            Object that points to SWC files to be read.
+            Object that points to SWC files to be loaded.
         """
         # Extract irreducible components from SWC files
         irreducibles = self.graph_loader(swc_pointer)
 
         # Initialize node attribute data structures
-        n = graph_util.count_nodes(irreducibles) + len(self.soma_centroids)
-        self.node_component_id = np.zeros((n), dtype=int)
-        self.node_radius = np.zeros((n), dtype=np.float16)
-        self.node_xyz = np.zeros((n, 3), dtype=np.float32)
+        num_nodes = graph_util.count_nodes(irreducibles)
+        self.node_component_id = np.zeros((num_nodes), dtype=int)
+        self.node_radius = np.zeros((num_nodes), dtype=np.float16)
+        self.node_xyz = np.zeros((num_nodes, 3), dtype=np.float32)
 
         # Add irreducibles to graph
         component_id = 0
@@ -220,18 +220,145 @@ class SkeletonGraph(nx.Graph):
                 self.node_xyz[new_id] = xyz
         self.add_edge(new_id, end)
 
-    # --- Update Structure ---
-    def reassign_component_ids(self):
-        """
-        Reassigns component IDs for all connected components in the graph.
-        """
-        component_id_to_swc_id = dict()
-        for i, nodes in enumerate(nx.connected_components(self)):
-            nodes = np.array(list(nodes), dtype=int)
-            component_id_to_swc_id[i + 1] = self.node_swc_id(nodes[0])
-            self.node_component_id[nodes] = i + 1
-        self.component_id_to_swc_id = component_id_to_swc_id
+    # --- Load Somas ---
+    def load_somas(self, soma_centroids):
+        # Resize attributes
+        num_components = nx.number_connected_components(self)
+        num_nodes = self.number_of_nodes()
+        num_somas = len(soma_centroids)
 
+        self.resize_node_attr((num_nodes + num_somas), "node_component_id")
+        self.resize_node_attr((num_nodes + num_somas), "node_radius")
+        self.resize_node_attr((num_nodes + num_somas, 3), "node_xyz")
+
+        # Add soma nodes
+        for idx, xyz in enumerate(soma_centroids, start=1):
+            # Create node ID
+            node_id = self.number_of_nodes()
+            assert node_id not in self.nodes
+
+            # Connect closest component (if applicable)
+            dist_i, i = self.kdtree.query(xyz)
+            if dist_i < 25:
+                self.add_edge(i, node_id)
+                component_id = self.node_component_id[i]
+                swc_id = self.node_swc_id(i)
+            elif dist_i < 50:
+                self.add_node(node_id)
+                component_id = num_components + idx
+                swc_id = f"soma-component-{idx}"
+            else:
+                continue
+
+            # Store attributes
+            self.component_id_to_swc_id[component_id] = swc_id
+            self.node_component_id[node_id] = component_id
+            self.node_radius[node_id] = 20
+            self.node_xyz[node_id] = xyz
+            self.soma_centroids.append(xyz)
+
+        self.relabel_nodes()
+
+    def connect_soma_fragments(self, max_dist=25):
+        merge_cnt, somas_connected = 0, list()
+        for soma_node in self.soma_nodes():
+            # Find nearby nodes
+            soma_xyz = self.node_xyz[soma_node]
+            nodes = self.kdtree.query_ball_point(soma_xyz, max_dist)
+            nodes = np.array(nodes, dtype=int)
+
+            # Connect soma to nearby components
+            for cid in np.unique(self.node_component_id[nodes]):
+                soma_component_id = self.node_component_id[soma_node]
+                if cid != self.node_component_id[soma_node]:
+                    # Find node closest to soma
+                    idxs = np.where(self.node_component_id[nodes] == cid)[0]
+                    dists = np.sum(
+                        (self.node_xyz[nodes[idxs]] - soma_xyz) ** 2, axis=1
+                    )
+                    node = nodes[idxs[np.argmin(dists)]]
+
+                    # Connect closest node to soma
+                    if not nx.has_path(self, node, soma_node):
+                        self.add_edge(node, soma_node)
+                        self.update_component_ids(soma_component_id, node)
+                        merge_cnt += 1
+                        somas_connected.append(soma_component_id)
+                        print("Check", soma_xyz)
+
+        if self.verbose:
+            print("# Somas Connected:", len(np.unique(somas_connected)))
+            print("# Connections Added:", merge_cnt)
+
+    def remove_soma_merges(self):
+        """
+        Breaks a fragment that intersects with multiple somas so that nodes
+        closest to soma locations are disconnected.
+
+        Parameters
+        ----------
+        swc_dict : dict
+            Contents of an SWC file.
+        somas_xyz : List[Tuple[float]]
+            Physical coordinates representing soma locations.
+        """
+        # Extract soma info
+        component_id_to_soma_nodes = defaultdict(set)
+        somas_kdtree = KDTree(self.soma_centroids)
+        for cnt, i in enumerate(self.soma_nodes(), start=1):
+            component_id_to_soma_nodes[self.node_component_id[i]].add(i)
+
+        # Check for connected components with multiple soma nodes
+        n_soma_merges = 0
+        for component_id, soma_nodes in component_id_to_soma_nodes.items():
+            if len(soma_nodes) > 1 and len(soma_nodes) < 20:
+                n_soma_merges += len(soma_nodes)
+                rm_nodes = set()
+                for i in self.find_connecting_path(list(soma_nodes)):
+                    dist, _ = somas_kdtree.query(self.node_xyz[i])
+                    if self.degree[i] > 2 and dist > 25:
+                        rm_nodes.add(i)
+                self.remove_nearby_nodes(rm_nodes)
+
+        # Finish
+        self.remove_small_components(relabel_nodes=False)
+        self.relabel_nodes()
+        if self.verbose:
+            print("# Soma Fragments:", len(self.soma_centroids))
+            print("# Soma Merges:", n_soma_merges)
+
+    def remove_nearby_nodes(self, roots, max_dist=5.0):
+        """
+        Removes nodes within a given radius from a set of root nodes.
+
+        Parameters
+        ----------
+        roots : List[int]
+            Root nodes.
+        max_dist : float, optional
+            Maximum distance within which nodes are removed. Default is 5.0.
+        """
+        nodes = set()
+        while len(roots) > 0:
+            root = roots.pop()
+            queue = [(root, 0)]
+            visited = {root}
+            while len(queue) > 0:
+                # Visit node
+                i, dist_i = queue.pop()
+                visited.add(i)
+
+                # Update queue
+                for j in self.neighbors(i):
+                    dist_j = dist_i + self.dist(i, j)
+                    if j not in visited and dist_j <= max_dist:
+                        queue.append((j, dist_j))
+                    elif j not in visited and self.degree[j] > 2:
+                        queue.append((j, dist_i))
+            nodes = nodes.union(visited)
+        self.remove_nodes_from(nodes)
+
+    # --- Update Structure ---
     def check_swc_ids(self):
         visited = set()
         for nodes in map(list, nx.connected_components(self)):
@@ -251,6 +378,18 @@ class SkeletonGraph(nx.Graph):
             component_id = self.node_component_id[nodes[0]]
             self.component_id_to_swc_id[component_id] = swc_id
             visited.add(swc_id)
+
+    def reassign_component_ids(self):
+        """
+        Reassigns component IDs for all connected components in the graph.
+        """
+        self.check_swc_ids()
+        component_id_to_swc_id = dict()
+        for i, nodes in enumerate(nx.connected_components(self), start=1):
+            nodes = np.array(list(nodes), dtype=int)
+            component_id_to_swc_id[i] = self.node_swc_id(nodes[0])
+            self.node_component_id[nodes] = i
+        self.component_id_to_swc_id = component_id_to_swc_id
 
     def relabel_nodes(self):
         """
@@ -294,6 +433,14 @@ class SkeletonGraph(nx.Graph):
         self.remove_nodes_from(nodes)
         if relabel_nodes:
             self.relabel_nodes()
+
+    def remove_small_components(self, min_size=20, relabel_nodes=True):
+        rm_nodes = list()
+        for nodes in map(list, nx.connected_components(self)):
+            length = self.cable_length(max_depth=min_size, root=nodes[0])
+            if length < min_size:
+                rm_nodes.extend(nodes)
+        self.remove_nodes_from(rm_nodes)
 
     # --- Writer ---
     def to_zipped_swcs(self, zip_path, preserve_radius=False):
@@ -414,20 +561,18 @@ class SkeletonGraph(nx.Graph):
             # Preamble
             text_buffer.write("# id, type, z, y, x, r, pid")
 
-            # Write entries
+            # Special case: root
             cnt = 1
             node_to_idx = defaultdict(lambda: -1)
-            for i, j in nx.dfs_edges(self, source=root):
-                # Special Case: Root
-                if len(node_to_idx) == 0:
-                    write_entry(i, -1)
+            write_entry(root, -1)
 
-                # General Case: Non-Root
+            # General case: non-root
+            for i, j in nx.dfs_edges(self, source=root):
                 cnt += 1
                 write_entry(j, i)
 
             # Finish
-            filename = self.node_swc_id(root)
+            filename = f"{self.node_swc_id(root)}.swc"
             zip_writer.writestr(filename, text_buffer.getvalue())
 
     # --- Helpers ---
@@ -615,6 +760,26 @@ class SkeletonGraph(nx.Graph):
             Euclidean distance between nodes "i" and "j".
         """
         return distance.euclidean(self.node_xyz[i], self.node_xyz[j])
+
+    def find_connecting_path(self, nodes):
+        """
+        Finds path connecting the given set of nodes.
+
+        Parameters
+        ----------
+        nodes : List[int]
+            Nodes to be connected.
+
+        Returns
+        -------
+        path : Set[int]
+            Set of node IDs that connects the given nodes.
+        """
+        connecting_nodes = set()
+        for target in nodes[1:]:
+            path = nx.shortest_path(self, source=nodes[0], target=target)
+            connecting_nodes = connecting_nodes.union(set(path))
+        return connecting_nodes
 
     def get_irreducible_edge(self, node):
         """
@@ -928,6 +1093,13 @@ class SkeletonGraph(nx.Graph):
         Initializes KD-Tree from node xyz coordinates.
         """
         self.kdtree = KDTree(self.node_xyz)
+
+    def soma_nodes(self):
+        soma_nodes = list()
+        for dist_i, i in map(self.kdtree.query, self.soma_centroids):
+            if dist_i < 5:
+                soma_nodes.append(i)
+        return soma_nodes
 
     def summary(self, prefix=""):
         """

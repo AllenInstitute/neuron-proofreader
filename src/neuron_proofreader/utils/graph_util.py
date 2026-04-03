@@ -22,28 +22,19 @@ Note: We use the term "branch" to refer to a path in a graph from a branching
       node to a leaf.
 """
 
-from collections import defaultdict, deque
+from collections import deque
 from concurrent.futures import (
-    as_completed,
     FIRST_COMPLETED,
     ProcessPoolExecutor,
-    ThreadPoolExecutor,
     wait,
 )
-from random import sample
-from scipy.spatial import KDTree
 from scipy.spatial.distance import euclidean
 from tqdm import tqdm
 
 import networkx as nx
 import numpy as np
 
-from neuron_proofreader.utils import (
-    geometry_util as geometry,
-    img_util,
-    swc_util,
-    util,
-)
+from neuron_proofreader.utils import geometry_util as geometry, swc_util, util
 
 
 class GraphLoader:
@@ -59,9 +50,6 @@ class GraphLoader:
         node_spacing=1,
         prefetch=128,
         prune_depth=24.0,
-        remove_high_risk_merges=False,
-        segmentation_path=None,
-        soma_centroids=list(),
         verbose=False,
     ):
         """
@@ -84,149 +72,68 @@ class GraphLoader:
         prune_depth : int, optional
             Branches with length less than "prune_depth" microns are pruned.
             Default is 20.0 microns.
-        remove_high_risk_merges : bool, optional
-            Indication of whether to remove high risk merge sites (i.e. close
-            branching points). Default is False.
-        segmentation_path : str, optional
-            Path to segmentation stored in GCS bucket. Default is None.
-        soma_centroids : List[Tuple[float]], optional
-            Physcial coordinates of soma centroids. Default is an empty list.
         verbose : bool, optional
             Indication of whether to display a progress bar while building
             FragmentsGraph. Default is True.
         """
         # Instance attributes
-        self.id_to_soma = defaultdict(list)
         self.min_size = min_size
         self.node_spacing = node_spacing
         self.prefetch = prefetch
         self.prune_depth = prune_depth
-        self.remove_high_risk_merges_bool = remove_high_risk_merges
-        self.soma_centroids = soma_centroids
+        self.swc_reader = swc_util.Reader(anisotropy, min_size, verbose)
         self.verbose = verbose
 
-        # SWC reader
-        self.swc_reader = swc_util.Reader(anisotropy, min_size, verbose)
-
-        # Load somas
-        if segmentation_path and soma_centroids:
-            self.soma_kdtree = KDTree(self.soma_centroids)
-            self.ingest_somas(segmentation_path, anisotropy)
-        else:
-            self.soma_kdtree = None
-
-    def ingest_somas(self, segmentation_path, anisotropy):
+    def __call__(self, swc_pointer):
         """
-        Loads soma locations from a specified file and search for interestions
-        between soma locations and objects in segmentation mask.
+        Processes a list of swc dictionaries in parallel and loads the
+        components of the irreducible subgraph from each.
 
         Parameters
         ----------
-        segmentation_path : str
-            Path to a segmentation stored in a GCS bucket.
-        anisotropy : Tuple[float]
-            Image to physical coordinates scaling factors to account for the
-            anisotropy of the microscope.
-        """
-        reader = img_util.TensorStoreReader(segmentation_path)
-        with ThreadPoolExecutor() as executor:
-            # Assign threads
-            threads = list()
-            for xyz in self.soma_centroids:
-                voxel = img_util.to_voxels(xyz, anisotropy)
-                threads.append(executor.submit(reader.read_voxel, voxel, xyz))
-
-            # Store results
-            for thread in as_completed(threads):
-                xyz, segment_id = thread.result()
-                if segment_id != 0:
-                    self.id_to_soma[segment_id].append(xyz)
-
-        # Report results
-        if self.verbose:
-            n = np.sum([1 for v in self.id_to_soma.values() if len(v) > 1])
-            print("# Somas:", len(self.soma_centroids))
-            print("# Soma-Fragment Intersections:", len(self.id_to_soma))
-            print("# Soma Merges:", n)
-
-    # --- Irreducibles Extraction ---
-    def __call__(self, fragments_pointer):
-        """
-        Processes a list of swc dictionaries in parallel and extracts the
-        components of the irreducible subgraph from each. Note: this routine
-        also breaks fragments that intersect multiple somas if soma locations
-        are provided.
-
-        Parameters
-        ----------
-        fragments_pointer : Any
-            Object that points to SWC files to be read.
+        swc_pointer : str
+            Path to SWC files to be read.
 
         Returns
         -------
         irreducibles : List[dict]
-            Dictionaries that contain components of the irreducible subgraph
-            extracted from each SWC dictionary.
+            Dictionaries containing components of the irreducible subgraph
+            loaded from SWC files.
         """
         # Read SWC files
-        swc_dicts = self.swc_reader(fragments_pointer)
-        """
-while pending:
-        done, pending = wait(pending, return_when=FIRST_COMPLETED)
+        swc_dicts = self.swc_reader(swc_pointer)
+        if self.verbose:
+            pbar = tqdm(total=len(swc_dicts), desc="Load Graphs")
 
-        for future in done:
-            try:
-                result, cnt = future.result()
-            except Exception:
-                continue
-
-            high_risk_cnt += cnt
-            if result:
-                irreducibles.extend(result)
-
-            if pbar:
-                pbar.update(1)
-
-            if swc_dicts:
-                pending.add(executor.submit(self.extract, swc_dicts.pop()))
-        """
         # Load graphs
-        desc = "Extract Graphs"
-        pbar = tqdm(total=len(swc_dicts), desc=desc) if self.verbose else None
         with ProcessPoolExecutor() as executor:
             # Start processes
             pending = set()
             while len(pending) < self.prefetch and swc_dicts:
-                pending.add(executor.submit(self.extract, swc_dicts.pop()))
+                pending.add(executor.submit(self.load, swc_dicts.pop()))
 
             # Yield processes
             irreducibles = deque()
-            high_risk_cnt = 0
             while pending:
                 done, pending = wait(pending, return_when=FIRST_COMPLETED)
                 for future in done:
                     # Store completed processes
-                    result, cnt = future.result()
-                    high_risk_cnt += cnt
-                    irreducibles.extend(result)
+                    result = future.result()
+                    if result:
+                        irreducibles.append(result)
                     pbar.update(1) if self.verbose else None
 
                     # Continue submitting processes
                     if swc_dicts:
                         pending.add(
-                            executor.submit(self.extract, swc_dicts.pop())
+                            executor.submit(self.load, swc_dicts.pop())
                         )
-
-        # Report results
-        if self.verbose and high_risk_cnt > 0:
-            print("# High Risk Merges Detected:", high_risk_cnt)
         return irreducibles
 
-    def extract(self, swc_dict):
+    def load(self, swc_dict):
         """
-        Breaks a graph built from "swc_dict" at high risk locations, then
-        extracts the components of the irreducible subgraph from a given SWC
-        dictionary.
+        Loads irreducible components from "swc_dict". Note: "swc_dict" is
+        assumed to contain exactly one connected component.
 
         Parameters
         ----------
@@ -239,36 +146,21 @@ while pending:
             Dictionary that each contains the components of an irreducible
             subgraph.
         """
-        graph = self.to_graph(swc_dict)
-        irreducibles_list = deque()
-        high_risk_cnt = 0
+        # Build graph
+        graph = swc_util.to_graph(swc_dict, set_attrs=True)
+        prune_branches(graph, self.prune_depth)
+
+        # Extract irreducible components (if applicable)
         if self.satisfies_cable_length_condition(graph):
-            # Check for soma merges
-            if len(graph.graph["soma_nodes"]) > 1:
-                self.remove_soma_merges(graph)
+            irreducibles = self.get_irreducibles(graph)
+            if irreducibles:
+                irreducibles["is_soma"] = len(swc_dict["soma_nodes"]) > 0
+                irreducibles["swc_id"] = swc_dict["swc_name"]
+            return irreducibles
+        else:
+            return None
 
-            # Check for high risk merges
-            if self.remove_high_risk_merges_bool:
-                high_risk_cnt = self.remove_high_risk_merges(graph)
-
-            # Extract irreducibles
-            i = 0
-            leafs = set(get_leafs(graph))
-            while leafs:
-                # Extract connected component
-                leaf = util.sample_once(leafs)
-                irreducibles, visited = self.get_irreducibles(graph, leaf)
-                leafs -= visited
-
-                # Store results
-                if irreducibles:
-                    swc_id = f"{graph.graph['segment_id']}.{i}"
-                    irreducibles["swc_id"] = swc_id
-                    irreducibles_list.append(irreducibles)
-                    i += 1
-        return irreducibles_list, high_risk_cnt
-
-    def get_irreducibles(self, graph, source):
+    def get_irreducibles(self, graph):
         """
         Identifies irreducible components of a connected graph.
 
@@ -276,8 +168,6 @@ while pending:
         ----------
         graph : networkx.Graph
             Graph to be searched.
-        source : Set[int]
-            Leaf nodes in the given graph.
 
         Returns
         -------
@@ -305,14 +195,13 @@ while pending:
             return euclidean(graph.graph["xyz"][i], graph.graph["xyz"][j])
 
         # Initializations
-        irreducible_nodes = set({source})
+        leaf = find_leaf(graph)
+        irreducible_nodes = {leaf}
         irreducible_edges = dict()
-        is_soma = source in graph.graph["soma_nodes"]
-        leafs = set({source})
 
         # Main
         root, path_length = None, 0
-        for i, j in nx.dfs_edges(graph, source=source):
+        for i, j in nx.dfs_edges(graph, source=leaf):
             # Check for start of irreducible edge
             if root is None:
                 root, edge_length = i, 0
@@ -323,7 +212,6 @@ while pending:
 
             # Visit node
             edge_length += dist(i, j)
-            is_soma = is_soma or j in graph.graph["soma_nodes"]
             attrs["radius"].append(graph.graph["radius"][j])
             attrs["xyz"].append(graph.graph["xyz"][j])
 
@@ -331,8 +219,6 @@ while pending:
             if graph.degree[j] != 2:
                 path_length += edge_length
                 irreducible_nodes.add(j)
-                if graph.degree[j] == 1:
-                    leafs.add(j)
 
                 attrs = to_numpy(attrs)
                 n_pts = int(edge_length / self.node_spacing)
@@ -345,18 +231,17 @@ while pending:
         if len(irreducible_nodes) == 2:
             endpoint_dist = dist(*tuple(irreducible_nodes))
             if endpoint_dist / path_length < 0.5:
-                return None, leafs
+                return None
 
         # Store results
-        if path_length > self.min_size - 10:
+        if path_length > self.min_size:
             irreducibles = {
                 "nodes": set_node_attrs(graph, irreducible_nodes),
                 "edges": set_edge_attrs(graph, irreducible_edges),
-                "is_soma": is_soma,
             }
         else:
             irreducibles = None
-        return irreducibles, leafs
+        return irreducibles
 
     # --- Merge Removal ---
     def remove_high_risk_merges(self, graph, max_dist=7):
@@ -373,13 +258,7 @@ while pending:
         max_dist : float, optional
             Maximum distance between branching points that qualifies a site to
             be considered "high risk". The default is 7.
-
-        Returns
-        -------
-        high_risk_cnt : int
-            Number of high risk merges detected.
         """
-        high_risk_cnt = 0
         nodes = set()
         branchings = set([i for i in graph.nodes if graph.degree[i] > 2])
         while branchings:
@@ -411,75 +290,10 @@ while pending:
             # Determine whether to remove visited nodes
             if hit_branchings or graph.degree(root) > 3:
                 nodes = nodes.union(visited)
-                high_risk_cnt += 1
                 branchings -= hit_branchings
         graph.remove_nodes_from(nodes)
-        return high_risk_cnt
-
-    def remove_soma_merges(self, graph):
-        """
-        Breaks a fragment that intersects with multiple somas so that nodes
-        closest to soma locations are disconnected.
-
-        Parameters
-        ----------
-        swc_dict : dict
-            Contents of an SWC file.
-        somas_xyz : List[Tuple[float]]
-            Physical coordinates representing soma locations.
-        """
-        soma_nodes = graph.graph["soma_nodes"]
-        if len(soma_nodes) <= 20:
-            # Break connecting path
-            nodes = set()
-            for node in find_connecting_path(graph, list(soma_nodes)):
-                if graph.degree(node) > 2:
-                    nodes.add(node)
-            remove_nearby_nodes(graph, nodes)
-
-            # Associate each soma to one node
-            graph.graph["soma_nodes"] = soma_nodes.intersection(graph.nodes)
 
     # --- Helpers ---
-    def dist_from_soma(self, xyz):
-        """
-        Computes the distance between the given xyz coordinate and nearest
-        soma location.
-
-        Parameters
-        ----------
-        xyz : ArrayLike
-            Coordinate to be queried.
-
-        Returns
-        -------
-        float
-            Distance between a given xyz coordinate and the nearest soma
-            location.
-        """
-        return self.soma_kdtree.query(xyz)[0] if self.soma_kdtree else np.inf
-
-    def find_soma_nodes(self, graph):
-        """
-        Find nodes in graph that correspond to soma locations.
-
-        Parameters
-        ----------
-        graph : networkx.Graph
-            Graph to be searched.
-
-        Returns
-        -------
-        soma_nodes : Set[int]
-            Node IDs that correspond to soma locations.
-        """
-        soma_nodes = set()
-        for xyz in self.id_to_soma[graph.graph["segment_id"]]:
-            node, dist = find_closest_node(graph, xyz)
-            if dist < 20:
-                soma_nodes.add(find_nearby_branching_node(graph, node, 20))
-        return soma_nodes
-
     def satisfies_cable_length_condition(self, graph):
         """
         Determines whether the total path length of the given graph is greater
@@ -519,44 +333,11 @@ while pending:
             Start and end node IDs of the edge.
         n_pts : int
             Number of points to use for the smoothed curve.
-
-        Returns
-        -------
-        None
         """
         attrs["xyz"] = geometry.resample_curve_3d(attrs["xyz"], n_pts=n_pts)
         attrs["radius"] = geometry.resample_curve_1d(attrs["radius"], n_pts)
         graph.graph["xyz"][edge[0]] = attrs["xyz"][0]
         graph.graph["xyz"][edge[1]] = attrs["xyz"][-1]
-
-    def to_graph(self, swc_dict):
-        """
-        Converts a dictionary containing swc attributes to a graph.
-
-        Parameters
-        ----------
-        swc_dict : dict
-            Dictionaries whose keys and values are the attribute name and
-            values from an SWC file.
-
-        Returns
-        -------
-        graph : networkx.Graph
-            Graph generated from "swc_dict".
-        """
-        # Build graph
-        graph = swc_util.to_graph(swc_dict, set_attrs=True)
-        prune_branches(graph, self.prune_depth)
-
-        # Check if original segment intersects with soma
-        graph.graph["segment_id"] = swc_util.get_segment_id(
-            swc_dict["swc_name"]
-        )
-        if graph.graph["segment_id"] in self.id_to_soma:
-            graph.graph["soma_nodes"] = self.find_soma_nodes(graph)
-        else:
-            graph.graph["soma_nodes"] = set()
-        return graph
 
 
 # --- Helpers ---
@@ -682,59 +463,6 @@ def edges_to_line_graph(edges):
     return nx.line_graph(graph)
 
 
-def find_closest_node(graph, xyz):
-    """
-    Finds the node in the graph that is closest to the given coordinates.
-
-    Parameters
-    ----------
-    graph : networkx.Graph
-        Graph to be search.
-    xyz : Tuple[float]
-        Coordinate to which the closest node in the graph will be found.
-
-    Returns
-    -------
-    best_node : int
-        Node in the graph that is closest to the given xyz coordinate.
-    best_dist : float
-        Distance between "best_node" and the given xyz coordinate.
-    """
-    best_dist = np.inf
-    best_node = None
-    for i in graph.nodes:
-        cur_dist = euclidean(xyz, graph.graph["xyz"][i])
-        if cur_dist < best_dist:
-            best_dist = cur_dist
-            best_node = i
-    return best_node, best_dist
-
-
-def find_connecting_path(graph, nodes):
-    """
-    Finds path that connects a set of nodes.
-
-    Parameters
-    ----------
-    graph : networkx.Graph
-        Graph to be searched.
-    nodes : List[int]
-        List of nodes to be connected.
-
-    Returns
-    -------
-    path : Set[int]
-        Nodes along the shortest paths between somas.
-    """
-    # Break merges between somas
-    path = set()
-    if len(nodes) > 1:
-        for i in range(1, len(nodes)):
-            subpath = nx.shortest_path(graph, source=nodes[0], target=nodes[i])
-            path = path.union(set(subpath))
-    return path
-
-
 def find_leaf(graph):
     """
     Finds a leaf node in the given graph.
@@ -746,7 +474,7 @@ def find_leaf(graph):
 
     Returns
     -------
-    int
+    i : int
         Leaf node.
     """
     for i in graph.nodes:
@@ -769,7 +497,7 @@ def find_nearby_branching_node(graph, root, max_depth=10):
 
     Returns
     -------
-    int
+    root : int
         Nearest branching node if one is found; otherwise, returns "root".
     """
     queue = [(root, 0)]
@@ -787,49 +515,6 @@ def find_nearby_branching_node(graph, root, max_depth=10):
                 queue.append((j, dist_j))
                 visited.add(j)
     return root
-
-
-def get_component(graph, root):
-    """
-    Gets the connected component corresponding to "root" from "graph".
-
-    Parameters
-    ----------
-    graph : networkx.Graph
-        Graph to be searched.
-    root : int
-        Node that breadth-first search starts from.
-
-    Returns
-    -------
-    visited : Set[int]
-        Nodes in the connected component corresponding to "root".
-    """
-    queue = [root]
-    visited = set()
-    while len(queue):
-        i = queue.pop()
-        visited.add(i)
-        for j in [j for j in graph.neighbors(i) if j not in visited]:
-            queue.append(j)
-    return visited
-
-
-def get_leafs(graph):
-    """
-    Gets leaf nodes of the given graph.
-
-    Parameters
-    ----------
-    graph : networkx.Graph
-        Graph to be searched
-
-    Returns
-    -------
-    List[int]
-        Leaf nodes of the given graph.
-    """
-    return [i for i in graph.nodes if graph.degree[i] == 1]
 
 
 def largest_components(graph, k):
@@ -876,7 +561,7 @@ def prune_branches(graph, depth):
     depth : float
         Length of branches that are pruned.
     """
-    for leaf in get_leafs(graph):
+    for leaf in [i for i in graph.nodes if graph.degree[i] == 1]:
         branch = [leaf]
         length = 0
         for i, j in nx.dfs_edges(graph, source=leaf):
@@ -891,58 +576,6 @@ def prune_branches(graph, depth):
             elif graph.degree(j) > 2:
                 graph.remove_nodes_from(branch)
                 break
-
-
-def remove_nearby_nodes(graph, roots, max_dist=5.0):
-    """
-    Removes nodes from graph within a given radius from a set of root nodes.
-
-    Parameters
-    ----------
-    graph : networkx.Graph
-        Graph to be searched.
-    roots : List[int]
-        Root nodes.
-    max_dist : float, optional
-        Maximum distance within which nodes are removed. The default is 5.0.
-    """
-    nodes = set()
-    while len(roots) > 0:
-        root = roots.pop()
-        queue = [(root, 0)]
-        visited = set()
-        while len(queue) > 0:
-            # Visit node
-            i, dist_i = queue.pop()
-            visited.add(i)
-
-            # Update queue
-            for j in graph.neighbors(i):
-                dist_j = dist_i + dist(graph, i, j)
-                if j not in visited and dist_j <= max_dist:
-                    queue.append((j, dist_j))
-                elif j not in visited and graph.degree[j] > 2:
-                    queue.append((j, dist_i))
-        nodes = nodes.union(visited)
-    graph.remove_nodes_from(nodes)
-
-
-def sample_node(graph):
-    """
-    Samples a single node from a graph.
-
-    Parameters
-    ----------
-    graph : networkx.Graph
-        Graph to be sampled from.
-
-    Returns
-    -------
-    int
-        Node ID.
-    """
-    nodes = list(graph.nodes)
-    return sample(nodes, 1)[0]
 
 
 def to_numpy(attrs):
