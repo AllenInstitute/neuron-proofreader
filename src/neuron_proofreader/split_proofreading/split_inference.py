@@ -365,16 +365,15 @@ class InferencePipeline:
             self.dataset.graph.node_radius[i] = 6
             self.dataset.graph.node_radius[j] = 6
 
-    def save_connections(self, round_id=None):
+    def save_connections(self):
         """
         Writes the accepted proposals to a text file. Each line contains the
         two SWC IDs as comma separated values.
         """
-        suffix = f"-{round_id}" if round_id else ""
-        path = os.path.join(self.output_dir, f"connections{suffix}.txt")
+        path = os.path.join(self.output_dir, "connections.txt")
         with open(path, "w") as f:
-            for id_1, id_2 in self.dataset.graph.merged_ids:
-                f.write(f"{id_1}, {id_2}" + "\n")
+            for id1, id2 in self.dataset.graph.merged_ids:
+                f.write(f"{id1}, {id2}" + "\n")
 
     def save_fragment_ids(self):
         path = f"{self.output_dir}/segment_ids.txt"
