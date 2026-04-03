@@ -232,21 +232,18 @@ class SkeletonGraph(nx.Graph):
         self.resize_node_attr((num_nodes + num_somas, 3), "node_xyz")
 
         # Add soma nodes
-        somas_node_ids = list()
         for idx, xyz in enumerate(soma_centroids, start=1):
             # Create node ID
             node_id = self.number_of_nodes()
             assert node_id not in self.nodes
-            
-            somas_node_ids.append(node_id)
 
             # Connect closest component (if applicable)
             dist_i, i = self.kdtree.query(xyz)
-            if dist_i < 20:
+            if dist_i < 25:
                 self.add_edge(i, node_id)
                 component_id = self.node_component_id[i]
                 swc_id = self.node_swc_id(i)
-            elif dist_i < 40:
+            elif dist_i < 50:
                 self.add_node(node_id)
                 component_id = num_components + idx
                 swc_id = f"soma-component-{idx}"
@@ -261,6 +258,37 @@ class SkeletonGraph(nx.Graph):
             self.soma_centroids.append(xyz)
 
         self.relabel_nodes()
+
+    def connect_soma_fragments(self, max_dist=25):
+        merge_cnt, somas_connected = 0, list()
+        for soma_node in self.soma_nodes():
+            # Find nearby nodes
+            soma_xyz = self.node_xyz[soma_node]
+            nodes = self.kdtree.query_ball_point(soma_xyz, max_dist)
+            nodes = np.array(nodes, dtype=int)
+
+            # Connect soma to nearby components
+            for cid in np.unique(self.node_component_id[nodes]):
+                soma_component_id = self.node_component_id[soma_node]
+                if cid != self.node_component_id[soma_node]:
+                    # Find node closest to soma
+                    idxs = np.where(self.node_component_id[nodes] == cid)[0]
+                    dists = np.sum(
+                        (self.node_xyz[nodes[idxs]] - soma_xyz) ** 2, axis=1
+                    )
+                    node = nodes[idxs[np.argmin(dists)]]
+
+                    # Connect closest node to soma
+                    if not nx.has_path(self, node, soma_node):
+                        self.add_edge(node, soma_node)
+                        self.update_component_ids(soma_component_id, node)
+                        merge_cnt += 1
+                        somas_connected.append(soma_component_id)
+                        print("Check", soma_xyz)
+
+        if self.verbose:
+            print("# Somas Connected:", len(np.unique(somas_connected)))
+            print("# Connections Added:", merge_cnt)
 
     def remove_soma_merges(self):
         """

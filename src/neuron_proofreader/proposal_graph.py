@@ -103,42 +103,6 @@ class ProposalGraph(SkeletonGraph):
         )
 
     # --- Update Structure ---
-    def connect_soma_fragments(self, soma_centroids, max_dist=25):
-        merge_cnt, soma_cnt = 0, 0
-        somas_dict = self.add_soma_nodes(soma_centroids)
-        for soma_node_id, xyz in somas_dict.items():
-            # Extract nearby nodes
-            ids = self.kdtree.query_ball_point(xyz, max_dist)
-            soma_component_id = self.node_component_id[soma_node_id]
-            self.soma_component_ids.add(soma_component_id)
-
-            # Connect to soma by connected component
-            if len(ids) > 1:
-                soma_cnt += 1
-                ids = np.array(ids, dtype=int)
-                for cid in np.unique(self.node_component_id[ids]):
-                    # Find node closest to soma
-                    idxs = np.where(self.node_component_id[ids] == cid)[0]
-                    dists = np.sum(
-                        (self.node_xyz[ids[idxs]] - xyz) ** 2, axis=1
-                    )
-                    node_id = ids[idxs[np.argmin(dists)]]
-
-                    # Connect closest node to soma
-                    if not nx.has_path(self, node_id, soma_node_id):
-                        self.add_edge(node_id, soma_node_id)
-                        self.update_component_ids(soma_component_id, node_id)
-                        merge_cnt += 1
-        self.set_kdtree()
-
-        # Summarize results
-        results = [
-            f"# Soma Fragments: {len(self.soma_component_ids)}",
-            f"# Somas Connected: {soma_cnt}",
-            f"# Soma Fragments Merged: {merge_cnt}",
-        ]
-        return "\n".join(results)
-
     def relabel_nodes(self):
         """
         Reassigns contiguous node IDs and update all dependent structures.

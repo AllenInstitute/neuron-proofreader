@@ -131,7 +131,7 @@ class InferencePipeline:
 
         # Postprocess fragments with somas
         self.dataset.graph.remove_soma_merges()
-        #self.dataset.graph.reconnect_soma_fragments()
+        self.dataset.graph.connect_soma_fragments()
 
         # Log results
         elapsed, unit = util.time_writer(time() - t0)
@@ -348,7 +348,7 @@ class InferencePipeline:
                     "Proposal": (segment_i, segment_j),
                     "Leaf2Leaf": self.dataset.graph.is_leaf2leaf(proposal),
                     "Length": self.dataset.graph.proposal_length(proposal),
-                    "Prediction": pred
+                    "Prediction": pred,
                 }
             )
 
