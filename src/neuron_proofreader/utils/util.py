@@ -534,7 +534,7 @@ def list_s3_prefixes(bucket_name, prefix):
 
 def upload_dir_to_s3(dir_path, bucket_name, prefix):
     """
-    Writes a directory on the local machine to an S3 bucket.
+    Uploads a directory on the local machine to an S3 bucket.
 
     Parameters
     ----------
@@ -545,13 +545,21 @@ def upload_dir_to_s3(dir_path, bucket_name, prefix):
     prefix : str
         Path within S3 bucket.
     """
+    # Upload files
     with ThreadPoolExecutor() as executor:
         for name in os.listdir(dir_path):
             source_path = os.path.join(dir_path, name)
             destination_path = os.path.join(prefix, name)
-            executor.submit(
-                upload_file_to_s3, source_path, bucket_name, destination_path
-            )
+            if os.path.isdir(source_path):
+                subprefix = os.path.join(prefix, name)
+                upload_dir_to_s3(source_path, bucket_name, subprefix)
+            else:
+                executor.submit(
+                    upload_file_to_s3,
+                    source_path,
+                    bucket_name,
+                    destination_path
+                )
 
 
 def upload_file_to_s3(source_path, bucket_name, destination_path):
