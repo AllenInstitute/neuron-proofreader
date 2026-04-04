@@ -133,6 +133,10 @@ class InferencePipeline:
         self.dataset.graph.remove_soma_merges()
         self.dataset.graph.connect_soma_fragments()
 
+        # Save fragment before split correction
+        zip_dir = os.path.join(self.output_dir, "original_swcs")
+        self.dataset.graph.to_zipped_swcs_multithreaded(zip_dir)
+
         # Log results
         elapsed, unit = util.time_writer(time() - t0)
         self.log(self.dataset.graph.summary(prefix="\nInitial"))
@@ -279,15 +283,15 @@ class InferencePipeline:
         namely the corrected SWC files and a list of the merged SWC ids.
         """
         # Save temp result on local machine
-        temp_dir = os.path.join(self.output_dir, "temp")
+        zip_dir = os.path.join(self.output_dir, "corrected_swcs")
         self.reconfigure_node_radius()
-        self.dataset.graph.to_zipped_swcs_multithreaded(temp_dir)
+        self.dataset.graph.to_zipped_swcs_multithreaded(zip_dir)
 
         # Merge ZIPs
-        swc_path = os.path.join(self.output_dir, "corrected-swcs.zip")
-        zip_paths = util.list_paths(temp_dir, extension=".zip")
-        util.combine_zips(zip_paths, swc_path)
-        util.rmdir(temp_dir)
+        #swc_path = os.path.join(self.output_dir, "corrected-swcs.zip")
+        #zip_paths = util.list_paths(temp_dir, extension=".zip")
+        #util.combine_zips(zip_paths, swc_path)
+        #util.rmdir(temp_dir)
 
         # Save additional info
         self.save_connections()
@@ -349,6 +353,10 @@ class InferencePipeline:
                     "Leaf2Leaf": self.dataset.graph.is_leaf2leaf(proposal),
                     "Length": self.dataset.graph.proposal_length(proposal),
                     "Prediction": pred,
+                    "Segment1": segment_i,
+                    "Segment2": segment_j,
+                    "World1": self.dataset.graph.node_xyz[i],
+                    "World2": self.dataset.graph.node_xyz[j],
                 }
             )
 
@@ -365,16 +373,15 @@ class InferencePipeline:
             self.dataset.graph.node_radius[i] = 6
             self.dataset.graph.node_radius[j] = 6
 
-    def save_connections(self, round_id=None):
+    def save_connections(self):
         """
         Writes the accepted proposals to a text file. Each line contains the
         two SWC IDs as comma separated values.
         """
-        suffix = f"-{round_id}" if round_id else ""
-        path = os.path.join(self.output_dir, f"connections{suffix}.txt")
+        path = os.path.join(self.output_dir, "connections.txt")
         with open(path, "w") as f:
-            for id_1, id_2 in self.dataset.graph.merged_ids:
-                f.write(f"{id_1}, {id_2}" + "\n")
+            for id1, id2 in self.dataset.graph.merged_ids:
+                f.write(f"{id1}, {id2}" + "\n")
 
     def save_fragment_ids(self):
         path = f"{self.output_dir}/segment_ids.txt"
