@@ -128,14 +128,12 @@ class InferencePipeline:
             soma_centroids=self.soma_centroids,
         )
         self.save_fragment_ids()
+        self.save_graph("original_swcs")
 
         # Postprocess fragments with somas
         self.dataset.graph.remove_soma_merges()
         self.dataset.graph.connect_soma_fragments()
-
-        # Save fragment before split correction
-        zip_dir = os.path.join(self.output_dir, "original_swcs")
-        self.dataset.graph.to_zipped_swcs_multithreaded(zip_dir)
+        self.save_graph("precorrected_swcs")
 
         # Log results
         elapsed, unit = util.time_writer(time() - t0)
@@ -283,9 +281,10 @@ class InferencePipeline:
         namely the corrected SWC files and a list of the merged SWC ids.
         """
         # Save temp result on local machine
-        zip_dir = os.path.join(self.output_dir, "corrected_swcs")
-        self.reconfigure_node_radius()
-        self.dataset.graph.to_zipped_swcs_multithreaded(zip_dir)
+        self.save_graph("corrected_swcs")
+        #zip_dir = os.path.join(self.output_dir, "corrected_swcs")
+        #self.reconfigure_node_radius()
+        #self.dataset.graph.to_zipped_swcs_multithreaded(zip_dir)
 
         # Merge ZIPs
         #swc_path = os.path.join(self.output_dir, "corrected-swcs.zip")
@@ -337,6 +336,10 @@ class InferencePipeline:
         idx_to_id = data.idxs_proposals.idx_to_id
         hat_y = ml_util.tensor_to_list(hat_y)
         return {idx_to_id[i]: y_i for i, y_i in enumerate(hat_y)}
+
+    def save_graph(self, dir_name):
+        zip_dir = os.path.join(self.output_dir, dir_name)
+        self.dataset.graph.to_zipped_swcs_multithreaded(zip_dir)
 
     def save_proposal_results(self, preds_dict):
         summary = list()
