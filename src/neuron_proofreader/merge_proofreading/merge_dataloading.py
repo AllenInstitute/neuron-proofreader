@@ -9,12 +9,14 @@ Code for loading merge site dataset.
 """
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from tqdm import tqdm
 
 import ast
+import logging
 import numpy as np
 import os
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 from neuron_proofreader.utils import util
 
@@ -52,7 +54,7 @@ def load_fragments(dataset, is_test=False, max_workers=2):
                 load_tasks.append((brain_id, swc_pointer))
 
     # Load in parallel
-    print(f"\nLoading Fragments ({len(load_tasks)} brains, {max_workers} workers)")
+    logger.info("Loading fragments (%d tasks, %d workers)", len(load_tasks), max_workers)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(
@@ -60,12 +62,12 @@ def load_fragments(dataset, is_test=False, max_workers=2):
             ): brain_id
             for brain_id, swc_pointer in load_tasks
         }
-        for future in tqdm(as_completed(futures), total=len(futures), desc="Fragments"):
+        for future in as_completed(futures):
             brain_id = futures[future]
             try:
                 future.result()
             except Exception as e:
-                print(f"Error loading fragments for {brain_id}: {e}")
+                logger.error("Error loading fragments for %s: %s", brain_id, e)
 
 
 def load_groundtruth(dataset, is_test=False, max_workers=2):
@@ -85,7 +87,7 @@ def load_groundtruth(dataset, is_test=False, max_workers=2):
     root = "gs://allen-nd-goog/ground_truth_tracings"
     brain_ids = get_brain_ids(dataset.merge_sites_df, is_test)
 
-    print(f"\nLoading Ground Truth ({len(brain_ids)} brains, {max_workers} workers)")
+    logger.info("Loading ground truth (%d brains, %d workers)", len(brain_ids), max_workers)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(
@@ -93,12 +95,12 @@ def load_groundtruth(dataset, is_test=False, max_workers=2):
             ): brain_id
             for brain_id in brain_ids
         }
-        for future in tqdm(as_completed(futures), total=len(futures), desc="Ground Truth"):
+        for future in as_completed(futures):
             brain_id = futures[future]
             try:
                 future.result()
             except Exception as e:
-                print(f"Error loading ground truth for {brain_id}: {e}")
+                logger.error("Error loading ground truth for %s: %s", brain_id, e)
 
 
 def load_images(
@@ -126,7 +128,7 @@ def load_images(
     segmentation_prefixes = util.read_json(segmentation_prefixes_path)
     brain_ids = get_brain_ids(dataset.merge_sites_df, is_test)
 
-    print(f"\nLoading Images ({len(brain_ids)} brains, {max_workers} workers)")
+    logger.info("Loading images (%d brains, %d workers)", len(brain_ids), max_workers)
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(
@@ -137,12 +139,12 @@ def load_images(
             ): brain_id
             for brain_id in brain_ids
         }
-        for future in tqdm(as_completed(futures), total=len(futures), desc="Images"):
+        for future in as_completed(futures):
             brain_id = futures[future]
             try:
                 future.result()
             except Exception as e:
-                print(f"Error loading images for {brain_id}: {e}")
+                logger.error("Error loading images for %s: %s", brain_id, e)
 
 
 # --- Process Merge Site DataFrame ---

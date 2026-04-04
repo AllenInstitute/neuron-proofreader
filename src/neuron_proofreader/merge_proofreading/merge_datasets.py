@@ -14,6 +14,7 @@ from scipy.spatial import KDTree
 from torch.utils.data import Dataset, DataLoader
 
 import copy
+import logging
 import math
 import networkx as nx
 import numpy as np
@@ -23,6 +24,8 @@ import queue
 import random
 import threading
 import torch
+
+logger = logging.getLogger(__name__)
 
 from neuron_proofreader.machine_learning.augmentation import ImageTransforms
 from neuron_proofreader.machine_learning.geometric_gnn_models import (
@@ -209,14 +212,14 @@ class MergeSiteDataset(Dataset):
         """
         from time import time
         t0 = time()
-        print(f"  [{brain_id}] Opening img reader: {img_path}", flush=True)
+        logger.info("[%s] Opening img reader: %s", brain_id, img_path)
         self.img_readers[brain_id] = img_util.TensorStoreReader(img_path)
         t1 = time()
-        print(f"  [{brain_id}] img reader opened in {t1 - t0:.1f}s; opening seg reader", flush=True)
+        logger.info("[%s] img reader opened in %.1fs; opening seg reader", brain_id, t1 - t0)
         self.segmentation_readers[brain_id] = img_util.TensorStoreReader(
             segmentation_path
         )
-        print(f"  [{brain_id}] seg reader opened in {time() - t1:.1f}s", flush=True)
+        logger.info("[%s] seg reader opened in %.1fs", brain_id, time() - t1)
 
     # --- Create Subclass Dataset ---
     def subset(self, cls, idxs):
@@ -236,11 +239,13 @@ class MergeSiteDataset(Dataset):
             New dataset instance containing only the specified subset.
         """
         new_dataset = cls.__new__(cls)
-        from time import time
-        t0 = time()
-        print(f"subset(): deepcopy starting ({len(self.img_readers)} img_readers)...", flush=True)
-        new_dataset.__dict__ = copy.deepcopy(self.__dict__)
-        print(f"subset(): deepcopy done in {time() - t0:.1f}s", flush=True)
+        # Shallow-copy the dict first, then deepcopy only the fields that
+        # subset() mutates (graphs, merge_sites_df). The heavy read-only dicts
+        # (img_readers, segmentation_readers, gt_graphs, merge_site_kdtrees)
+        # are shared by reference to avoid reloading the dataset.
+        new_dataset.__dict__ = dict(self.__dict__)
+        new_dataset.graphs = copy.deepcopy(self.graphs)
+        new_dataset.merge_sites_df = self.merge_sites_df.copy()
         new_dataset.remove_nonindexed_fragments(idxs)
         new_dataset.remove_isolated_sites()
         return new_dataset

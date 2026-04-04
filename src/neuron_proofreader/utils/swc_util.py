@@ -27,13 +27,15 @@ from concurrent.futures import (
 from google.auth.exceptions import RefreshError, TransportError
 from google.cloud import storage
 from io import BytesIO, StringIO
-from tqdm import tqdm
 from zipfile import ZipFile
 
 import ast
+import logging
 import networkx as nx
 import numpy as np
 import os
+
+logger = logging.getLogger(__name__)
 
 from neuron_proofreader.utils import util
 
@@ -202,7 +204,7 @@ class Reader:
         """
         # Initializations
         zip_names = [f for f in os.listdir(zip_dir) if f.endswith(".zip")]
-        pbar = tqdm(total=len(zip_names), desc="Read SWCs")
+        logger.info("Reading %d SWC zip archives from local", len(zip_names))
 
         # Main
         with ProcessPoolExecutor() as executor:
@@ -218,7 +220,6 @@ class Reader:
             swc_dicts = deque()
             for process in as_completed(processes):
                 swc_dicts.extend(process.result())
-                pbar.update(1)
         return swc_dicts
 
     def read_from_zip(self, zip_path):
@@ -316,7 +317,7 @@ class Reader:
             List of dictionaries whose keys and values are the attribute
             names and values from an SWC file.
         """
-        pbar = tqdm(total=len(swc_paths), desc="Read SWCs")
+        logger.info("Reading %d SWC files from GCS", len(swc_paths))
         with ThreadPoolExecutor() as executor:
             # Assign threads
             threads = list()
@@ -331,7 +332,6 @@ class Reader:
                 result = thread.result()
                 if result:
                     swc_dicts.append(result)
-                pbar.update(1)
         return swc_dicts
 
     def read_from_gcs_swc(self, bucket_name, path):
@@ -384,7 +384,7 @@ class Reader:
         """
         # Initializations
         batch_size = 1000
-        pbar = tqdm(total=len(zip_paths), desc="Read SWCs")
+        logger.info("Reading %d SWC zip archives from GCS", len(zip_paths))
 
         # Main
         swc_dicts = deque()
@@ -407,7 +407,6 @@ class Reader:
                         swc_dicts.extend(process.result())
                     except RefreshError:
                         pass
-                    pbar.update(1)
         return swc_dicts
 
     def read_from_gcs_zip(self, bucket_name, zip_path, filenames=None):
