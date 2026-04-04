@@ -284,7 +284,6 @@ class SkeletonGraph(nx.Graph):
                         self.update_component_ids(soma_component_id, node)
                         merge_cnt += 1
                         somas_connected.append(soma_component_id)
-                        print("Check", soma_xyz)
 
         if self.verbose:
             print("# Somas Connected:", len(np.unique(somas_connected)))
@@ -302,6 +301,10 @@ class SkeletonGraph(nx.Graph):
         somas_xyz : List[Tuple[float]]
             Physical coordinates representing soma locations.
         """
+        # Check whether to exit
+        if len(self.soma_centroids) == 0:
+            return None
+
         # Extract soma info
         component_id_to_soma_nodes = defaultdict(set)
         somas_kdtree = KDTree(self.soma_centroids)
@@ -489,7 +492,7 @@ class SkeletonGraph(nx.Graph):
 
         # Set batch size
         n = nx.number_connected_components(self)
-        batch_size = max(1, n // 1000) if n > 10**4 else n
+        batch_size = max(1, n / 1000) if n > 10**4 else n
         util.mkdir(output_dir)
 
         # Main
@@ -498,15 +501,17 @@ class SkeletonGraph(nx.Graph):
             # Assign threads
             batch = list()
             threads = list()
+            zip_cnt = 0
             for i, nodes in enumerate(nx.connected_components(self)):
                 batch.append(nodes)
                 if len(batch) >= batch_size:
-                    threads.append(create_job(list(batch), i))
+                    threads.append(create_job(list(batch), zip_cnt))
                     batch = list()
+                    zip_cnt += 1
 
             # Submit last batch
             if batch:
-                threads.append(create_job(list(batch), i + 1))
+                threads.append(create_job(list(batch), zip_cnt + 1))
 
             # Watch progress
             pbar = tqdm(total=len(threads), desc="Write SWCs")
