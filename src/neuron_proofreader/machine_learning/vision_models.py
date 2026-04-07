@@ -134,7 +134,7 @@ class CNN3D(nn.Module):
 class MAE3D(nn.Module):
 
     def __init__(self, checkpoint_path, model_config):
-        # Call parent closs
+        # Call parent class
         super().__init__()
 
         # Load model

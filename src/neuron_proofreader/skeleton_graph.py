@@ -20,7 +20,7 @@ from tqdm import tqdm
 import networkx as nx
 import numpy as np
 import os
-import zipfile
+import zipfile as zf
 
 from neuron_proofreader.utils import geometry_util, graph_util, img_util, util
 
@@ -446,7 +446,7 @@ class SkeletonGraph(nx.Graph):
         self.remove_nodes_from(rm_nodes)
 
     # --- Writer ---
-    def to_zipped_swcs(self, zip_path, preserve_radius=False):
+    def to_zipped_swcs(self, zip_path, use_radius=False):
         """
         Writes the graph to a ZIP archive of SWC files, where each file
         corresponds to a single connected component.
@@ -455,18 +455,16 @@ class SkeletonGraph(nx.Graph):
         ----------
         zip_path : str
             Path to ZIP archive that SWC files are to be written to.
-        preserve_radius : bool, optional
+        use_radius : bool, optional
             Indication of whether to set radius as node radius or 2μm.
             Default is False.
         """
         self.check_swc_ids()
-        with zipfile.ZipFile(zip_path, "w") as zip_writer:
+        with zf.ZipFile(zip_path, "w") as zipfile:
             for nodes in map(list, nx.connected_components(self)):
-                self.component_to_zipped_swc(
-                    zip_writer, nodes[0], preserve_radius=preserve_radius
-                )
+                self.component_to_zipped_swc(zipfile, nodes[0], use_radius)
 
-    def to_zipped_swcs_multithreaded(self, output_dir, preserve_radius=True):
+    def to_zipped_swcs_multithreaded(self, output_dir, use_radius=True):
         """
         Writes the graph to a ZIP archive of SWC files using mutlithreading,
         where each file corresponds to a single connected component.
@@ -475,7 +473,7 @@ class SkeletonGraph(nx.Graph):
         ----------
         output_dir : str
             Path to directory that ZIP archives with SWC files are written to.
-        preserve_radius : bool, optional
+        use_radius : bool, optional
             Indication of whether to set radius as node radius or 2μm.
             Default is False.
         """
@@ -486,7 +484,7 @@ class SkeletonGraph(nx.Graph):
                 self._batch_to_zipped_swcs,
                 batch,
                 zip_path,
-                preserve_radius,
+                use_radius,
             )
             return thread
 
@@ -519,25 +517,23 @@ class SkeletonGraph(nx.Graph):
                 thread.result()
                 pbar.update(1)
 
-    def _batch_to_zipped_swcs(self, nodes_list, zip_path, preserve_radius):
-        with zipfile.ZipFile(zip_path, "w") as zip_writer:
+    def _batch_to_zipped_swcs(self, nodes_list, zip_path, use_radius):
+        with zf.ZipFile(zip_path, "w") as zipfile:
             for nodes in map(list, nodes_list):
-                self.component_to_zipped_swc(
-                    zip_writer, nodes[0], preserve_radius
-                )
+                self.component_to_zipped_swc(zipfile, nodes[0], use_radius)
 
-    def component_to_zipped_swc(self, zip_writer, root, preserve_radius=False):
+    def component_to_zipped_swc(self, zipfile, root, use_radius=False):
         """
         Writes the connected component containing the given root node to a
         zipped SWC file.
 
         Parameters
         ----------
-        zip_writer : zipfile.ZipFile
+        zf : zipfile.ZipFile
             A ZipFile object that will store the generated SWC file.
         root : int
             Root node of connected component to be written to an SWC file.
-        preserve_radius : bool, optional
+        use_radius : bool, optional
             Indication of whether to preserve radii of nodes or use default
             radius of 2μm. Default is False.
         """
@@ -555,7 +551,7 @@ class SkeletonGraph(nx.Graph):
                 Node ID of parent.
             """
             x, y, z = self.node_xyz[node]
-            r = self.node_radius[node] if preserve_radius else 2
+            r = self.node_radius[node] if use_radius else 2
             node_id = cnt
             parent_id = node_to_idx[parent]
             node_to_idx[node] = node_id
@@ -577,8 +573,8 @@ class SkeletonGraph(nx.Graph):
                 write_entry(j, i)
 
             # Finish
-            filename = f"{self.node_swc_id(root)}.swc"
-            zip_writer.writestr(filename, text_buffer.getvalue())
+            name = util.set_filename_in_zip(zipfile, self.node_swc_id(root))
+            zipfile.writestr(name, text_buffer.getvalue())
 
     # --- Helpers ---
     def branching_nodes(self):
