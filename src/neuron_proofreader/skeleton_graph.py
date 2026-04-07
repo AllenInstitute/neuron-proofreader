@@ -577,7 +577,7 @@ class SkeletonGraph(nx.Graph):
                 write_entry(j, i)
 
             # Finish
-            filename = f"{self.node_swc_id(root)}.swc"
+            path = set_zip_path(zip_writer, self.node_swc_id(root), ".swc")
             zip_writer.writestr(filename, text_buffer.getvalue())
 
     # --- Helpers ---

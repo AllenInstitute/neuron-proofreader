@@ -280,19 +280,8 @@ class InferencePipeline:
         Saves the processed results from running the inference pipeline,
         namely the corrected SWC files and a list of the merged SWC ids.
         """
-        # Save temp result on local machine
+        self.reconfigure_node_radius()
         self.save_graph("corrected_swcs")
-        #zip_dir = os.path.join(self.output_dir, "corrected_swcs")
-        #self.reconfigure_node_radius()
-        #self.dataset.graph.to_zipped_swcs_multithreaded(zip_dir)
-
-        # Merge ZIPs
-        #swc_path = os.path.join(self.output_dir, "corrected-swcs.zip")
-        #zip_paths = util.list_paths(temp_dir, extension=".zip")
-        #util.combine_zips(zip_paths, swc_path)
-        #util.rmdir(temp_dir)
-
-        # Save additional info
         self.save_connections()
         self.config.save(self.output_dir)
         self.log_handle.close()
