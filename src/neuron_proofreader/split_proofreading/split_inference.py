@@ -326,9 +326,18 @@ class InferencePipeline:
         hat_y = ml_util.tensor_to_list(hat_y)
         return {idx_to_id[i]: y_i for i, y_i in enumerate(hat_y)}
 
-    def save_graph(self, dir_name):
-        zip_dir = os.path.join(self.output_dir, dir_name)
-        self.dataset.graph.to_zipped_swcs_multithreaded(zip_dir)
+    def save_graph(self, dirname):
+        # Set paths
+        temp_dir = os.path.join(self.output_dir, "temp")
+        output_zip_path = os.path.join(self.output_dir, dirname, "swcs.zip")
+        util.mkdir(temp_dir)
+        util.mkdir(os.path.join(self.output_dir, dirname))
+
+        # Save swcs
+        self.dataset.graph.to_zipped_swcs_multithreaded(temp_dir)
+        zip_paths = util.list_paths(temp_dir, extension=".zip")
+        util.combine_zips(zip_paths, output_zip_path)
+        util.rmdir(temp_dir)
 
     def save_proposal_results(self, preds_dict):
         summary = list()

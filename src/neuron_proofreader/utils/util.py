@@ -154,37 +154,7 @@ def rmdir(path):
         shutil.rmtree(path)
 
 
-def set_path(dirname, filename, extension):
-    """
-    Sets the path for a file in a directory. If a file with the same name
-    already exists, then this routine finds a suffix to append to the
-    filename.
-
-    Parameters
-    ----------
-    dirname : str
-        Name of directory that path will be generated to point to.
-    filename : str
-        Name of file that path will contain.
-    extension : str
-        Extension of file.
-
-    Returns
-    -------
-    path : str
-        Path to file in "dirname" with the name "filename" and possibly some
-        suffix.
-    """
-    cnt = 0
-    extension = extension.replace(".", "")
-    path = os.path.join(dirname, f"{filename}.{extension}")
-    while os.path.exists(path):
-        path = os.path.join(dirname, f"{filename}.{cnt}.{extension}")
-        cnt += 1
-    return path
-
-
-def set_zip_path(zip_writer, filename, extension):
+def set_filename_in_zip(zipfile, filename):
     """
     Sets the path for a file within a ZIP archive. If a file with the same
     name already exists, then this routine finds a suffix to append to the
@@ -192,12 +162,10 @@ def set_zip_path(zip_writer, filename, extension):
 
     Parameters
     ----------
-    zip_writer : ZipFile
+    zipfile : ZipFile.zipfile
         ...
     filename : str
         Name of file that path will contain.
-    extension : str
-        Extension of file.
 
     Returns
     -------
@@ -206,13 +174,11 @@ def set_zip_path(zip_writer, filename, extension):
         suffix.
     """
     cnt = 0
-    existing_files = zip_writer.namelist()
-    extension = extension.replace(".", "")
-    f = f"{filename}.{extension}"
-    while f in existing_files:
-        f = f"{filename}.{cnt}.{extension}"
+    zip_filename = f"{filename}.swc"
+    while zip_filename in zipfile.namelist():
+        zip_filename = f"{filename}.{cnt}.swc"
         cnt += 1
-    return f
+    return zip_filename
 
 
 # --- IO utils ---
