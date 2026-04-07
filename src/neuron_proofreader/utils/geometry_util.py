@@ -196,7 +196,7 @@ def fit_spline_1d(pts, k=3, s=None):
         spline = UnivariateSpline(t, pts, k=k, s=s)
     for w in caught:
         if issubclass(w.category, UserWarning):
-            logger.warning(
+            logger.debug(
                 "fit_spline_1d: scipy spline warning (k=%d, n=%d pts, s=%.4g): %s",
                 k, len(pts), s, str(w.message),
             )

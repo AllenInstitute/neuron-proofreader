@@ -100,6 +100,14 @@ class GraphLoader:
         # SWC reader
         self.swc_reader = swc_util.Reader(anisotropy, min_size)
 
+        # Set multiprocessing start method once here rather than inside
+        # __call__, which is invoked concurrently from multiple threads and
+        # would race on this global state.
+        try:
+            multiprocessing.set_start_method('spawn')
+        except RuntimeError:
+            pass  # already set by DDP or a prior call — leave it alone
+
         # Load somas
         if segmentation_path and soma_centroids:
             self.soma_kdtree = KDTree(self.soma_centroids)
@@ -164,7 +172,6 @@ class GraphLoader:
         # Load graphs
         desc = "Extract Graphs"
         pbar = tqdm(total=len(swc_dicts), desc=desc) if self.verbose else None
-        multiprocessing.set_start_method('spawn', force=True)
         with ProcessPoolExecutor() as executor:
             # Start processes
             pending = set()
