@@ -480,7 +480,14 @@ class Reader:
         for i, line in enumerate(content):
             parts = line.split()
             swc_dict["id"][i] = parts[0]
-            swc_dict["radius"][i] = float(parts[-2])
+            raw_radius = float(parts[-2])
+            if not np.isfinite(np.float32(raw_radius)):
+                logger.warning(
+                    "Radius overflow at node %s (raw value %r) — clamping to 0",
+                    parts[0], parts[-2],
+                )
+                raw_radius = 0.0
+            swc_dict["radius"][i] = raw_radius
             swc_dict["pid"][i] = parts[-1]
             swc_dict["xyz"][i] = self.read_xyz(parts[2:5], offset)
             if int(parts[1]) == 1:

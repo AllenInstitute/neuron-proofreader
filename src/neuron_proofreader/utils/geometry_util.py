@@ -14,8 +14,12 @@ from scipy.linalg import svd
 from scipy.spatial import distance
 from tqdm import tqdm
 
+import logging
 import networkx as nx
 import numpy as np
+import warnings
+
+logger = logging.getLogger(__name__)
 
 from neuron_proofreader.utils import img_util
 
@@ -175,7 +179,28 @@ def fit_spline_1d(pts, k=3, s=None):
     """
     t = np.linspace(0, 1, len(pts))
     s = len(pts) / s if s else len(pts) / 15
-    return UnivariateSpline(t, pts, k=k, s=s)
+
+    # Non-finite values (inf/nan) cause FITPACK to loop indefinitely — clamp
+    # them before fitting and log so the upstream data issue can be tracked.
+    n_bad = np.sum(~np.isfinite(pts))
+    if n_bad > 0:
+        logger.warning(
+            "fit_spline_1d: %d non-finite value(s) in %d-point input — "
+            "clamping to 0 before fitting",
+            n_bad, len(pts),
+        )
+        pts = np.where(np.isfinite(pts), pts, 0.0)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        spline = UnivariateSpline(t, pts, k=k, s=s)
+    for w in caught:
+        if issubclass(w.category, UserWarning):
+            logger.warning(
+                "fit_spline_1d: scipy spline warning (k=%d, n=%d pts, s=%.4g): %s",
+                k, len(pts), s, str(w.message),
+            )
+    return spline
 
 
 def make_voxels_connected(voxels):
