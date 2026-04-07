@@ -239,12 +239,19 @@ class MergeSiteDataset(Dataset):
             New dataset instance containing only the specified subset.
         """
         new_dataset = cls.__new__(cls)
-        # Shallow-copy the dict first, then deepcopy only the fields that
-        # subset() mutates (graphs, merge_sites_df). The heavy read-only dicts
-        # (img_readers, segmentation_readers, gt_graphs, merge_site_kdtrees)
-        # are shared by reference to avoid reloading the dataset.
+        # Shallow-copy the dict first, then deepcopy only the fragment graphs
+        # for brain IDs that appear in idxs. Graphs for other brain IDs would
+        # be immediately removed by remove_nonindexed_fragments, so copying
+        # them wastes memory. The heavy read-only dicts (img_readers,
+        # segmentation_readers, gt_graphs, merge_site_kdtrees) are shared by
+        # reference to avoid reloading the dataset.
         new_dataset.__dict__ = dict(self.__dict__)
-        new_dataset.graphs = copy.deepcopy(self.graphs)
+        relevant_brain_ids = set(self.merge_sites_df.loc[idxs, "brain_id"])
+        new_dataset.graphs = {
+            brain_id: copy.deepcopy(graph)
+            for brain_id, graph in self.graphs.items()
+            if brain_id in relevant_brain_ids
+        }
         new_dataset.merge_sites_df = self.merge_sites_df.copy()
         new_dataset.remove_nonindexed_fragments(idxs)
         new_dataset.remove_isolated_sites()
@@ -771,15 +778,17 @@ class MergeSiteValDataset(MergeSiteDataset):
         # Generate negative examples
         negative_examples = self.generate_negative_examples()
 
-        # Generate positive examples
+        # Generate positive examples — store node ID, not the full subgraph
         positive_examples = list()
         for i in range(len(self.merge_sites_df)):
-            brain_id, subgraph, _ = self.get_indexed_positive_site(i)
+            brain_id = self.merge_sites_df["brain_id"].iloc[i]
+            xyz = self.merge_sites_df["xyz"].iloc[i]
+            node = self.graphs[brain_id].find_closest_node(xyz)
             positive_examples.append(
                 {
                     "brain_id": brain_id,
-                    "subgraph": subgraph,
-                    "xyz": subgraph.node_xyz[0],
+                    "node": node,
+                    "xyz": xyz,
                     "label": 1,
                 }
             )
@@ -803,14 +812,11 @@ class MergeSiteValDataset(MergeSiteDataset):
             for node in random.sample(nodes, n_examples):
                 # Check if close to merge site
                 if not self.is_nearby_merge_site(brain_id, node):
-                    subgraph = graph.get_rooted_subgraph(
-                        node, self.subgraph_radius
-                    )
                     negative_examples.append(
                         {
                             "brain_id": brain_id,
-                            "subgraph": subgraph,
-                            "xyz": subgraph.node_xyz[0],
+                            "node": node,
+                            "xyz": graph.node_xyz[node],
                             "label": 0,
                         }
                     )
@@ -876,9 +882,13 @@ class MergeSiteValDataset(MergeSiteDataset):
         label : int
             1 if the example is positive and 0 otherwise.
         """
-        brain_id = self.examples[idx]["brain_id"]
-        subgraph = self.examples[idx]["subgraph"]
-        label = self.examples[idx]["label"]
+        example = self.examples[idx]
+        brain_id = example["brain_id"]
+        node = example["node"]
+        label = example["label"]
+        subgraph = self.graphs[brain_id].get_rooted_subgraph(
+            node, self.subgraph_radius
+        )
         return brain_id, subgraph, label
 
     def get_indexed_negative_site(self, idx):
