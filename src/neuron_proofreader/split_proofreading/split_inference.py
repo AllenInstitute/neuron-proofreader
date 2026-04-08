@@ -140,7 +140,7 @@ class InferencePipeline:
         self.log(self.dataset.graph.summary(prefix="\nInitial"))
         self.log(f"Module Runtime: {elapsed:.2f} {unit}\n")
 
-    # --- Core Routines ---
+    # --- Pipelines ---
     def __call__(self, search_radius):
         """
         Executes the full inference pipeline.
@@ -160,6 +160,28 @@ class InferencePipeline:
         self.log(self.dataset.graph.summary(prefix="\nFinal"))
         self.log(f"Total Runtime: {t:.2f} {unit}\n")
         self.save_results()
+
+    def multistep_pipeline(
+        self, search_radius, low_threshold=0.3, high_threshold=0.95
+    ):
+        # Generate proposal predictions
+        self.generate_proposals(search_radius)
+        preds = self.classify_proposals(high_threshold, suffix="round1")
+
+        # Confidence filtering step
+        self.filter_proposals(preds, low_threshold)
+        self.classify_proposals(self.config.ml.threshold, suffix="round2")
+
+    # --- Core Routines ---
+    def filter_proposals(self, preds, threshold):
+        cnt = 0
+        for proposal, pred in preds.items():
+            if pred < threshold:
+                self.dataset.graph.remove_proposal(proposal)
+                cnt += 1
+
+        print("# Proposals Removed:", cnt)
+        print("# Proposals Remaining:", self.dataset.graph.n_proposals())
 
     def generate_proposals(self, search_radius):
         """
@@ -189,7 +211,7 @@ class InferencePipeline:
         self.log(f"# Proposals Blocked: {n_proposals_blocked}")
         self.log(f"Module Runtime: {t:.2f} {unit}\n")
 
-    def classify_proposals(self, accept_threshold, dt=0.05):
+    def classify_proposals(self, accept_threshold, dt=0.05, suffix=""):
         """
         Classifies and iteratively merges proposals using a decreasing
         confidence threshold.
@@ -208,7 +230,7 @@ class InferencePipeline:
         # Main
         n_proposals = self.dataset.graph.n_proposals()
         new_threshold = 0.99
-        preds = self.predict_proposals()
+        preds = self.predict_proposals(suffix=suffix)
         while True:
             # Update graph
             cur_threshold = new_threshold
@@ -226,8 +248,9 @@ class InferencePipeline:
         self.log(f"# Accepted: {format(n_accepts, ',')}")
         self.log(f"% Accepted: {100 * n_accepts / n_proposals:.2f}")
         self.log(f"Module Runtime: {t:.2f} {unit}\n")
+        return preds
 
-    def predict_proposals(self):
+    def predict_proposals(self, suffix=""):
         """
         Runs inference over all proposals and saves model predictions.
 
@@ -244,7 +267,7 @@ class InferencePipeline:
             pbar.update(data.n_proposals())
 
         # Save results
-        self.save_proposal_results(preds)
+        self.save_proposal_results(preds, suffix=suffix)
         return preds
 
     def merge_proposals(self, preds, threshold):
@@ -260,11 +283,8 @@ class InferencePipeline:
             Threshold used to determine which proposals to accept based on
             model prediction.
         """
-        for proposal in self.dataset.graph.sorted_proposals():
-            # Check if proposal has been visited
-            if proposal not in preds:
-                continue
-
+        proposals = self.dataset.graph.sorted_proposals()
+        for proposal in [p for p in proposals if p in preds]:
             # Check if proposal satifies threshold
             i, j = proposal
             if preds[proposal] < threshold:
@@ -339,7 +359,7 @@ class InferencePipeline:
         util.combine_zips(zip_paths, output_zip_path)
         util.rmdir(temp_dir)
 
-    def save_proposal_results(self, preds_dict):
+    def save_proposal_results(self, preds_dict, suffix=""):
         summary = list()
         for proposal, pred in preds_dict.items():
             # Extract info
@@ -356,16 +376,16 @@ class InferencePipeline:
                     "Prediction": pred,
                     "Segment1": segment_i,
                     "Segment2": segment_j,
+                    "Voxel1": self.dataset.graph.node_voxel(i),
+                    "Voxel2": self.dataset.graph.node_voxel(j),
                     "World1": self.dataset.graph.node_xyz[i],
                     "World2": self.dataset.graph.node_xyz[j],
                 }
             )
 
         # Save results
-        path = os.path.join(self.output_dir, "proposal_summary.csv")
-        df = pd.DataFrame(summary)
-        df = df.set_index("Proposal")
-        df.to_csv(path)
+        path = os.path.join(self.output_dir, f"proposal_summary{suffix}.csv")
+        pd.DataFrame(summary).set_index("Proposal").to_csv(path)
 
     def reconfigure_node_radius(self):
         n_nodes = len(self.dataset.graph.node_radius)
