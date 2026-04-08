@@ -166,11 +166,11 @@ class InferencePipeline:
     ):
         # Generate proposal predictions
         self.generate_proposals(search_radius)
-        preds = self.classify_proposals(high_threshold, suffix="round1")
+        preds = self.classify_proposals(high_threshold, suffix="_round1")
 
         # Confidence filtering step
         self.filter_proposals(preds, low_threshold)
-        self.classify_proposals(self.config.ml.threshold, suffix="round2")
+        self.classify_proposals(self.config.ml.threshold, suffix="_round2")
 
     # --- Core Routines ---
     def filter_proposals(self, preds, threshold):
