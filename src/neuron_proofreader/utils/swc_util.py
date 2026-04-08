@@ -482,7 +482,7 @@ class Reader:
             parts = line.split()
             swc_dict["id"][i] = parts[0]
             raw_radius = float(parts[-2])
-            if not np.isfinite(np.float32(raw_radius)):
+            if not np.isfinite(raw_radius) or raw_radius > np.finfo(np.float32).max:
                 raw_radius = 0.0
                 n_radius_overflow += 1
             swc_dict["radius"][i] = raw_radius
