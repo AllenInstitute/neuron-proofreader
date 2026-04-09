@@ -15,12 +15,25 @@ import logging
 import numpy as np
 import os
 import pandas as pd
+import psutil
 
 logger = logging.getLogger(__name__)
 
 from neuron_proofreader.utils import util
 
 TEST_BRAIN = "653159"
+
+
+def _log_ram(tag=""):
+    vm = psutil.virtual_memory()
+    label = f"[{tag}] " if tag else ""
+    logger.info(
+        "%sRAM: %.1f GB used / %.1f GB total (%.1f GB available)",
+        label,
+        vm.used / 2**30,
+        vm.total / 2**30,
+        vm.available / 2**30,
+    )
 
 
 # --- Load Skeletons ---
@@ -39,6 +52,14 @@ def load_fragments(dataset, is_test=False, max_workers=2):
     max_workers : int, optional
         Maximum number of parallel workers. Default is 8.
     """
+    # Log total system RAM once at the start of the loading pipeline
+    vm = psutil.virtual_memory()
+    logger.info(
+        "System RAM: %.1f GB total, %.1f GB available at data load start",
+        vm.total / 2**30,
+        vm.available / 2**30,
+    )
+
     # Initializations
     merge_sites_df = dataset.merge_sites_df
     target_pairs = get_brain_segmentation_pairs(merge_sites_df)
@@ -54,7 +75,9 @@ def load_fragments(dataset, is_test=False, max_workers=2):
                 load_tasks.append((brain_id, swc_pointer))
 
     # Load in parallel
+    _log_ram("before fragments")
     logger.info("Loading fragments (%d tasks, %d workers)", len(load_tasks), max_workers)
+    completed = 0
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(
@@ -68,6 +91,8 @@ def load_fragments(dataset, is_test=False, max_workers=2):
                 future.result()
             except Exception as e:
                 logger.error("Error loading fragments for %s: %s", brain_id, e)
+            completed += 1
+            _log_ram(f"fragments {completed}/{len(load_tasks)} ({brain_id})")
 
 
 def load_groundtruth(dataset, is_test=False, max_workers=2):
@@ -87,7 +112,9 @@ def load_groundtruth(dataset, is_test=False, max_workers=2):
     root = "gs://allen-nd-goog/ground_truth_tracings"
     brain_ids = get_brain_ids(dataset.merge_sites_df, is_test)
 
+    _log_ram("before ground truth")
     logger.info("Loading ground truth (%d brains, %d workers)", len(brain_ids), max_workers)
+    completed = 0
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(
@@ -101,6 +128,8 @@ def load_groundtruth(dataset, is_test=False, max_workers=2):
                 future.result()
             except Exception as e:
                 logger.error("Error loading ground truth for %s: %s", brain_id, e)
+            completed += 1
+            _log_ram(f"ground truth {completed}/{len(brain_ids)} ({brain_id})")
 
 
 def load_images(
@@ -128,7 +157,9 @@ def load_images(
     segmentation_prefixes = util.read_json(segmentation_prefixes_path)
     brain_ids = get_brain_ids(dataset.merge_sites_df, is_test)
 
+    _log_ram("before images")
     logger.info("Loading images (%d brains, %d workers)", len(brain_ids), max_workers)
+    completed = 0
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
             executor.submit(
@@ -145,6 +176,8 @@ def load_images(
                 future.result()
             except Exception as e:
                 logger.error("Error loading images for %s: %s", brain_id, e)
+            completed += 1
+            _log_ram(f"images {completed}/{len(brain_ids)} ({brain_id})")
 
 
 # --- Process Merge Site DataFrame ---
