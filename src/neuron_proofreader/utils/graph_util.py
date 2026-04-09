@@ -172,10 +172,14 @@ class GraphLoader:
         # Load graphs
         desc = "Extract Graphs"
         pbar = tqdm(total=len(swc_dicts), desc=desc) if self.verbose else None
-        with ProcessPoolExecutor() as executor:
-            # Start processes
+        n_workers = min(os.cpu_count() or 4, 4)
+        with ProcessPoolExecutor(max_workers=n_workers) as executor:
+            # Start only as many tasks as there are workers so that swc_dicts
+            # (which are pickled and sent to each worker) don't all sit in
+            # memory simultaneously. The old limit of 512 caused peak RSS to
+            # be 512× a single dict's size before any worker had finished.
             pending = set()
-            for _ in range(min(512, len(swc_dicts))):
+            for _ in range(min(n_workers, len(swc_dicts))):
                 pending.add(executor.submit(self.extract, swc_dicts.pop()))
 
             # Yield processes

@@ -39,6 +39,10 @@ logger = logging.getLogger(__name__)
 
 from neuron_proofreader.utils import util
 
+# Pre-computed as a plain Python float to avoid numpy type-promotion
+# triggering an overflow warning when comparing against DBL_MAX values.
+_FLOAT32_MAX = float(np.finfo(np.float32).max)
+
 
 class Reader:
     """
@@ -482,7 +486,7 @@ class Reader:
             parts = line.split()
             swc_dict["id"][i] = parts[0]
             raw_radius = float(parts[-2])
-            if not np.isfinite(raw_radius) or raw_radius > np.finfo(np.float32).max:
+            if not np.isfinite(raw_radius) or raw_radius > _FLOAT32_MAX:
                 raw_radius = 0.0
                 n_radius_overflow += 1
             swc_dict["radius"][i] = raw_radius
