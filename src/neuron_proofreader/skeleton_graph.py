@@ -529,11 +529,11 @@ class SkeletonGraph(nx.Graph):
 
         Parameters
         ----------
-        zf : zipfile.ZipFile
+        zff : zipfile.ZipFile
             A ZipFile object that will store the generated SWC file.
         root : int
             Root node of connected component to be written to an SWC file.
-        use_radius : bool, optional
+        ususe_radius : bool, optional
             Indication of whether to preserve radii of nodes or use default
             radius of 2μm. Default is False.
         """
@@ -574,6 +574,7 @@ class SkeletonGraph(nx.Graph):
 
             # Finish
             name = util.set_filename_in_zip(zipfile, self.node_swc_id(root))
+            util.set_filename_in_zip(zipfile, self.node_swc_id(root))
             zipfile.writestr(name, text_buffer.getvalue())
 
     # --- Helpers ---

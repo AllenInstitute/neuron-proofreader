@@ -154,7 +154,7 @@ def rmdir(path):
         shutil.rmtree(path)
 
 
-def set_filename_in_zip(zipfile, filename):
+def set_filename_in_zip(zipfile, name):
     """
     Sets the path for a file within a ZIP archive. If a file with the same
     name already exists, then this routine finds a suffix to append to the
@@ -163,22 +163,21 @@ def set_filename_in_zip(zipfile, filename):
     Parameters
     ----------
     zipfile : ZipFile.zipfile
-        ...
-    filename : str
-        Name of file that path will contain.
+        Zip file object used to write SWC files to a ZIP archive.
+    name : str
+        Name of SWC file to be written to ZIP archive.
 
     Returns
     -------
-    str
-        Path to file in "dirname" with the name "filename" and possibly some
-        suffix.
+    filename : str
+        Name of SWC file to be written to ZIP archive.
     """
     cnt = 0
-    zip_filename = f"{filename}.swc"
-    while zip_filename in zipfile.namelist():
-        zip_filename = f"{filename}.{cnt}.swc"
+    filename = f"{name}.swc"
+    while filename in zipfile.namelist():
+        filename = f"{name}.{cnt}.swc"
         cnt += 1
-    return zip_filename
+    return filename
 
 
 # --- IO utils ---
@@ -500,7 +499,7 @@ def list_s3_prefixes(bucket_name, prefix):
 
 def upload_dir_to_s3(dir_path, bucket_name, prefix):
     """
-    Uploads a directory on the local machine to an S3 bucket.
+    UploadUploads a directory on the local machine to an S3 bucket.
 
     Parameters
     ----------
@@ -514,35 +513,32 @@ def upload_dir_to_s3(dir_path, bucket_name, prefix):
     # Upload files
     with ThreadPoolExecutor() as executor:
         for name in os.listdir(dir_path):
-            source_path = os.path.join(dir_path, name)
-            destination_path = os.path.join(prefix, name)
-            if os.path.isdir(source_path):
+            src_path = os.path.join(dir_path, name)
+            dst_path = os.path.join(prefix, name)
+            if os.path.isdir(src_path):
                 subprefix = os.path.join(prefix, name)
-                upload_dir_to_s3(source_path, bucket_name, subprefix)
+                upload_dir_to_s3(src_path, bucket_name, subprefix)
             else:
                 executor.submit(
-                    upload_file_to_s3,
-                    source_path,
-                    bucket_name,
-                    destination_path
+                    upload_dir_to_s3(src_path, bucket_name, dst_path)
                 )
 
 
-def upload_file_to_s3(source_path, bucket_name, destination_path):
+def upload_file_to_s3(src_path, bucket_name, dst_path):
     """
     Writes a single file on the local machine to an S3 bucket.
 
     Parameters
     ----------
-    source_path : str
+    src_path : str
         Path to file to be written to S3.
     bucket_name : str
         Name of S3 bucket.
-    destination_path : str
+    dst_path : str
         Path within S3 bucket that source file is to be written to.
     """
     s3 = boto3.client("s3")
-    s3.upload_file(source_path, bucket_name, destination_path)
+    s3.upload_file(src_path, bucket_name, dst_path)
 
 
 # --- Dictionary utils ---
