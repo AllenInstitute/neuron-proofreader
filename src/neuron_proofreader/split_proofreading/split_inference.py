@@ -176,7 +176,9 @@ class InferencePipeline:
     def filter_proposals(self, preds, threshold):
         cnt = 0
         for proposal, pred in preds.items():
-            if pred < threshold:
+            i, j = proposal
+            is_valid = self.dataset.graph.is_mergeable(i, j)
+            if pred < threshold or not is_valid:
                 self.dataset.graph.remove_proposal(proposal)
                 cnt += 1
 
