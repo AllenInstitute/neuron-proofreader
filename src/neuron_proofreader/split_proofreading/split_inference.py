@@ -260,7 +260,7 @@ class InferencePipeline:
 
     def predict_proposals(self, suffix=""):
         """
-        Runs inference over all proposals and saves model predictions.
+        Performs inference over all proposals and saves model predictions.
 
         Returns
         -------

@@ -520,7 +520,7 @@ def upload_dir_to_s3(dir_path, bucket_name, prefix):
                 upload_dir_to_s3(src_path, bucket_name, subprefix)
             else:
                 executor.submit(
-                    upload_dir_to_s3(src_path, bucket_name, dst_path)
+                    upload_file_to_s3(src_path, bucket_name, dst_path)
                 )
 
 
