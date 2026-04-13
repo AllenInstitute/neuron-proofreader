@@ -172,6 +172,12 @@ class InferencePipeline:
         self.filter_proposals(preds, low_threshold)
         self.classify_proposals(self.config.ml.threshold, suffix="_round2")
 
+        # Report results
+        t, unit = util.time_writer(time() - t0)
+        self.log(self.dataset.graph.summary(prefix="\nFinal"))
+        self.log(f"Total Runtime: {t:.2f} {unit}\n")
+        self.save_results()
+
     # --- Core Routines ---
     def filter_proposals(self, preds, threshold):
         cnt = 0
@@ -254,7 +260,7 @@ class InferencePipeline:
 
     def predict_proposals(self, suffix=""):
         """
-        Runs inference over all proposals and saves model predictions.
+        Performs inference over all proposals and saves model predictions.
 
         Returns
         -------
