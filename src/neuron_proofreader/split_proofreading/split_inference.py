@@ -165,6 +165,7 @@ class InferencePipeline:
         self, search_radius, low_threshold=0.3, high_threshold=0.95
     ):
         # Generate proposal predictions
+        t0 = time()
         self.generate_proposals(search_radius)
         preds = self.classify_proposals(high_threshold, suffix="_round1")
 
