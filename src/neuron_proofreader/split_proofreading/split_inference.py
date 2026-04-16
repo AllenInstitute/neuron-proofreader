@@ -387,6 +387,8 @@ class InferencePipeline:
                     "Segment2": segment_j,
                     "Voxel1": self.dataset.graph.node_voxel(i),
                     "Voxel2": self.dataset.graph.node_voxel(j),
+                    "Voxel1": self.dataset.graph.node_voxel(i),
+                    "Voxel2": self.dataset.graph.node_voxel(j),
                     "World1": self.dataset.graph.node_xyz[i],
                     "World2": self.dataset.graph.node_xyz[j],
                 }
