@@ -46,7 +46,7 @@ class GraphLoader:
     def __init__(
         self,
         anisotropy=(1.0, 1.0, 1.0),
-        min_size=40.0,
+        min_cable_length=40.0,
         node_spacing=1,
         prefetch=128,
         prune_depth=24.0,
@@ -61,32 +61,31 @@ class GraphLoader:
         anisotropy : Tuple[float], optional
             Image to physical coordinates scaling factors to account for the
             anisotropy of the microscope. Default is (1.0, 1.0, 1.0).
+        min_cable_length : float, optional
+            Minimum cable length (in microns) of SWC files that are loaded.
+            Default is 40.
+        node_spacing : int, optional
+            Spacing (in microns) between neighboring nodes. Default is 1.
         prefetch : int, optional
             Number of jobs to prefetch. Default is 128.
-        min_size : float, optional
-            Minimum path length of swc files that are loaded into the
-            FragmentsGraph. Default is 24.0 microns.
-        node_spacing : int, optional
-            Sampling rate for nodes in FragmentsGraph. Every "node_spacing"
-            node is retained. Default is 1.
         prune_depth : int, optional
             Branches with length less than "prune_depth" microns are pruned.
-            Default is 20.0 microns.
+            Default is 24.
         verbose : bool, optional
             Indication of whether to display a progress bar while building
             FragmentsGraph. Default is True.
         """
         # Instance attributes
-        self.min_size = min_size
+        self.min_cable_length = min_cable_length
         self.node_spacing = node_spacing
         self.prefetch = prefetch
         self.prune_depth = prune_depth
-        self.swc_reader = swc_util.Reader(anisotropy, min_size, verbose)
+        self.swc_reader = swc_util.Reader(anisotropy, min_cable_length, verbose)
         self.verbose = verbose
 
     def __call__(self, swc_pointer):
         """
-        Processes a list of swc dictionaries in parallel and loads the
+        Processes a list of SWC dictionaries in parallel and loads the
         components of the irreducible subgraph from each.
 
         Parameters
@@ -132,8 +131,8 @@ class GraphLoader:
 
     def load(self, swc_dict):
         """
-        Loads irreducible components from "swc_dict". Note: "swc_dict" is
-        assumed to contain exactly one connected component.
+        Loads irreducible components from "swc_dict", which is assumed to
+        contain exactly one connected component.
 
         Parameters
         ----------
@@ -200,7 +199,7 @@ class GraphLoader:
         irreducible_edges = dict()
 
         # Main
-        root, path_length = None, 0
+        root, cable_length = None, 0
         for i, j in nx.dfs_edges(graph, source=leaf):
             # Check for start of irreducible edge
             if root is None:
@@ -217,7 +216,7 @@ class GraphLoader:
 
             # Check for end of irreducible edge
             if graph.degree[j] != 2:
-                path_length += edge_length
+                cable_length += edge_length
                 irreducible_nodes.add(j)
 
                 attrs = to_numpy(attrs)
@@ -230,11 +229,11 @@ class GraphLoader:
         # Check for curvy line fragment
         if len(irreducible_nodes) == 2:
             endpoint_dist = dist(*tuple(irreducible_nodes))
-            if endpoint_dist / path_length < 0.5:
+            if endpoint_dist / cable_length < 0.5:
                 return None
 
         # Store results
-        if path_length > self.min_size:
+        if cable_length > self.min_cable_length:
             irreducibles = {
                 "nodes": set_node_attrs(graph, irreducible_nodes),
                 "edges": set_edge_attrs(graph, irreducible_edges),
@@ -243,61 +242,11 @@ class GraphLoader:
             irreducibles = None
         return irreducibles
 
-    # --- Merge Removal ---
-    def remove_high_risk_merges(self, graph, max_dist=7):
-        """
-        Removes high risk merge sites from a graph, which is defined to be
-        either (1) two branching points within "max_dist" or (2) branching
-        point with degree 4+. Note: if soma locations are provided, we skip
-        branching points within 300um of a soma.
-
-        Parameters
-        ----------
-        graph : networkx.Graph
-            Graph to be searched.
-        max_dist : float, optional
-            Maximum distance between branching points that qualifies a site to
-            be considered "high risk". The default is 7.
-        """
-        nodes = set()
-        branchings = set([i for i in graph.nodes if graph.degree[i] > 2])
-        while branchings:
-            # Initializations
-            root = branchings.pop()
-            hit_branchings = set()
-            queue = [(root, 0)]
-            visited = set(queue)
-
-            # Check if close to soma
-            soma_dist = self.dist_from_soma(graph.graph["xyz"][root])
-            if graph.graph["soma_nodes"] and soma_dist < 300:
-                continue
-
-            # BFS
-            while len(queue) > 0:
-                # Visit node
-                i, dist_i = queue.pop()
-                if graph.degree[i] > 2 and i != root:
-                    hit_branchings.add(i)
-
-                # Update queue
-                for j in graph.neighbors(i):
-                    dist_j = dist_i + dist(graph, i, j)
-                    if j not in visited and dist_j < max_dist:
-                        queue.append((j, dist_j))
-                        visited.add(j)
-
-            # Determine whether to remove visited nodes
-            if hit_branchings or graph.degree(root) > 3:
-                nodes = nodes.union(visited)
-                branchings -= hit_branchings
-        graph.remove_nodes_from(nodes)
-
     # --- Helpers ---
     def satisfies_cable_length_condition(self, graph):
         """
-        Determines whether the total path length of the given graph is greater
-        than "self.min_size".
+        Determines whether the cable length of the given graph is greater
+        than "self.min_cable_length".
 
         Parameters
         ----------
@@ -307,19 +256,19 @@ class GraphLoader:
         Returns
         -------
         bool
-            Indication of whether the total path length of the given graph is
-            greater than "self.min_size".
+            Indication of whether the total cable length of the given graph is
+            greater than "self.min_cable_length".
         """
         length = 0
         for i, j in nx.dfs_edges(graph):
             length += euclidean(graph.graph["xyz"][i], graph.graph["xyz"][j])
-            if length > self.min_size:
+            if length > self.min_cable_length:
                 return True
         return False
 
     def resample_curve_3d(self, graph, attrs, edge, n_pts):
         """
-        Smooth a 3D curve and update the corresponding edge endpoints in the
+        Smooths a 3D curve and update the corresponding edge endpoints in the
         graph.
 
         Parameters
@@ -423,27 +372,6 @@ def cycle_exists(graph):
         return False
 
 
-def dist(graph, i, j):
-    """
-    Computes Euclidean distance between nodes i and j.
-
-    Parameters
-    ----------
-    graph : netowrkx.Graph
-        Graph containing nodes i and j.
-    i : int
-        Node ID.
-    j : int
-        Node ID.
-
-    Returns
-    -------
-    float
-        Euclidean distance between nodes i and j.
-    """
-    return euclidean(graph.graph["xyz"][i], graph.graph["xyz"][j])
-
-
 def edges_to_line_graph(edges):
     """
     Initializes a line graph from a list of edges.
@@ -480,41 +408,6 @@ def find_leaf(graph):
     for i in graph.nodes:
         if graph.degree[i] == 1:
             return i
-
-
-def find_nearby_branching_node(graph, root, max_depth=10):
-    """
-    Search for the nearest branching node starting from a given root node.
-
-    Parameters
-    ----------
-    graph : networkx.Graph
-        Graph to be searched.
-    root : int
-        Node from which to begin the search.
-    max_depth : float
-        Maximum distance to search from the root node.
-
-    Returns
-    -------
-    root : int
-        Nearest branching node if one is found; otherwise, returns "root".
-    """
-    queue = [(root, 0)]
-    visited = set(queue)
-    while queue:
-        # Visit node
-        i, dist_i = queue.pop()
-        if graph.degree[i] >= 3:
-            return i
-
-        # Update queue
-        for j in graph.neighbors(i):
-            dist_j = dist_i + dist(graph, i, j)
-            if dist_j < max_depth and j not in visited:
-                queue.append((j, dist_j))
-                visited.add(j)
-    return root
 
 
 def largest_components(graph, k):

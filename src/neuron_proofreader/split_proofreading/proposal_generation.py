@@ -26,7 +26,6 @@ class ProposalGenerator:
         graph,
         max_attempts=2,
         max_proposals_per_leaf=3,
-        min_size_with_proposals=0,
         search_scaling_factor=1.5,
     ):
         """
@@ -41,8 +40,6 @@ class ProposalGenerator:
             increasing search radii. Default is 2.
         max_proposals_per_leaf : bool, optional
             Maximum number of proposals generated at each leaf. Default is 3.
-        min_size_with_proposals : float, optional
-            Minimum fragment path length required for proposals. Default is 0.
         search_scaling_factor : 1.5, optional
             Scaling actor used to enlarge search radius for each search.
             Default is 2.
@@ -53,10 +50,14 @@ class ProposalGenerator:
         self.kdtree = None
         self.max_attempts = max_attempts
         self.max_proposals_per_leaf = max_proposals_per_leaf
-        self.min_size_with_proposals = min_size_with_proposals
         self.search_scaling_factor = search_scaling_factor
 
-    def __call__(self, initial_radius, allow_nonleaf_proposals=False):
+    def __call__(
+        self,
+        initial_radius,
+        allow_nonleaf_proposals=False,
+        min_size_with_proposals=0
+    ):
         """
         Generates edge proposals between fragments within the given search
         radius.
@@ -69,6 +70,9 @@ class ProposalGenerator:
         allow_nonleaf_proposals : bool, optional
             Indication of whether to generate proposals between leaf and nodes
             with degree 2. Default is False.
+        min_size_with_proposals : float, optional
+            Minimum cable path length required for fragments that proposals
+            are generated from. Default is 0.
         """
         # Initializations
         self.allow_nonleaf_proposals = allow_nonleaf_proposals
@@ -83,9 +87,9 @@ class ProposalGenerator:
         for leaf in iterator:
             # Check if fragment satisfies size requirement
             length = self.graph.cable_length(
-                max_depth=self.min_size_with_proposals, root=leaf
+                max_depth=min_size_with_proposals, root=leaf
             )
-            if length < self.min_size_with_proposals:
+            if length < min_size_with_proposals:
                 continue
 
             # Generate proposals
@@ -148,7 +152,7 @@ class ProposalGenerator:
 
     def get_nearby_nodes(self, leaf, radius):
         """
-        Get nearby spatial points for a leaf node within a given radius.
+        Gets nearby spatial points for a leaf node within a given radius.
 
         Parameters
         ----------

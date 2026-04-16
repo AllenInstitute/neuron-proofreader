@@ -102,8 +102,7 @@ class FragmentsDataset(IterableDataset):
         self.graph = ProposalGraph(
             anisotropy=self.config.graph.anisotropy,
             gt_path=self.gt_path,
-            min_size=self.config.graph.min_size,
-            min_size_with_proposals=self.config.graph.min_size_with_proposals,
+            min_cable_length=self.config.graph.min_cable_length,
             node_spacing=self.config.graph.node_spacing,
             prune_depth=self.config.graph.prune_depth,
             verbose=self.config.graph.verbose,

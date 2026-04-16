@@ -21,7 +21,7 @@ Code that executes the full split correction pipeline.
                 Run a GNN to classify proposals as accept/reject
                 based on the learned features.
             c. Merge Accepted Proposals
-                Add accepted proposals to the fragments graph as edges.
+                Add accepted proposals to the graph as edges.
 
 Note: Steps 2 and 3 of the inference pipeline can be iterated in a loop that
       repeats multiple times by calling the pipeline in a loop
@@ -131,8 +131,8 @@ class InferencePipeline:
         self.save_graph("original_swcs")
 
         # Postprocess fragments with somas
-        self.dataset.graph.remove_soma_merges()
-        self.dataset.graph.connect_soma_fragments()
+        self.log(self.dataset.graph.remove_soma_merges())
+        self.log(self.dataset.graph.connect_soma_fragments())
         self.save_graph("precorrected_swcs")
 
         # Log results
@@ -170,9 +170,9 @@ class InferencePipeline:
         # Generate proposals
         t0 = time()
         self.generate_proposals(search_radius)
-        preds = self.predict_proposals(suffix="_round1")
 
         # Round 1: Update graph
+        preds = self.predict_proposals(suffix="_round1")
         self.merge_with_threshold_schedule(
             preds, high_threshold, only_leaf2leaf=True
         )
@@ -199,8 +199,8 @@ class InferencePipeline:
                 self.dataset.graph.remove_proposal(proposal)
                 cnt += 1
 
-        print("# Proposals Removed:", cnt)
-        print("# Proposals Remaining:", self.dataset.graph.n_proposals())
+        self.log(f"# Proposals Removed: {cnt}")
+        self.log(f"# Proposals Remaining: {self.dataset.graph.n_proposals()}")
 
     def generate_proposals(self, search_radius):
         """
