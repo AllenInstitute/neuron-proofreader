@@ -140,7 +140,7 @@ class InferencePipeline:
         self.log(self.dataset.graph.summary(prefix="\nInitial"))
         self.log(f"Module Runtime: {elapsed:.2f} {unit}\n")
 
-    # --- PipelPipelines ---
+    # --- Pipelines ---
     def __call__(self, search_radius):
         """
         Executes the full inference pipeline.
@@ -160,36 +160,6 @@ class InferencePipeline:
         self.log(self.dataset.graph.summary(prefix="\nFinal"))
         self.log(f"Total Runtime: {t:.2f} {unit}\n")
         self.save_results()
-
-    def multistep_pipeline(
-        self, search_radius, low_threshold=0.3, high_threshold=0.95
-    ):
-        # Generate proposal predictions
-        self.generate_proposals(search_radius)
-        preds = self.classify_proposals(high_threshold, suffix="_round1")
-
-        # Confidence filtering step
-        self.filter_proposals(preds, low_threshold)
-        self.classify_proposals(self.config.ml.threshold, suffix="_round2")
-
-        # Report results
-        t, unit = util.time_writer(time() - t0)
-        self.log(self.dataset.graph.summary(prefix="\nFinal"))
-        self.log(f"Total Runtime: {t:.2f} {unit}\n")
-        self.save_results()
-
-    # --- Core Routines ---
-    def filter_proposals(self, preds, threshold):
-        cnt = 0
-        for proposal, pred in preds.items():
-            i, j = proposal
-            is_valid = self.dataset.graph.is_mergeable(i, j)
-            if pred < threshold or not is_valid:
-                self.dataset.graph.remove_proposal(proposal)
-                cnt += 1
-
-        print("# Proposals Removed:", cnt)
-        print("# Proposals Remaining:", self.dataset.graph.n_proposals())
 
     def multistep_pipeline(
         self, search_radius, low_threshold=0.3, high_threshold=0.95
@@ -249,7 +219,7 @@ class InferencePipeline:
         self.log(f"# Proposals Blocked: {n_proposals_blocked}")
         self.log(f"Module Runtime: {t:.2f} {unit}\n")
 
-    def classify_proposals(self, accept_threshold, dt=0.05, suffix="", suffix=""):
+    def classify_proposals(self, accept_threshold, dt=0.05, suffix=""):
         """
         Classifies and iteratively merges proposals using a decreasing
         confidence threshold.
@@ -268,7 +238,7 @@ class InferencePipeline:
         # Main
         n_proposals = self.dataset.graph.n_proposals()
         new_threshold = 0.99
-        preds = self.predict_proposals(suffix=suffixsuffix=suffix)
+        preds = self.predict_proposals(suffix=suffix)
         while True:
             # Update graph
             cur_threshold = new_threshold
@@ -288,11 +258,9 @@ class InferencePipeline:
         self.log(f"Module Runtime: {t:.2f} {unit}\n")
         return preds
 
-    def predict_proposals(self, suffix=""        return preds
-
     def predict_proposals(self, suffix=""):
         """
-        PerformPerforms inference over all proposals and saves model predictions.
+        Performs inference over all proposals and saves model predictions.
 
         Returns
         -------
@@ -307,7 +275,7 @@ class InferencePipeline:
             pbar.update(data.n_proposals())
 
         # Save results
-        self.save_proposal_results(preds, suffix=suffix, suffix=suffix)
+        self.save_proposal_results(preds, suffix=suffix)
         return preds
 
     def merge_proposals(self, preds, threshold):
@@ -324,7 +292,6 @@ class InferencePipeline:
             model prediction.
         """
         proposals = self.dataset.graph.sorted_proposals()
-        for proposal in [p for p in proposals if p in preds]proposals = self.dataset.graph.sorted_proposals()
         for proposal in [p for p in proposals if p in preds]:
             # Check if proposal satifies threshold
             i, j = proposal
@@ -400,7 +367,7 @@ class InferencePipeline:
         util.combine_zips(zip_paths, output_zip_path)
         util.rmdir(temp_dir)
 
-    def save_proposal_results(self, preds_dict, suffix="", suffix=""):
+    def save_proposal_results(self, preds_dict, suffix=""):
         summary = list()
         for proposal, pred in preds_dict.items():
             # Extract info
@@ -427,8 +394,7 @@ class InferencePipeline:
             )
 
         # Save results
-        path = os.path.join(self.output_dir, ff"proposal_summary{suffix}.csv")
-        pd.DataFrame(summary).set_inde{suffix}.csv")
+        path = os.path.join(self.output_dir, f"proposal_summary{suffix}.csv")
         pd.DataFrame(summary).set_index("Proposal").to_csv(path)
 
     def reconfigure_node_radius(self):
