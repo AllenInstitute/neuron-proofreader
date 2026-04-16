@@ -68,14 +68,14 @@ def list_files_in_zip(zip_content):
         return zip_file.namelist()
 
 
-def list_paths(directory, extension=None):
+def list_paths(dir_path, extension=None):
     """
     Lists all paths within "directory" that end with "extension" if provided.
 
     Parameters
     ----------
-    directory : str
-        Directory to be searched.
+    dir_path : str
+        Path to directory to be searched.
     extension : str, optional
         If provided, only paths of files with the extension are returned.
         Default is None.
@@ -85,24 +85,22 @@ def list_paths(directory, extension=None):
     paths : List[str]
         List of all paths within "directory".
     """
-    paths = list()
-    for f in listdir(directory, extension=extension):
-        paths.append(os.path.join(directory, f))
-    return paths
+    filenames = listdir(dir_path, extension=extension)
+    return [os.path.join(dir_path, f) for f in filenames]
 
 
 def list_subdirs(path, keyword=None, return_paths=False):
     """
-    Creates list of all subdirectories at "path". If "keyword" is provided,
-    then only subdirectories containing "keyword" are contained in list.
+    List of all subdirectories at "path". If "keyword" is provided, then only
+    subdirectories containing "keyword" are contained in list.
 
     Parameters
     ----------
     path : str
-        Path to directory containing subdirectories to be listed.
+        Path to directory to be searched.
     keyword : str, optional
-        Only subdirectories containing "keyword" are contained in list that is
-        returned. Default is None.
+        Only subdirectories containing "keyword" are returned. Default is
+        None.
     return_paths : bool
         Indication of whether to return full path of subdirectories.
         Default is False.
@@ -123,7 +121,7 @@ def list_subdirs(path, keyword=None, return_paths=False):
     return sorted(subdirs)
 
 
-def mkdir(path, delete=False):
+def mkdir(dir_path, delete=False):
     """
     Creates a directory at "path".
 
@@ -136,22 +134,21 @@ def mkdir(path, delete=False):
         exists. Default is False.
     """
     if delete:
-        rmdir(path)
+        rmdir(dir_path)
+    os.makedirs(dir_path, exist_ok=True)
 
-    os.makedirs(path, exist_ok=True)
 
-
-def rmdir(path):
+def rmdir(dir_path):
     """
     Removes directory and all subdirectories at "path".
 
     Parameters
     ----------
-    path : str
+    dir_path : str
         Path to directory and subdirectories to be deleted if they exist.
     """
-    if os.path.exists(path):
-        shutil.rmtree(path)
+    if os.path.exists(dir_path):
+        shutil.rmtree(dir_path)
 
 
 def set_filename_in_zip(zipfile, name):
@@ -173,15 +170,6 @@ def set_filename_in_zip(zipfile, name):
         Name of SWC file to be written to ZIP archive.
     name : str
         Name of SWC file to be  archive.
-    """
-    cnt = 0
-    filename = f"{name}.swritten to ZIP archive.
-
-    Returns
-    -------
-    filename : str
-        Name of SWC file to be c"
-    written to ZIP archive.
     """
     cnt = 0
     filename = f"{name}.swc"
@@ -417,7 +405,7 @@ def list_gcs_subdirectories(bucket_name, prefix):
     Returns
     -------
     List[str]
-         List of direct subdirectories.
+         Direct subdirectories.
     """
     # Load blobs
     storage_client = storage.Client()
