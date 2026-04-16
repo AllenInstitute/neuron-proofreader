@@ -200,15 +200,15 @@ def load_model(model, model_path, device="cuda"):
 
 def tensor_to_list(tensor):
     """
-     Converts the given tensor to a list.
+    Converts the given tensor to a list.
 
-     Parameters
-     ----------
-     tensor : torch.Tensor
-         Tensor with shape Nx1 to be converted.
+    Parameters
+    ----------
+    tensor : torch.Tensor
+        Tensor with shape Nx1 to be converted.
 
-     Returns
-     -------
+    Returns
+    -------
     tensor : List[float]
          Tensor converted to a list.
     """
@@ -217,7 +217,7 @@ def tensor_to_list(tensor):
 
 def to_cpu(tensor, to_numpy=False):
     """
-    Move PyTorch tensor to the CPU and optionally convert it to a NumPy array.
+    Moves PyTorch tensor to CPU and optionally converts it to a NumPy array.
 
     Parameters
     ----------
@@ -239,7 +239,7 @@ def to_cpu(tensor, to_numpy=False):
 
 def to_tensor(arr):
     """
-    Converts a numpy array to a tensor.
+    Converts a NumPy array to a tensor.
 
     Parameters
     ----------
