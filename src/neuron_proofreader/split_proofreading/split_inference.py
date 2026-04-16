@@ -127,17 +127,22 @@ class InferencePipeline:
             segmentation_path=segmentation_path,
             soma_centroids=self.soma_centroids,
         )
+        self.log(self.dataset.graph.summary(prefix="\nInitial"))
         self.save_fragment_ids()
         self.save_graph("original_swcs")
 
         # Postprocess fragments with somas
         self.log(self.dataset.graph.remove_soma_merges())
         self.log(self.dataset.graph.connect_soma_fragments())
+
+        # Break high risk merges (if applicable)
+        if self.config.graph.remove_high_risk_merges:
+            self.log(self.dataset.graph.remove_high_risk_merges())
+        self.log(self.dataset.graph.summary(prefix="\nPre-Corrected"))
         self.save_graph("precorrected_swcs")
 
-        # Log results
+        # Report runtime
         elapsed, unit = util.time_writer(time() - t0)
-        self.log(self.dataset.graph.summary(prefix="\nInitial"))
         self.log(f"Module Runtime: {elapsed:.2f} {unit}\n")
 
     # --- Pipelines ---
@@ -199,6 +204,7 @@ class InferencePipeline:
                 self.dataset.graph.remove_proposal(proposal)
                 cnt += 1
 
+        self.log(f"\nFilter Proposals")
         self.log(f"# Proposals Removed: {cnt}")
         self.log(f"# Proposals Remaining: {self.dataset.graph.n_proposals()}")
 
@@ -252,15 +258,16 @@ class InferencePipeline:
         """
         # Initializations
         t0 = time()
-        self.log("Step 3: Run Inference")
+        self.log("\nStep 3: Run Inference")
         n_proposals = self.dataset.graph.n_proposals()
+        n_accepts = 0
 
         # Progressive merging
         new_threshold = 0.99
         while True:
             # Update graph
             cur_threshold = new_threshold
-            self.merge_proposals(
+            n_accepts += self.merge_proposals(
                 preds, cur_threshold, only_leaf2leaf=only_leaf2leaf
             )
 
@@ -268,7 +275,6 @@ class InferencePipeline:
             new_threshold = max(cur_threshold - dt, min_threshold)
             if cur_threshold == new_threshold:
                 break
-        n_accepts = len(self.dataset.graph.accepts)
 
         # Report results
         t, unit = util.time_writer(time() - t0)
@@ -314,6 +320,7 @@ class InferencePipeline:
             Indication of whether to only merge leaf2leaf proposals. Default
             is False.
         """
+        n_accepts = 0
         proposals = self.dataset.graph.sorted_proposals()
         for proposal in [p for p in proposals if p in preds]:
             # Check for leaf2leaf condition
@@ -329,7 +336,9 @@ class InferencePipeline:
             # Check if proposal creates a loop
             if not nx.has_path(self.dataset.graph, i, j):
                 self.dataset.graph.merge_proposal(proposal)
+                n_accepts += 1
             del preds[proposal]
+        return n_accepts
 
     def save_results(self):
         """

@@ -1104,6 +1104,7 @@ class SkeletonGraph(nx.Graph):
                 branching_nodes -= hit_branching_nodes
                 cnt += 1
         self.remove_nodes(rm_nodes)
+        return f"# High Risk Merges: {cnt}"
 
     def rooted_subgraph(self, root, radius):
         """
