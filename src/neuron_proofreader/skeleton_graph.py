@@ -45,7 +45,7 @@ class SkeletonGraph(nx.Graph):
     def __init__(
         self,
         anisotropy=(1.0, 1.0, 1.0),
-        min_size=0,
+        min_cable_length=0,
         node_spacing=1,
         prune_depth=20,
         use_anisotropy=True,
@@ -59,7 +59,7 @@ class SkeletonGraph(nx.Graph):
         anisotropy : Tuple[float], optional
             Image to physical coordinates scaling factors to account for the
             anisotropy of the microscope. Default is (1.0, 1.0, 1.0).
-        min_size : float, optional
+        min_cable_length : float, optional
             Minimum path length of fragments loaded into graph. Default is 0.
         node_spacing : float, optional
             Distance (in microns) between neighboring nodes. Default 1μm.
@@ -89,7 +89,7 @@ class SkeletonGraph(nx.Graph):
         anisotropy = anisotropy if use_anisotropy else (1.0, 1.0, 1.0)
         self.graph_loader = graph_util.GraphLoader(
             anisotropy=anisotropy,
-            min_size=min_size,
+            min_cable_length=min_cable_length,
             node_spacing=node_spacing,
             prune_depth=prune_depth,
             verbose=verbose,
@@ -285,9 +285,11 @@ class SkeletonGraph(nx.Graph):
                         merge_cnt += 1
                         somas_connected.append(soma_component_id)
 
-        if self.verbose:
-            print("# Somas Connected:", len(np.unique(somas_connected)))
-            print("# Connections Added:", merge_cnt)
+        results = [
+            f"# Somas Connected: {len(np.unique(somas_connected))}",
+            f"# Connections Added: {merge_cnt}",
+        ]
+        return "\n".join(results)
 
     def remove_soma_merges(self):
         """
@@ -326,9 +328,11 @@ class SkeletonGraph(nx.Graph):
         # Finish
         self.remove_small_components(relabel_nodes=False)
         self.relabel_nodes()
-        if self.verbose:
-            print("# Soma Fragments:", len(self.soma_centroids))
-            print("# Soma Merges:", n_soma_merges)
+        results = [
+            f"# Soma Fragments: {len(self.soma_centroids)}",
+            f"# Soma Merges: {n_soma_merges}"
+        ]
+        return "\n".join(results)
 
     def remove_nearby_nodes(self, roots, max_dist=5.0):
         """
@@ -1044,6 +1048,63 @@ class SkeletonGraph(nx.Graph):
             path_ij = self.directed_path(i, j, max_depth=max_depth)
             path_ik = self.directed_path(i, k, max_depth=max_depth)
             return path_ij[::-1] + path_ik[1:]
+
+    def remove_high_risk_merges(self, max_dist=7):
+        """
+        Removes high risk merge sites from a graph, which are defined to be
+        either (1) two branching points within "max_dist" or (2) branching
+        point with degree 4+. Note: if soma locations are provided, we skip
+        branching points within 300um of a soma.
+
+        Parameters
+        ----------
+        max_dist : float, optional
+            Maximum distance between branching points that qualifies a site to
+            be considered "high risk". Default is 7.
+        """
+        # Initializations
+        branching_nodes = set(self.branching_nodes())
+        soma_nodes = np.array(self.soma_nodes(), dtype=int)
+        if len(soma_nodes) > 0:
+            somas_kdtree = KDTree(self.node_xyz[soma_nodes])
+
+        # Iterate over branching nodes
+        cnt = 0
+        rm_nodes = set()
+        while branching_nodes:
+            # Set root of search
+            root = branching_nodes.pop()
+
+            # Check if close to soma
+            if len(soma_nodes):
+                dist, _ = somas_kdtree.query(self.node_xyz[root])
+                if dist < 300:
+                    continue
+
+            # Search for high risk sites
+            hit_branching_nodes = set()
+            queue = [(root, 0)]
+            visited = {root}
+            while queue:
+                # Visit node
+                i, dist_i = queue.pop()
+                if self.degree[i] > 2 and i != root:
+                    hit_branching_nodes.add(i)
+
+                # Update queue
+                for j in self.neighbors(i):
+                    dist_j = dist_i + self.dist(i, j)
+                    if j not in visited and dist_j < max_dist:
+                        queue.append((j, dist_j))
+                        visited.add(j)
+
+            # Determine whether to remove visited nodes
+            if hit_branching_nodes or self.degree(root) > 3:
+                rm_nodes = rm_nodes.union(visited)
+                branching_nodes -= hit_branching_nodes
+                cnt += 1
+        self.remove_nodes(rm_nodes)
+        return f"# High Risk Merges: {cnt}"
 
     def rooted_subgraph(self, root, radius):
         """

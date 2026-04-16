@@ -38,8 +38,7 @@ class ProposalGraph(SkeletonGraph):
         anisotropy=(1.0, 1.0, 1.0),
         gt_path=None,
         max_proposals_per_leaf=3,
-        min_size=0,
-        min_size_with_proposals=0,
+        min_cable_length=0,
         node_spacing=1,
         prune_depth=20.0,
         remove_high_risk_merges=False,
@@ -53,10 +52,8 @@ class ProposalGraph(SkeletonGraph):
         anisotropy : Tuple[int], optional
             Image to physical coordinates scaling factors to account for the
             anisotropy of the microscope. Default is (1.0, 1.0, 1.0).
-        min_size : float, optional
-            Minimum path length of fragments loaded into graph. Default is 0.
-        min_size_with_proposals : float, optional
-            Minimum fragment path length required for proposals. Default is 0.
+        min_cable_length : float, optional
+            Minimum cable length of fragments loaded into graph. Default is 0.
         node_spacing : float, optional
             Distance between points in edges.
         prune_depth : float, optional
@@ -88,15 +85,13 @@ class ProposalGraph(SkeletonGraph):
 
         self.reset_proposals()
         self.proposal_generator = ProposalGenerator(
-            self,
-            max_proposals_per_leaf=max_proposals_per_leaf,
-            min_size_with_proposals=min_size_with_proposals,
+            self, max_proposals_per_leaf=max_proposals_per_leaf,
         )
 
         # Graph Loader
         self.graph_loader = graph_util.GraphLoader(
             anisotropy=anisotropy,
-            min_size=min_size,
+            min_cable_length=min_cable_length,
             node_spacing=node_spacing,
             prune_depth=prune_depth,
             verbose=verbose,
@@ -139,7 +134,12 @@ class ProposalGraph(SkeletonGraph):
         self.node_proposals[j].add(i)
         self.proposals.add(frozenset({i, j}))
 
-    def generate_proposals(self, search_radius, allow_nonleaf_proposals=False):
+    def generate_proposals(
+        self,
+        search_radius,
+        allow_nonleaf_proposals=False,
+        min_size_with_proposals=0
+    ):
         """
         Generates proposals from leaf nodes.
 
@@ -150,11 +150,16 @@ class ProposalGraph(SkeletonGraph):
         allow_nonleaf_proposals : bool, optional
             Indication of whether to generate proposals between leaf and nodes
             with degree 2. Default is False.
+        min_size_with_proposals : float
+            Minimum cable length (in microns) of connected components that
+            proposals are generated from. Default is 0.
         """
         # Proposal generation
         assert len(self.kdtree.data) == self.number_of_nodes()
         proposals = self.proposal_generator(
-            search_radius, allow_nonleaf_proposals=allow_nonleaf_proposals
+            search_radius,
+            allow_nonleaf_proposals=allow_nonleaf_proposals,
+            min_size_with_proposals=min_size_with_proposals,
         )
 
         self.search_radius = search_radius

@@ -33,12 +33,9 @@ class ProposalGraphConfig:
         Default is (1.0, 1.0, 1.0).
     max_proposals_per_leaf : int
         Maximum number of proposals generated at leaf nodes. Default is 3.
-    min_size : float
+    min_cable_length : float
         Minimum path length (in microns) of SWC files loaded into a graph
         object. Default is 40.
-    min_size_with_proposals : float
-        Minimum path length (in microns) required for a fragment to have
-        proposals generated from its leaf nodes. Default is 40.
     node_spacing : float
         Physcial spacing (in microns) between nodes. Default is 1.
     prune_depth : int
@@ -60,8 +57,7 @@ class ProposalGraphConfig:
     allow_nonleaf_proposals: bool = False
     anisotropy: Tuple[float, float, float] = (1.0, 1.0, 1.0)
     max_proposals_per_leaf: int = 3
-    min_size: float = 40.0
-    min_size_with_proposals: float = 40.0
+    min_cable_length: float = 40.0
     node_spacing: float = 1.0
     proposals_per_leaf: int = 3
     prune_depth: float = 24.0
