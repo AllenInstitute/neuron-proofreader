@@ -150,10 +150,13 @@ class InferencePipeline:
         search_radius : float
             Search radius (in microns) used to generate proposals.
         """
-        # Main
+        # Generate proposal
         t0 = time()
         self.generate_proposals(search_radius)
-        self.classify_proposals(self.config.ml.threshold)
+        preds = self.predict_proposals()
+
+        # Update graph
+        self.merge_with_threshold_schedule(preds, self.config.ml.threshold)
 
         # Report results
         t, unit = util.time_writer(time() - t0)
@@ -161,17 +164,25 @@ class InferencePipeline:
         self.log(f"Total Runtime: {t:.2f} {unit}\n")
         self.save_results()
 
-    def multistep_pipeline(
-        self, search_radius, low_threshold=0.3, high_threshold=0.95
+    def multistep(
+        self, search_radius, low_threshold=0.3, high_threshold=0.8
     ):
-        # Generate proposal predictions
+        # Generate proposals
         t0 = time()
         self.generate_proposals(search_radius)
-        preds = self.classify_proposals(high_threshold, suffix="_round1")
+        preds = self.predict_proposals(suffix="_round1")
 
-        # Confidence filtering step
+        # Round 1: Update graph
+        self.merge_with_threshold_schedule(
+            preds, high_threshold, only_leaf2leaf=True
+        )
         self.filter_proposals(preds, low_threshold)
-        self.classify_proposals(self.config.ml.threshold, suffix="_round2")
+
+        # Round 2: Update graph
+        preds = self.predict_proposals()
+        self.merge_with_threshold_schedule(
+            preds, self.config.ml.threshold, only_leaf2leaf=False
+        )
 
         # Report results
         t, unit = util.time_writer(time() - t0)
@@ -183,8 +194,7 @@ class InferencePipeline:
     def filter_proposals(self, preds, threshold):
         cnt = 0
         for proposal, pred in preds.items():
-            i, j = proposal
-            is_valid = self.dataset.graph.is_mergeable(i, j)
+            is_valid = self.dataset.graph.is_mergeable(*proposal)
             if pred < threshold or not is_valid:
                 self.dataset.graph.remove_proposal(proposal)
                 cnt += 1
@@ -220,33 +230,42 @@ class InferencePipeline:
         self.log(f"# Proposals Blocked: {n_proposals_blocked}")
         self.log(f"Module Runtime: {t:.2f} {unit}\n")
 
-    def classify_proposals(self, accept_threshold, dt=0.05, suffix=""):
+    def merge_with_threshold_schedule(
+        self, preds, min_threshold, dt=0.05, only_leaf2leaf=False
+    ):
         """
         Classifies and iteratively merges proposals using a decreasing
         confidence threshold.
 
         Parameters
         ----------
-        accept_threshold : float
-            Minimum confidence threshold for accepting proposals.
+        preds : Dict[Frozenset[int], float]
+            Dictionary that maps proposals to model predictions.
+        min_threshold : float
+            Minimum threshold for accepting proposals.
         dt : float, optional
-            Step size for decreasing the confidence threshold at each
-            iteration. Default is 0.05.
+            Step size for decreasing the threshold at each iteration. Default
+            is 0.05.
+        only_leaf2leaf : bool, optional
+            Indication of whether to only merge leaf2leaf proposals. Default
+            is False.
         """
+        # Initializations
         t0 = time()
         self.log("Step 3: Run Inference")
-
-        # Main
         n_proposals = self.dataset.graph.n_proposals()
+
+        # Progressive merging
         new_threshold = 0.99
-        preds = self.predict_proposals(suffix=suffix)
         while True:
             # Update graph
             cur_threshold = new_threshold
-            self.merge_proposals(preds, cur_threshold)
+            self.merge_proposals(
+                preds, cur_threshold, only_leaf2leaf=only_leaf2leaf
+            )
 
             # Update threshold
-            new_threshold = max(cur_threshold - dt, accept_threshold)
+            new_threshold = max(cur_threshold - dt, min_threshold)
             if cur_threshold == new_threshold:
                 break
         n_accepts = len(self.dataset.graph.accepts)
@@ -279,7 +298,7 @@ class InferencePipeline:
         self.save_proposal_results(preds, suffix=suffix)
         return preds
 
-    def merge_proposals(self, preds, threshold):
+    def merge_proposals(self, preds, threshold, only_leaf2leaf=False):
         """
         Merges nodes corresponding to for proposals that satify the threshold
         and no loop creation requirements.
@@ -291,9 +310,17 @@ class InferencePipeline:
         threshold : float
             Threshold used to determine which proposals to accept based on
             model prediction.
+        only_leaf2leaf : bool, optional
+            Indication of whether to only merge leaf2leaf proposals. Default
+            is False.
         """
         proposals = self.dataset.graph.sorted_proposals()
         for proposal in [p for p in proposals if p in preds]:
+            # Check for leaf2leaf condition
+            is_leaf2leaf = self.dataset.graph.is_leaf2leaf(proposal)
+            if only_leaf2leaf and not is_leaf2leaf:
+                continue
+
             # Check if proposal satifies threshold
             i, j = proposal
             if preds[proposal] < threshold:
@@ -385,8 +412,6 @@ class InferencePipeline:
                     "Prediction": pred,
                     "Segment1": segment_i,
                     "Segment2": segment_j,
-                    "Voxel1": self.dataset.graph.node_voxel(i),
-                    "Voxel2": self.dataset.graph.node_voxel(j),
                     "Voxel1": self.dataset.graph.node_voxel(i),
                     "Voxel2": self.dataset.graph.node_voxel(j),
                     "World1": self.dataset.graph.node_xyz[i],
