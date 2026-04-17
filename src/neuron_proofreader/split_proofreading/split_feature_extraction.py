@@ -334,8 +334,8 @@ class ImageFeatureExtractor:
             Center of image patch to be read.
         """
         patch = self.img.read(center, shape)
-        patch = img_util.normalize(np.minimum(patch, self.brightness_clip))
-        return patch
+        patch = np.minimum(patch, self.brightness_clip)
+        return img_util.normalize(patch)
 
     def read_segmentation(self, center, shape):
         """
@@ -457,9 +457,9 @@ class PatchFeatureExtractor:
         )
 
         # Adjust intensities
-        max_intensity = np.max(profile) + 1e-5
-        self.img = np.minimum(max_intensity, self.img) / max_intensity
-        profile /= max_intensity
+        max_val = np.max(profile) + 1e-5
+        self.img = np.minimum(max_val, self.img) / (max_val + 1e-5)
+        profile /= (max_val + 1e-5)
         return profile
 
     def get_branch_profile(self, node):
@@ -478,7 +478,12 @@ class PatchFeatureExtractor:
             Intensity profile along the branch containing the given node.
         """
         profile = self._extract_profile(self.voxels[node])
-        return geometry_util.resample_curve_1d(profile, 16)
+        if np.isnan(profile).any():
+            print("[NaN] in profile before resample", profile)
+        profile = geometry_util.resample_curve_1d(profile, 16)
+        if np.isnan(profile).any():
+            print("[NaN] in profile after resample", profile)
+        return profile
 
     def _extract_profile(self, voxels):
         """
@@ -495,7 +500,7 @@ class PatchFeatureExtractor:
             Image with shape (2, H, W, D) containing a raw image and proposal
             mask channels.
         """
-        check_list_length(voxels, min_length=16)
+        voxels = check_list_length(voxels, min_length=16)
         profile = np.array([self.img[tuple(voxel)] for voxel in voxels])
         profile = np.append(profile, [profile.mean(), profile.std()])
         return profile
@@ -950,11 +955,14 @@ def check_list_length(arr, min_length=2):
     min_length : int
         Minimum length of the array.
     """
-    if arr.shape[0] < min_length:
+    if arr.shape[0] < min_length and arr.shape[0] > 0:
         pad_size = min_length - arr.shape[0]
         padding = np.repeat(arr[-1:], pad_size, axis=0)
-        arr = np.concatenate([arr, padding], axis=0)
-    return arr
+        return np.concatenate([arr, padding], axis=0)
+    elif arr.shape[0] == 0:
+        return np.array([(0, 0, 0)] * min_length)
+    else:
+        return arr
 
 
 def get_feature_dict():

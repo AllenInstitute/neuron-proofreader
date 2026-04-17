@@ -100,26 +100,21 @@ class VisionHGAT(torch.nn.Module):
                     init.zeros_(param)
 
     def forward(self, input_dict):
-        # Extract inputs
         x_dict = input_dict["x_dict"]
         x_img = input_dict["img"]
         edge_index_dict = input_dict["edge_index_dict"]
 
-        before = list()
-        for key, x in x_dict.items():
-            before.append(f"{key}: {x.size()}")
-
-        # Node embeddings
+        # Initial embedding
         x_img = self.patch_embedding(x_img)
         for key, f in self.node_embedding.items():
             x_dict[key] = f(x_dict[key])
         x_dict["proposal"] = torch.cat((x_dict["proposal"], x_img), dim=1)
 
-        # Message passing
+        # --- Message passing ---
         if self.disable_msg_passing:
-            for layer in self.gat1:
+            for i, layer in enumerate(self.gat1):
                 x_dict = layer(x_dict)
-            for layer in self.gat2:
+            for i, layer in enumerate(self.gat2):
                 x_dict = layer(x_dict)
         else:
             x_dict = self.gat1(x_dict, edge_index_dict)
