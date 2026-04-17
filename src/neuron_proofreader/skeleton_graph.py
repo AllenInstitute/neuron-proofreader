@@ -896,7 +896,8 @@ class SkeletonGraph(nx.Graph):
             SWC ID of the given node.
         """
         component_id = self.node_component_id[i]
-        return self.component_id_to_swc_id[component_id]
+        swc_id = self.component_id_to_swc_id[component_id]
+        return swc_id if "." in swc_id else f"{swc_id}.0"
 
     def node_voxel(self, i):
         """

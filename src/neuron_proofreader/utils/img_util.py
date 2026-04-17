@@ -43,8 +43,7 @@ class ImageReader(ABC):
     @abstractmethod
     def _load_image(self):
         """
-        This method should be implemented by subclasses to load the image
-        based on img_path.
+        Method to be implemented by subclasses to load the image.
         """
         pass
 
@@ -99,7 +98,7 @@ class ImageReader(ABC):
 
 class TensorStoreReader(ImageReader):
     """
-    Class that reads an image with TensorStore library.
+    Class that reads images with TensorStore library.
     """
 
     def __init__(self, img_path):
@@ -139,7 +138,7 @@ class TensorStoreReader(ImageReader):
 
     def _load_image(self):
         """
-        Loads image using the TensorStore library.
+        Loads image with TensorStore library.
         """
         # Extract metadata
         bucket_name, path = util.parse_cloud_path(self.img_path)
@@ -171,7 +170,7 @@ class TensorStoreReader(ImageReader):
 
     def read(self, center, shape):
         """
-        Reads an image patch centered at the given voxel coordinate.
+        Reads an image patch centered at the given voxel.
 
         Parameters
         ----------
@@ -189,7 +188,7 @@ class TensorStoreReader(ImageReader):
             return super().read(center, shape).read().result()
         except Exception:
             print(f"Unable to read image patch at {center} w/ shape {shape}!")
-            return np.ones(shape)
+            return np.zeros(shape)
 
     def read_voxel(self, voxel, thread_id):
         """
@@ -213,8 +212,8 @@ class TensorStoreReader(ImageReader):
 # --- Visualization ---
 def make_segmentation_colormap(mask, seed=42):
     """
-    Creates a matplotlib ListedColormap for a segmentation mask. Ensures label
-    0 maps to black and all other labels get distinct random colors.
+    Creates a matplotlib ListedColormap for a segmentation. Ensures label 0
+    maps to black and all other labels get distinct random colors.
 
     Parameters
     ----------
@@ -339,8 +338,8 @@ def plot_segmentation_mips(segmentation):
 # --- Helpers ---
 def annotate_voxels(img, voxels, kernel_size=3, val=1):
     """
-    Annotates a set of voxel coordinates in a 3D image by filling a patch
-    around each voxel with a given value.
+    Annotates voxel coordinates in a 3D image by filling a patch around each
+    voxel with a given value.
 
     Parameters
     ----------
@@ -351,7 +350,7 @@ def annotate_voxels(img, voxels, kernel_size=3, val=1):
     kernel_size : int, optional
         Size of kernel used to fill around each voxel. Default is 3.
     val : int, optional
-        Value to write into each patch. Default is 1.
+        Fill value. Default is 1.
     """
     buffer = (kernel_size - 1) // 2
     shape = (kernel_size, kernel_size, kernel_size)
@@ -381,18 +380,17 @@ def compute_iou3d(c1, c2, s1, s2):
     float
         IoU between the boxes
     """
+    # Extract shapes
     c1, s1, c2, s2 = map(np.asarray, (c1, s1, c2, s2))
     min1, max1 = c1 - s1 / 2, c1 + s1 / 2
     min2, max2 = c2 - s2 / 2, c2 + s2 / 2
 
+    # Compute overlap
     overlap_min = np.maximum(min1, min2)
     overlap_max = np.minimum(max1, max2)
     overlap = np.maximum(overlap_max - overlap_min, 0)
-    inter = np.prod(overlap)
-    vol1 = np.prod(s1)
-    vol2 = np.prod(s2)
-    union = vol1 + vol2 - inter
-    return inter / union if union > 0 else 0
+    union = np.prod(s1) + np.prod(s2) - np.prod(overlap)
+    return np.prod(overlap) / union if union > 0 else 0
 
 
 def find_img_path(bucket_name, root_dir, brain_id):
@@ -732,7 +730,7 @@ def remove_small_segments(segmentation, min_size):
 
 def resize(img, new_shape):
     """
-    Resize a 3D image to the specified new shape using linear interpolation.
+    Resizes a 3D image to the new shape using linear interpolation.
 
     Parameters
     ----------
@@ -744,7 +742,7 @@ def resize(img, new_shape):
     Returns
     -------
     numpy.ndarray
-        Resized 3D image with shape equal to "new_shape".
+        Resized 3D image.
     """
     zoom_factors = np.array(new_shape) / np.array(img.shape)
     return zoom(img, zoom_factors, order=1, prefilter=False)
@@ -781,7 +779,7 @@ def to_voxels(xyz, anisotropy):
     Parameters
     ----------
     xyz : ArrayLike
-        Physical coordiante to be converted.
+        Physical coordinate to be converted.
     anisotropy : ArrayLike
         Image to physical coordinates scaling factors to account for the
         anisotropy of the microscope.

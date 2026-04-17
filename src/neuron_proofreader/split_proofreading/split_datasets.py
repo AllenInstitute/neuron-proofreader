@@ -43,7 +43,7 @@ class FragmentsDataset(IterableDataset):
         gt_path=None,
         metadata_path=None,
         segmentation_path=None,
-        soma_centroids=None,
+        soma_centroids=set(),
     ):
         """
         Instantiates a FragmentsDataset object.
@@ -65,7 +65,7 @@ class FragmentsDataset(IterableDataset):
             Path to the segmentation that fragments were generated from.
             Default is None.
         soma_centroids : List[Tuple[int]], optional
-            Phyiscal coordinates of soma centroids. Default is None.
+            Phyiscal coordinates of soma centroids. Default is an empty list.
         """
         # Instance attributes
         self.config = config
@@ -175,7 +175,7 @@ class FragmentsDatasetCollection(IterableDataset):
         gt_path=None,
         metadata_path=None,
         segmentation_path=None,
-        soma_centroids=None,
+        soma_centroids=list(),
     ):
         """
         Adds a dataset to the collection of datasets.
@@ -199,7 +199,7 @@ class FragmentsDatasetCollection(IterableDataset):
             Path to the segmentation that fragments were generated from.
             Default is None.
         soma_centroids : List[Tuple[int]], optional
-            Phyiscal coordinates of soma centroids. Default is None.
+            Phyiscal coordinates of soma centroids. Default is an empty list.
         """
         assert key not in self.datasets, "Key has been used!"
         self.datasets[key] = FragmentsDataset(
@@ -251,7 +251,7 @@ class FragmentsDatasetCollection(IterableDataset):
         # Proposal generation
         for key in tqdm(self.datasets, desc="Generate Proposals"):
             self.datasets[key].graph.generate_proposals(
-                search_radius, allow_nonleaf_targets=True
+                search_radius, allow_nonleaf_proposals=True
             )
 
         # Report results

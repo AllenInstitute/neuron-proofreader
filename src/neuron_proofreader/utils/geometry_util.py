@@ -11,7 +11,7 @@ Code for processing geometric data.
 from collections import defaultdict
 from scipy.interpolate import UnivariateSpline
 from scipy.linalg import svd
-from scipy.spatial import distance
+from scipy.spatial.distance import euclidean
 from tqdm import tqdm
 
 import networkx as nx
@@ -445,8 +445,7 @@ def tangent(pts):
     if len(pts) == 1:
         tangent_vec = np.zeros((3))
     elif len(pts) == 2:
-        d = max(distance.euclidean(pts[1], pts[0]), 0.1)
-        tangent_vec = (pts[1] - pts[0]) / d
+        tangent_vec = (pts[1] - pts[0]) / (euclidean(pts[1], pts[0]) + 1e-5)
     else:
         _, _, VT = compute_svd(pts)
         tangent_vec = VT[0]

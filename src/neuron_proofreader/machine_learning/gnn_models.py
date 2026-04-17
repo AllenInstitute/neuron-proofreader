@@ -100,16 +100,11 @@ class VisionHGAT(torch.nn.Module):
                     init.zeros_(param)
 
     def forward(self, input_dict):
-        # Extract inputs
         x_dict = input_dict["x_dict"]
         x_img = input_dict["img"]
         edge_index_dict = input_dict["edge_index_dict"]
 
-        before = list()
-        for key, x in x_dict.items():
-            before.append(f"{key}: {x.size()}")
-
-        # Node embeddings
+        # Initial embedding
         x_img = self.patch_embedding(x_img)
         for key, f in self.node_embedding.items():
             x_dict[key] = f(x_dict[key])
