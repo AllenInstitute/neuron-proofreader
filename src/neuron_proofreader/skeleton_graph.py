@@ -305,7 +305,7 @@ class SkeletonGraph(nx.Graph):
         """
         # Check whether to exit
         if len(self.soma_centroids) == 0:
-            return None
+            return ""
 
         # Extract soma info
         component_id_to_soma_nodes = defaultdict(set)
@@ -533,8 +533,8 @@ class SkeletonGraph(nx.Graph):
 
         Parameters
         ----------
-        zff : zipfile.ZipFile
-            A ZipFile object that will store the generated SWC file.
+        zipfile : zipfile.ZipFile
+            ZipFile object that will store the generated SWC file.
         root : int
             Root node of connected component to be written to an SWC file.
         ususe_radius : bool, optional
