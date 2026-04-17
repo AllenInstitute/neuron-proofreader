@@ -204,7 +204,7 @@ class InferencePipeline:
                 self.dataset.graph.remove_proposal(proposal)
                 cnt += 1
 
-        self.log(f"\nFilter Proposals")
+        self.log("\nFilter Proposals")
         self.log(f"# Proposals Removed: {cnt}")
         self.log(f"# Proposals Remaining: {self.dataset.graph.n_proposals()}")
 

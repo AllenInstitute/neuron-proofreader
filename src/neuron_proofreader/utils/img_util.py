@@ -390,7 +390,7 @@ def compute_iou3d(c1, c2, s1, s2):
     overlap_max = np.minimum(max1, max2)
     overlap = np.maximum(overlap_max - overlap_min, 0)
     union = np.prod(s1) + np.prod(s2) - np.prod(overlap)
-    return inter / union if union > 0 else 0
+    return np.prod(overlap) / union if union > 0 else 0
 
 
 def find_img_path(bucket_name, root_dir, brain_id):

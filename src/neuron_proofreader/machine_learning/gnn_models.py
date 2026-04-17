@@ -110,11 +110,11 @@ class VisionHGAT(torch.nn.Module):
             x_dict[key] = f(x_dict[key])
         x_dict["proposal"] = torch.cat((x_dict["proposal"], x_img), dim=1)
 
-        # --- Message passing ---
+        # Message passing
         if self.disable_msg_passing:
-            for i, layer in enumerate(self.gat1):
+            for layer in self.gat1:
                 x_dict = layer(x_dict)
-            for i, layer in enumerate(self.gat2):
+            for layer in self.gat2:
                 x_dict = layer(x_dict)
         else:
             x_dict = self.gat1(x_dict, edge_index_dict)

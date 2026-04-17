@@ -478,11 +478,7 @@ class PatchFeatureExtractor:
             Intensity profile along the branch containing the given node.
         """
         profile = self._extract_profile(self.voxels[node])
-        if np.isnan(profile).any():
-            print("[NaN] in profile before resample", profile)
         profile = geometry_util.resample_curve_1d(profile, 16)
-        if np.isnan(profile).any():
-            print("[NaN] in profile after resample", profile)
         return profile
 
     def _extract_profile(self, voxels):
