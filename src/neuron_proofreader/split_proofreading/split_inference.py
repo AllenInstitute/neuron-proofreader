@@ -170,7 +170,7 @@ class InferencePipeline:
         self.save_results()
 
     def multistep(
-        self, search_radius, low_threshold=0.3, high_threshold=0.9
+        self, search_radius, low_threshold=0.3, high_threshold=0.8
     ):
         # Generate proposals
         t0 = time()
