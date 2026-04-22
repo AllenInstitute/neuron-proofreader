@@ -14,11 +14,35 @@ from matplotlib.colors import ListedColormap
 from scipy.ndimage import zoom
 
 import json
+import os
 import matplotlib.pyplot as plt
 import numpy as np
 import tensorstore as ts
 
 from neuron_proofreader.utils import util
+
+
+def _init_gcs_credentials():
+    """Write GCS_TOKEN_JSON to a file and set GOOGLE_APPLICATION_CREDENTIALS.
+
+    Runs at import time so every spawned/forked worker process picks up GCS
+    credentials before TensorStore makes its first authenticated request.
+    entrypoint.sh handles the parent process; this handles re-spawned workers.
+    """
+    if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") and os.path.exists(
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"]
+    ):
+        return
+    token_json = os.environ.get("GCS_TOKEN_JSON", "")
+    if not token_json:
+        return
+    creds_path = "/tmp/gcs_service_account.json"
+    with open(creds_path, "w") as f:
+        f.write(token_json)
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = creds_path
+
+
+_init_gcs_credentials()
 
 
 class ImageReader(ABC):
