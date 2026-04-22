@@ -132,7 +132,7 @@ class TensorStoreReader(ImageReader):
             return "zarr"
         elif ".n5" in img_path:
             return "n5"
-        elif is_precomputed(img_path):
+        elif is_precomputed(img_path) or util.is_gcs_path(img_path):
             return "neuroglancer_precomputed"
         else:
             raise ValueError(f"Unsupported image format: {img_path}")
