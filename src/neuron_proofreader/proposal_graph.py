@@ -421,14 +421,21 @@ class ProposalGraph(SkeletonGraph):
 # --- Computation Graph ---
 class ProposalComputationGraph(nx.Graph):
 
-    def __init__(self):
+    def __init__(self, max_proposals=64):
         # Call parent class
         super().__init__()
 
         # Instance attributes
         self.edge_to_path = dict()
         self.gt_accepts = set()
+        self.max_proposals = max_proposals
         self.proposals = set()
+
+    def is_full(self):
+        return self.n_proposals() >= self.max_proposals
 
     def n_proposals(self):
         return len(self.proposals)
+
+    def proposal_margin(self):
+        return self.max_proposals - self.n_proposals()
