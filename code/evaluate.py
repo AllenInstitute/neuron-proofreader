@@ -214,13 +214,13 @@ def save_points(zip_path, pts, color, prefix):
 
 if __name__ == "__main__":
     # Parameters
-    model_name = "MergeDetectorCNN3D-v5-run1-newmask=False-negativebias=0-20260201-125-0.8581"
+    model_name = "MergeDetectorCNN3D-v5-run2-newmask=False-negativebias=0.15-20260201-137-0.8771"
     exp_name = "V5"
 
     accept_threshold = 0.4
     anisotropy = (0.748, 0.748, 1.0)
     batch_size = 24
-    brightness_clip = 400
+    brightness_clip = 300
     d_tp = 32
     device = "cuda"
     is_test = False

@@ -37,6 +37,8 @@ from neuron_proofreader.merge_proofreading.merge_datasets import (
 )
 from neuron_proofreader.utils import util
 
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/root/capsule/data/gcs-token.json"
+
 
 def main():
     # Set data paths
@@ -148,13 +150,13 @@ if __name__ == "__main__":
     # Parameters
     anisotropy = (0.748, 0.748, 1.0)
     batch_size = 16
-    brightness_clip = 300  # 400
+    brightness_clip = 400
     is_test = False
     lr = 1e-4
-    max_epochs = 160
+    max_epochs = 100
     min_recall = 0.83
     model_class = "CNN3D"
-    negative_bias = 0
+    negative_bias = 0.1
     patch_shape = (128, 128, 128)
     save_mistake_mips = True
     use_new_mask = False
@@ -167,7 +169,7 @@ if __name__ == "__main__":
     output_dir = "/root/capsule/results"
 
     # Model
-    model_name = f"MergeDetector{model_class}-v5-run2-newmask={use_new_mask}-negativebias={negative_bias}-brightness_clip={brightness_clip}"
+    model_name = f"MergeDetector{model_class}-v6-run1-newmask={use_new_mask}-negativebias={negative_bias}"
     if model_class == "CNN3D":
         print("Model Class: CNN3D")
         is_multimodal = False

@@ -16,5 +16,10 @@ RUN conda install -y \
         rich \
     && conda clean -ya
 
-COPY postInstall /
-RUN /postInstall
+RUN pip install --no-cache-dir openpyxl
+
+#COPY postInstall /
+#RUN /postInstall
+
+COPY postInstall /tmp/postInstall
+RUN bash /tmp/postInstall

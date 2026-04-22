@@ -1,3 +1,4 @@
+from collections import defaultdict
 from scipy.spatial import KDTree
 
 import ast
@@ -13,13 +14,20 @@ from neuron_proofreader.merge_proofreading.merge_inference import (
     MergeDetector,
     DenseGraphDataset
 )
-from neuron_proofreader.utils import img_util, swc_util, util
+from neuron_proofreader.utils import (
+    graph_util as gutil,
+    img_util,
+    swc_util,
+    util
+)
 
 
 def main():
     # Load merge sites
-    path = f"gs://{bucket_name}/{dataset_prefix}/merge_sites.csv"
-    merge_sites = pd.read_csv(path)
+    #path = f"gs://{bucket_name}/{dataset_prefix}/merge_sites.csv"
+    #merge_sites = pd.read_csv(path)
+
+    merge_sites = load_merge_sites()
 
     # Run evaluation for each neuron
     print_experiment_details()
@@ -31,9 +39,11 @@ def main():
         fragments_path = f"gs://{bucket_name}/{swc_zip_path}"
 
         # Evaluate
-        print(f"\nFilename ({cnt + 1}/{len(swc_zip_paths)}):", name)
-        neuron_merge_sites = merge_sites[merge_sites["GroundTruth_ID"] == name]
-        evaluate_on_neuron(gt_path, fragments_path, neuron_merge_sites)
+        name = name[:-3]
+        if name in merge_sites:
+            print(f"\nFilename ({cnt + 1}/{len(swc_zip_paths)}):", name)
+            neuron_merge_sites = merge_sites[name]
+            evaluate_on_neuron(gt_path, fragments_path, neuron_merge_sites)
 
 
 def evaluate_on_neuron(gt_path, fragments_path, merge_sites):
@@ -55,7 +65,7 @@ def evaluate_on_neuron(gt_path, fragments_path, merge_sites):
 
     # Compute performance metrics
     detected_sites = merge_detector.get_detected_sites(accept_threshold)
-    gt_sites = np.array(merge_sites["World"].apply(ast.literal_eval).tolist())
+    gt_sites = np.array(merge_sites)
     compute_metrics(gt_sites, detected_sites, name)
     plot_precision_vs_recall(gt_sites, merge_detector, neuron_id)
 
@@ -109,21 +119,38 @@ def load_graphs(gt_path, fragments_path):
     return graph
 
 
+def load_merge_sites():
+    # Load the file
+    df = pd.read_excel("/root/capsule/data/802449-merge-locations.xlsx")
+
+    # Parse merge locations
+    df["merge_location"] = df["merge_location"].apply(parse_location)
+    df = df[df["merge_location"].notna()]
+    df = df.reset_index(drop=True)
+
+    # Extract merge sites
+    merge_sites = defaultdict(list)
+    for i in range(len(df)):
+        name = df["Neuron"][i]
+        if isinstance(df["merge_location"][i], tuple):
+            for xyz in df["merge_location"][i]:
+                merge_sites[name].append(xyz)
+        else:
+            merge_sites[name].append(df["merge_location"][i])
+    return merge_sites
+
+
 # --- Helpers ---
-def clip_to_groundtruth(gt_graph, graph, threshold=60):
-    nodes = list()
-    gt_graph.set_kdtree()
-    for node in graph.nodes:
-        dist, _ = gt_graph.kdtree.query(graph.node_xyz[node])
-        if dist > threshold:
-             nodes.append(node)
-    graph.remove_nodes(nodes)
-
-
 def get_name(path):
     filename = os.path.basename(path)
     name, ext = os.path.splitext(filename)
     return name
+
+
+def parse_location(x):
+    if pd.isna(x):
+        return None
+    return ast.literal_eval(x)
 
 
 def remove_far_components(gt_graph, graph, threshold=3):
@@ -226,6 +253,16 @@ def classify_detections(gt_sites, detected_sites):
     return tp_sites, fp_sites
 
 
+def clip_to_groundtruth(gt_graph, graph, threshold=60):
+    nodes = list()
+    gt_graph.set_kdtree()
+    for node in graph.nodes:
+        dist, _ = gt_graph.kdtree.query(graph.node_xyz[node])
+        if dist > threshold:
+             nodes.append(node)
+    graph.remove_nodes(nodes)
+
+
 def compute_stats(gt_sites, detected_sites):
     # Compute metrics
     tp_sites, fp_sites = classify_detections(gt_sites, detected_sites)
@@ -280,7 +317,7 @@ if __name__ == "__main__":
     # Parameters
     brain_id = "802449"
     segmentation_id = "jin_masked_mean40_stddev105"
-    model_name = "MergeDetectorCNN3D-v5-run2-newmask=False-negativebias=0-20260201-127-0.8601"
+    model_name = "MergeDetectorCNN3D-v5-run2-newmask=True-negativebias=0-20260204-16-0.8669"
 
     bucket_name = "allen-nd-goog"
     exp_name = "V5"
@@ -288,22 +325,22 @@ if __name__ == "__main__":
     accept_threshold = 0.4
     anisotropy = (0.748, 0.748, 1.0)
     batch_size = 24
-    brightness_clip = 400
+    brightness_clip = 300
     d_tp = 32
-    device = "cuda:0"
+    device = "cuda"
     min_fragment_size = 40
-    min_search_size = 500
+    min_search_size = 400
     node_spacing = 5
     patch_shape = (128, 128, 128)
     step_size = 20
-    use_new_mask = False
+    use_new_mask = True
 
     # Paths
     dataset_prefix = f"automated_proofreading_dataset/merge_detection/whole_brain_fragments_dataset/{brain_id}/{segmentation_id}"
     img_prefix_lookup_path = "/root/capsule/data/exaspim_image_prefixes.json"
-    model_path = f"/root/capsule/data/{exp_name}/{model_name}.pth"
+    model_path = f"/root/capsule/data/V5/{model_name}.pth"
     output_dir = f"/root/capsule/results/{model_name}"
-    util.mkdir(output_dir)
+    util.mkdir(output_dir, delete=True)
 
     # Model
     if "VisionDGCNN" in model_name:
