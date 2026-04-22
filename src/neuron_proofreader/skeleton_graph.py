@@ -823,6 +823,23 @@ class SkeletonGraph(nx.Graph):
         assert len(edge) == 2
         return edge
 
+    def find_nearby_branching_node(self, root, max_depth=16):
+        queue = [(root, 0)]
+        visited = {root}
+        while queue:
+            # Visit node
+            i, d_i = queue.pop(0)
+            if self.degree[i] >= 3:
+                return i
+
+            # Update queue
+            for j in self.neighbors(i):
+                d_j = d_i + self.dist(i, j)
+                if j not in visited and d_j < max_depth:
+                    queue.append((j, d_j))
+                    visited.add(j)
+        return root
+
     def irreducible_nodes(self):
         """
         Gets the set of irreducible nodes.
