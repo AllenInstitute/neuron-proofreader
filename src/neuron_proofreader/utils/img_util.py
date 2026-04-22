@@ -153,6 +153,7 @@ class TensorStoreReader(ImageReader):
                     "driver": storage_driver,
                     "bucket": bucket_name,
                     "path": path,
+                    **({"aws_credentials": {"type": "anonymous"}} if storage_driver == "s3" else {}),
                 },
                 "context": {
                     "cache_pool": {"total_bytes_limit": 100000000},

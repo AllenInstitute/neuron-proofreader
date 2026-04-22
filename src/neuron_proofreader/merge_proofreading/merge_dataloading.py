@@ -66,12 +66,21 @@ def load_fragments(dataset, is_test=False, max_workers=2):
     root = "gs://allen-nd-goog/automated_proofreading_dataset/raw_merge_sites"
 
     # Build list of (brain_id, swc_pointer) pairs to load
+    cache_dir = os.environ.get("SWC_CACHE_DIR", "")
     load_tasks = []
     for brain_id in get_brain_ids(merge_sites_df, is_test):
         sub_df = merge_sites_df.loc[merge_sites_df["brain_id"] == brain_id]
         for segmentation_id in sub_df["segmentation_id"].unique():
             if (brain_id, segmentation_id) in target_pairs:
-                swc_pointer = f"{root}/{brain_id}/{segmentation_id}/merged_fragments.zip"
+                local = os.path.join(
+                    cache_dir, "fragments", brain_id, segmentation_id,
+                    "merged_fragments.zip"
+                ) if cache_dir else ""
+                if local and os.path.exists(local):
+                    swc_pointer = local
+                    logger.info("fragments cache hit: %s/%s", brain_id, segmentation_id)
+                else:
+                    swc_pointer = f"{root}/{brain_id}/{segmentation_id}/merged_fragments.zip"
                 load_tasks.append((brain_id, swc_pointer))
 
     # Load in parallel
@@ -110,15 +119,23 @@ def load_groundtruth(dataset, is_test=False, max_workers=2):
         Maximum number of parallel workers. Default is 8.
     """
     root = "gs://allen-nd-goog/ground_truth_tracings"
+    cache_dir = os.environ.get("SWC_CACHE_DIR", "")
     brain_ids = get_brain_ids(dataset.merge_sites_df, is_test)
 
     _log_ram("before ground truth")
     logger.info("Loading ground truth (%d brains, %d workers)", len(brain_ids), max_workers)
     completed = 0
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        def gt_pointer(brain_id):
+            local = os.path.join(cache_dir, "ground_truth", brain_id, "voxel") if cache_dir else ""
+            if local and os.path.isdir(local):
+                logger.info("ground_truth cache hit: %s", brain_id)
+                return local
+            return f"{root}/{brain_id}/voxel"
+
         futures = {
             executor.submit(
-                dataset.load_gt_graphs, brain_id, f"{root}/{brain_id}/voxel"
+                dataset.load_gt_graphs, brain_id, gt_pointer(brain_id)
             ): brain_id
             for brain_id in brain_ids
         }
