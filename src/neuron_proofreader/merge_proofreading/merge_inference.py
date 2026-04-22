@@ -149,8 +149,25 @@ class MergeDetector:
                         visited.add(j)
         return filtered_merge_sites
 
-    def remove_merge_sites(self, detected_merge_sites):
-        pass
+    def remove_merge_sites(self, merge_site_nodes, max_depth=10):
+        rm_nodes = set()
+        for root in tqdm(merge_site_nodes, desc="Remove Merge Sites"):
+            # Extract neighborhood
+            root = self.dataset.graph.find_nearby_branching_node(root)
+            nbhd = self.dataset.graph.nodes_within_distance(root, max_depth)
+
+            # Check for branching node in neighborhood
+            for i in list(nbhd):
+                if i != root and self.dataset.graph.degree[i] >= 3:
+                    nbhd_i = self.dataset.graph.nodes_within_distance(root, 8)
+                    nbhd.extend(nbhd_i)
+
+            # Add nodes to removal list
+            rm_nodes.update(set(nbhd))
+
+        # Update graph
+        self.dataset.graph.remove_nodes(rm_nodes)
+        print("# Nodes Deleted:", len(rm_nodes))
 
     # --- Helpers ---
     def get_detected_sites(self, threshold):
