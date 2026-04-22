@@ -112,7 +112,6 @@ class SubgraphSampler:
                     break
 
             # Yield batch
-            print("Batch Size:", subgraph.n_proposals())
             yield subgraph
 
     def populate_via_bfs(self, subgraph, root):
@@ -125,7 +124,7 @@ class SubgraphSampler:
             subgraph.add_node(i)
             self.add_nbhd(i, subgraph, visited)
 
-            # Visit proposals
+            # Visit proposals at node
             cluster = self.node2cluster(i)
             if len(cluster) <= subgraph.proposal_margin():
                 for j in list(set().union(*cluster)):
@@ -243,7 +242,7 @@ class SubgraphSampler:
             while cnt < 20:
                 cnt += 1
                 proposal = util.sample_once(self.clusters.keys())
-                if self.cluster_size(proposal) < subgraph.proposal_margin():
+                if self.cluster_size(proposal) <= subgraph.proposal_margin():
                     return proposal
             return None
         else:
