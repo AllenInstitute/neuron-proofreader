@@ -157,7 +157,7 @@ class Reader:
             processes = list()
             for path in swc_paths:
                 processes.append(
-                    executor.submit(self.read, path)
+                    executor.submit(self.read_from_path, path)
                 )
 
             # Store results
