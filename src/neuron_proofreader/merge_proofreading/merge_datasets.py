@@ -144,12 +144,12 @@ class MergeSiteDataset(Dataset):
         graph.load(swc_pointer)
 
         # Remove groundtruth skeletons
-        for swc_id in graph.get_swc_ids():
+        for swc_id in graph.swc_ids():
             if swc_id.lower().startswith("n"):
                 component_id = util.find_key(
                     graph.component_id_to_swc_id, swc_id
                 )
-                nodes = graph.get_nodes_with_component_id(component_id)
+                nodes = graph.nodes_with_component_id(component_id)
                 graph.remove_nodes(nodes, relabel_nodes=False)
 
         # Remove fragments excluded from merge sites
@@ -158,7 +158,7 @@ class MergeSiteDataset(Dataset):
         segment_ids = set(merge_sites["segment_id"].unique())
         for nodes in map(list, list(nx.connected_components(graph))):
             node = util.sample_once(nodes)
-            segment_id = graph.get_node_segment_id(node)
+            segment_id = graph.node_segment_id(node)
             if segment_id not in segment_ids:
                 graph.remove_nodes(nodes, relabel_nodes=False)
         graph.relabel_nodes()
@@ -271,7 +271,7 @@ class MergeSiteDataset(Dataset):
 
             # Find fragment containing site
             if pair not in visited:
-                nodes = self.graphs[brain_id].get_nodes_with_segment_id(segment_id)
+                nodes = self.graphs[brain_id].nodes_with_segment_id(segment_id)
                 self.graphs[brain_id].remove_nodes(nodes, False)
                 visited.add(pair)
 
@@ -425,13 +425,13 @@ class MergeSiteDataset(Dataset):
             # Sample node
             if outcome < 0.4:
                 # Any node
-                node = util.sample_once(list(self.graphs[brain_id].nodes))
+                node = util.sample_once(self.graphs[brain_id].nodes)
             #elif outcome < 0.5:
             #    # Node close to soma
             #    node = self.sample_node_nearby_soma(brain_id)
             elif outcome < 0.8:
                 # Branching node
-                branching_nodes = self.graphs[brain_id].get_branchings()
+                branching_nodes = self.graphs[brain_id].branching_nodes()
                 if len(branching_nodes) > 0:
                     node = util.sample_once(branching_nodes)
                 else:
@@ -439,7 +439,7 @@ class MergeSiteDataset(Dataset):
                     continue
             else:
                 # Branching node from GT
-                branching_nodes = self.gt_graphs[brain_id].get_branchings()
+                branching_nodes = self.gt_graphs[brain_id].branching_nodes()
                 node = util.sample_once(branching_nodes)
                 subgraph = self.gt_graphs[brain_id].rooted_subgraph(
                     node, self.subgraph_radius
@@ -828,7 +828,7 @@ class MergeSiteValDataset(MergeSiteDataset):
         for brain_id, graph in self.graphs.items():
             # Filter branching nodes near other branching nodes
             nodes = list()
-            for i in graph.get_branchings():
+            for i in graph.branching_nodes():
                 is_branchy = self.check_nearby_branching(brain_id, i)
                 if not is_branchy and graph.degree[i] == 3:
                     nodes.append(i)
