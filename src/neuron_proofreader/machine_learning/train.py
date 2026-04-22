@@ -21,7 +21,7 @@ from torch.optim.lr_scheduler import (
 )
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data.distributed import DistributedSampler
-from tqdm import tqdm
+import logging
 
 import numpy as np
 import os
@@ -32,6 +32,9 @@ import torch.nn as nn
 import torch.optim as optim
 
 from neuron_proofreader.utils import img_util, ml_util, util
+
+logger = logging.getLogger(__name__)
+_LOG_EVERY = 100  # batches between progress log lines
 
 
 class Trainer:
@@ -314,9 +317,9 @@ class Trainer:
         loss_count = 0
         y, hat_y = list(), list()
         rank = getattr(self, "rank", 0)
-        pbar = tqdm(train_dataloader, desc="Training", unit="batch", disable=rank != 0)
+        n_batches = len(train_dataloader)
         batch_idx = 0
-        for x_i, y_i in pbar:
+        for x_i, y_i in train_dataloader:
             # Save first 5 batches of epoch 0 for debugging
             if epoch == 0 and batch_idx < 5 and rank == 0:
                 save_dir = os.path.join(self.log_dir, "debug_batches", "train")
@@ -355,8 +358,11 @@ class Trainer:
             batch_size = int(y_i.size(0))
             loss_sum += float(ml_util.to_cpu(loss_i)) * batch_size
             loss_count += batch_size
-            if rank == 0:
-                pbar.set_postfix(loss=f"{loss_sum / max(loss_count, 1):.4f}")
+            if rank == 0 and (batch_idx % _LOG_EVERY == 0 or batch_idx == n_batches):
+                logger.info(
+                    "Train epoch %d  batch %d/%d  loss=%.4f",
+                    epoch, batch_idx, n_batches, loss_sum / max(loss_count, 1),
+                )
 
         # Write stats to tensorboard
         stats = self.compute_stats(y, hat_y)
@@ -396,8 +402,8 @@ class Trainer:
         self.model.eval()
         batch_idx = 0
         with torch.no_grad():
-            pbar = tqdm(val_dataloader, desc="Validating", unit="batch", disable=rank != 0)
-            for x, y in pbar:
+            n_batches_val = len(val_dataloader)
+            for x, y in val_dataloader:
                 # Save first 5 batches of epoch 0 for debugging
                 if epoch == 0 and batch_idx < 5 and rank == 0:
                     save_dir = os.path.join(self.log_dir, "debug_batches", "val")
@@ -430,8 +436,11 @@ class Trainer:
                 batch_size = len(y)
                 loss_sum += float(ml_util.to_cpu(loss)) * batch_size
                 loss_count += batch_size
-                if rank == 0:
-                    pbar.set_postfix(loss=f"{loss_sum / max(loss_count, 1):.4f}")
+                if rank == 0 and (batch_idx % _LOG_EVERY == 0 or batch_idx == n_batches_val):
+                    logger.info(
+                        "Val epoch %d  batch %d/%d  loss=%.4f",
+                        epoch, batch_idx, n_batches_val, loss_sum / max(loss_count, 1),
+                    )
 
                 # Save MIPs of mistakes (only rank 0 in distributed mode)
                 if rank == 0:
@@ -966,8 +975,8 @@ class DistributedTrainer(Trainer):
         self.model.eval()
         batch_idx = 0
         with torch.no_grad():
-            pbar = tqdm(val_dataloader, desc="Validating", unit="batch", disable=self.rank != 0)
-            for x, y in pbar:
+            n_batches_val = len(val_dataloader)
+            for x, y in val_dataloader:
                 # Save first 5 batches of epoch 0 for debugging
                 if epoch == 0 and batch_idx < 5 and self.rank == 0:
                     save_dir = os.path.join(self.log_dir, "debug_batches", "val")
@@ -1000,8 +1009,11 @@ class DistributedTrainer(Trainer):
                 batch_size = len(y)
                 loss_sum += float(ml_util.to_cpu(loss)) * batch_size
                 loss_count += batch_size
-                if self.rank == 0:
-                    pbar.set_postfix(loss=f"{loss_sum / max(loss_count, 1):.4f}")
+                if self.rank == 0 and (batch_idx % _LOG_EVERY == 0 or batch_idx == n_batches_val):
+                    logger.info(
+                        "Val epoch %d  batch %d/%d  loss=%.4f",
+                        epoch, batch_idx, n_batches_val, loss_sum / max(loss_count, 1),
+                    )
 
                 # Save MIPs of mistakes (only rank 0)
                 if self.rank == 0:
