@@ -146,9 +146,7 @@ class MergeSiteDataset(Dataset):
         # Remove groundtruth skeletons
         for swc_id in graph.swc_ids():
             if swc_id.lower().startswith("n"):
-                component_id = util.find_key(
-                    graph.component_id_to_swc_id, swc_id
-                )
+                component_id = graph.component_id_from_swc_id(swc_id)
                 nodes = graph.nodes_with_component_id(component_id)
                 graph.remove_nodes(nodes, relabel_nodes=False)
 
