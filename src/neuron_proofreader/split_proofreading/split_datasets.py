@@ -354,7 +354,7 @@ class FragmentsDatasetCollection(IterableDataset):
         accepts_cnt = 0
         for dataset in self.datasets.values():
             accepts_cnt += len(dataset.graph.gt_accepts)
-        return accepts_cnt / (self.n_proposals() + 1e-5)
+        return 100 * accepts_cnt / (self.n_proposals() + 1e-5)
 
     def save_examples_summary(self, path):
         """
