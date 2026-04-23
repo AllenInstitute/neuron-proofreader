@@ -393,7 +393,7 @@ class MergeSiteDataset(Dataset):
         # Get site info
         brain_id = self.merge_sites_df["brain_id"].iloc[idx]
         xyz = self.merge_sites_df["xyz"].iloc[idx]
-        node = self.graphs[brain_id].find_closest_node(xyz)
+        node = self.graphs[brain_id].kdtree.query(xyz)[0]
 
         # Extract rooted subgraph
         subgraph = self.graphs[brain_id].rooted_subgraph(
