@@ -9,6 +9,8 @@ generation for training and inference in split-correction tasks.
 
 """
 
+from concurrent.futures import ThreadPoolExecutor
+from queue import Queue
 from torch.utils.data import IterableDataset
 from tqdm import tqdm
 
@@ -42,6 +44,7 @@ class FragmentsDataset(IterableDataset):
         config,
         gt_path=None,
         metadata_path=None,
+        prefetch=4,
         segmentation_path=None,
         soma_centroids=set(),
     ):
@@ -70,6 +73,7 @@ class FragmentsDataset(IterableDataset):
         # Instance attributes
         self.config = config
         self.gt_path = gt_path
+        self.prefetch = prefetch
         self.transform = ImageTransforms() if config.ml.transform else False
 
         # Build graph
@@ -174,6 +178,7 @@ class FragmentsDatasetCollection(IterableDataset):
         config,
         gt_path=None,
         metadata_path=None,
+        prefetch=4,
         segmentation_path=None,
         soma_centroids=list(),
     ):
@@ -195,6 +200,8 @@ class FragmentsDatasetCollection(IterableDataset):
         metadata_path : str, optional
             Patch to JSON file containing metadata on block that fragments
             were extracted from. Default is None.
+        prefetch : int, optional
+            Number of batches to prefetch. Default is 4.
         segmentation_path : str, optional
             Path to the segmentation that fragments were generated from.
             Default is None.
@@ -208,6 +215,7 @@ class FragmentsDatasetCollection(IterableDataset):
             config,
             gt_path=gt_path,
             metadata_path=metadata_path,
+            prefetch=prefetch,
             segmentation_path=segmentation_path,
             soma_centroids=soma_centroids,
         )
@@ -223,21 +231,39 @@ class FragmentsDatasetCollection(IterableDataset):
         targets : torch.Tensor
             Ground truth labels.
         """
+        # Initializations
         samplers = self.init_samplers()
-        while len(samplers) > 0:
-            key = self.get_next_key(samplers)
-            try:
-                # Extract features
-                subgraph = next(samplers[key])
+        queue = Queue(maxsize=self.prefetch * len(samplers))
+        active_keys = set(samplers.keys())
+
+        # Launch one prefetch thread per dataset
+        with ThreadPoolExecutor(max_workers=len(samplers)) as executor:
+            for key, sampler in samplers.items():
+                executor.submit(self._worker, key, sampler, queue)
+
+            # Consume from queue until all datasets exhausted
+            while active_keys:
+                key, inputs, targets = queue.get()
+                if inputs is StopIteration:
+                    active_keys.discard(key)
+                    continue
+                if isinstance(inputs, Exception):
+                    raise inputs
+                yield inputs, targets
+
+    def _worker(self, key, sampler, queue):
+        """
+        Runs in a background thread, prefetches extracted features into queue.
+        """
+        try:
+            for subgraph in sampler:
                 features = self.datasets[key].feature_extractor(subgraph)
                 data = HeteroGraphData(features)
-
-                # Get training inputs
-                inputs = data.get_inputs()
-                targets = data.get_targets()
-                yield inputs, targets
-            except StopIteration:
-                del samplers[key]
+                queue.put((key, data.get_inputs(), data.get_targets()))
+        except Exception as e:
+            queue.put((key, e, None))
+        finally:
+            queue.put((key, StopIteration, None))
 
     def generate_proposals(self, search_radius):
         """
@@ -248,15 +274,10 @@ class FragmentsDatasetCollection(IterableDataset):
         search_radius : float
             Search radius used to generate proposals.
         """
-        # Proposal generation
         for key in tqdm(self.datasets, desc="Generate Proposals"):
             self.datasets[key].graph.generate_proposals(
                 search_radius, allow_nonleaf_proposals=True
             )
-
-        # Report results
-        print("# Proposals:", self.n_proposals())
-        print("% Accepts:", self.p_accepts())
 
     # --- Helpers ---
     def __len__(self):

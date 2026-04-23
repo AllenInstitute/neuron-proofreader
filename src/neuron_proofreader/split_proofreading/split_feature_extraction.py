@@ -356,23 +356,28 @@ class ImageFeatureExtractor:
 
     def compute_crop(self, proposal):
         """
-        Extracts an intensity profile along a set of voxel coordinates.
+        Computes the center and cubic shape of the image patch for a proposal.
+
+        Parameters
+        ----------
+        proposal : Frozenset[int]
+            Proposal to compute image crop of.
 
         Returns
         -------
-        profile : numpy.ndarray
-            Image with shape (2, H, W, D) containing a raw image and proposal
-            mask channels.
+        center : Tuple[int]
+            Center of the bounding box between the two proposal nodes.
+        shape : Tuple[int]
+            Cubic shape large enough to contain both nodes with padding.
         """
-        # Get info
-        node1, node2 = tuple(proposal)
-        voxel1 = self.graph.node_voxel(node1)
-        voxel2 = self.graph.node_voxel(node2)
+        # Node info
+        node1, node2 = proposal
+        voxel1 = np.array(self.graph.node_voxel(node1))
+        voxel2 = np.array(self.graph.node_voxel(node2))
 
         # Compute bounds
-        bounds = img_util.get_minimal_bbox([voxel1, voxel2], self.padding)
-        center = tuple([int((v1 + v2) / 2) for v1, v2 in zip(voxel1, voxel2)])
-        length = np.max([u - l for u, l in zip(bounds["max"], bounds["min"])])
+        center = tuple(((voxel1 + voxel2) / 2).astype(int))
+        length = np.max(np.abs(voxel2 - voxel1)) + 2 * self.padding
         return center, (length, length, length)
 
 
@@ -455,11 +460,6 @@ class PatchFeatureExtractor:
         profile = np.concatenate(
             (branch1_profile, proposal_profile, branch2_profile)
         )
-
-        # Adjust intensities
-        max_val = np.max(profile) + 1e-5
-        self.img = np.minimum(max_val, self.img) / (max_val + 1e-5)
-        profile /= (max_val + 1e-5)
         return profile
 
     def get_branch_profile(self, node):
@@ -496,8 +496,8 @@ class PatchFeatureExtractor:
             Image with shape (2, H, W, D) containing a raw image and proposal
             mask channels.
         """
-        voxels = check_list_length(voxels, min_length=16)
-        profile = np.array([self.img[tuple(voxel)] for voxel in voxels])
+        voxels = np.asarray(check_list_length(voxels, min_length=16))
+        profile = self.img[voxels[:, 0], voxels[:, 1], voxels[:, 2]]
         profile = np.append(profile, [profile.mean(), profile.std()])
         return profile
 

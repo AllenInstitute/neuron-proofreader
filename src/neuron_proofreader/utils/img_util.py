@@ -443,30 +443,6 @@ def get_contained_voxels(voxels, shape, buffer=0):
     return [v for v in voxels if is_contained(v, shape, buffer)]
 
 
-def get_minimal_bbox(voxels, buffer=0):
-    """
-    Gets the min and max coordinates of a bounding box that contains "voxels".
-
-    Parameters
-    ----------
-    voxels : numpy.ndarray
-        Array containing voxel coordinates.
-    buffer : int, optional
-        Constant value added/subtracted from the max/min coordinates of the
-        bounding box. Default is 0.
-
-    Returns
-    -------
-    bbox : Dict[str, numpy.ndarray]
-        Bounding box.
-    """
-    bbox = {
-        "min": np.floor(np.min(voxels, axis=0) - buffer).astype(int),
-        "max": np.ceil(np.max(voxels, axis=0) + buffer).astype(int),
-    }
-    return bbox
-
-
 def get_neighbors(voxel, shape):
     """
     Gets the neighbors of a given voxel coordinate.
