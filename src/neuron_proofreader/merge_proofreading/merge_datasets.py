@@ -364,7 +364,7 @@ class MergeSiteDataset(Dataset):
         # Get site info
         brain_id = self.merge_sites_df["brain_id"].iloc[idx]
         xyz = self.merge_sites_df["xyz"].iloc[idx]
-        node = self.gt_graphs[brain_id].find_closest_node(xyz)
+        node = self.gt_graphs[brain_id].kdtree.query(xyz)[1]
 
         # Extract rooted subgraph
         subgraph = self.gt_graphs[brain_id].rooted_subgraph(
@@ -393,7 +393,7 @@ class MergeSiteDataset(Dataset):
         # Get site info
         brain_id = self.merge_sites_df["brain_id"].iloc[idx]
         xyz = self.merge_sites_df["xyz"].iloc[idx]
-        node = self.graphs[brain_id].kdtree.query(xyz)[0]
+        node = self.graphs[brain_id].kdtree.query(xyz)[1]
 
         # Extract rooted subgraph
         subgraph = self.graphs[brain_id].rooted_subgraph(
@@ -511,8 +511,8 @@ class MergeSiteDataset(Dataset):
         offset = img_util.get_offset(center, self.patch_shape)
         for node1, node2 in subgraph.edges:
             # Get local voxel coordinates
-            voxel1 = subgraph.get_local_voxel(node1, offset)
-            voxel2 = subgraph.get_local_voxel(node2, offset)
+            voxel1 = subgraph.node_local_voxel(node1, offset)
+            voxel2 = subgraph.node_local_voxel(node2, offset)
 
             # Populate mask
             voxels = geometry_util.make_digital_line(voxel1, voxel2)
