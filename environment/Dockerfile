@@ -8,18 +8,12 @@ ARG AWS_DEFAULT_REGION
 ARG AWS_SECRET_ACCESS_KEY
 ARG CUSTOM_KEY
 
-ARG GIT_ASKPASS
-ARG GIT_ACCESS_TOKEN
-COPY git-askpass /
-
 RUN conda install -y \
         rich \
     && conda clean -ya
 
 RUN pip install --no-cache-dir openpyxl
 
-#COPY postInstall /
-#RUN /postInstall
+COPY postInstall /
+RUN /postInstall
 
-COPY postInstall /tmp/postInstall
-RUN bash /tmp/postInstall
