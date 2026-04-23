@@ -896,7 +896,7 @@ class SkeletonGraph(nx.Graph):
         str
             Segment ID corresponding to the given node.
         """
-        return self.get_swc_id(node).split(".")[0]
+        return self.node_swc_id(node).split(".")[0]
 
     def node_swc_id(self, i):
         """
