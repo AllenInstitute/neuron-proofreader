@@ -11,6 +11,7 @@ NeuronProofreader pipelines.
 
 #from neurobase.finetune import finetune_model
 from neurobase.model.taskheads import BinaryClassifier
+from neurobase.model.taskheads.base import BaseTaskModel
 
 from einops import rearrange
 
@@ -146,11 +147,26 @@ class MAE3D(nn.Module):
     ):
         super().__init__()
 
-        self.model = BinaryClassifier(
-            checkpoint_path=checkpoint_path,
-            model_config=model_config,
-            freeze_encoder=freeze_encoder,
-        )
+        if checkpoint_path is None:
+            # BinaryClassifier.__init__ doesn't expose random_init, so we
+            # bypass it and call BaseTaskModel.__init__ directly.
+            bc = BinaryClassifier.__new__(BinaryClassifier)
+            bc.hidden_dim = 512
+            bc.dropout = 0.1
+            BaseTaskModel.__init__(
+                bc,
+                checkpoint_path=None,
+                model_config=model_config,
+                freeze_encoder=freeze_encoder,
+                random_init=True,
+            )
+            self.model = bc
+        else:
+            self.model = BinaryClassifier(
+                checkpoint_path=checkpoint_path,
+                model_config=model_config,
+                freeze_encoder=freeze_encoder,
+            )
 
         # Remove the unused BinaryClassifier head to avoid orphaned
         # parameters (crashes DDP with find_unused_parameters=False)
