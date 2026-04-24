@@ -133,6 +133,9 @@ class FragmentsDataset(IterableDataset):
             yield HeteroGraphData(features)
 
     # --- Helpers ---
+    def __getattr__(self, name):
+        return getattr(self.graph, name)
+
     def get_sampler(self):
         """
         Gets a subgraph sampler that is used to iterate over dataset.
