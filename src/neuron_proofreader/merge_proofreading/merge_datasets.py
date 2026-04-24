@@ -1004,10 +1004,7 @@ class MergeSiteDataLoader(DataLoader):
             targets = np.zeros((len(batch_idxs), 1))
             for thread in as_completed(pending.keys()):
                 i = pending.pop(thread)
-                try:
-                    patches[i], _, targets[i] = thread.result()
-                except Exception as e:
-                    print(e)
+                patches[i], _, targets[i] = thread.result()
         return ml_util.to_tensor(patches), ml_util.to_tensor(targets)
 
     def _load_image_pc_batch(self, batch_idxs):
