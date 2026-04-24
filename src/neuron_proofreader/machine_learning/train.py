@@ -141,13 +141,13 @@ class Trainer:
             # Step scheduler
             self.scheduler.step()
 
-    def train_step(self, train_dataloader, epoch):
+    def train_step(self, dataloader, epoch):
         """
         Performs a single training epoch over the provided DataLoader.
 
         Parameters
         ----------
-        train_dataloader : torch.utils.data.DataLoader
+        dataloader : torch.utils.data.DataLoader
             DataLoader for the training dataset.
         epoch : int
             Current training epoch.
@@ -159,7 +159,7 @@ class Trainer:
         """
         self.model.train()
         loss, y, hat_y = list(), list(), list()
-        for x_i, y_i in train_dataloader:
+        for x_i, y_i in dataloader:
             # Forward pass
             self.optimizer.zero_grad()
             hat_y_i, loss_i = self.forward_pass(x_i, y_i)
@@ -184,13 +184,13 @@ class Trainer:
         self.update_tensorboard(stats, epoch, "train_")
         return stats
 
-    def validate_step(self, val_dataloader, epoch):
+    def validate_step(self, dataloader, epoch):
         """
         Performs a full validation loop over the given dataloader.
 
         Parameters
         ----------
-        val_dataloader : torch.utils.data.DataLoader
+        dataloader : torch.utils.data.DataLoader
             DataLoader for the validation dataset.
         epoch : int
             Current training epoch.
@@ -213,7 +213,7 @@ class Trainer:
         # Iterate over dataset
         self.model.eval()
         with torch.no_grad():
-            for x, y in val_dataloader:
+            for x, y in dataloader:
                 # Run model
                 hat_y, loss = self.forward_pass(x, y)
 

@@ -414,19 +414,15 @@ class MergeSiteDataset(Dataset):
         label : int
             Label of example.
         """
-        # Sample graph
         brain_id = self.sample_brain_id()
-
-        # Sample node on graph
         outcome = random.random()
+        cnt = 0
         while True:
             # Sample node
+            cnt += 1
             if outcome < 0.4:
                 # Any node
                 node = util.sample_once(self.graphs[brain_id].nodes)
-            #elif outcome < 0.5:
-            #    # Node close to soma
-            #    node = self.sample_node_nearby_soma(brain_id)
             elif outcome < 0.8:
                 # Branching node
                 branching_nodes = self.graphs[brain_id].branching_nodes()
@@ -459,6 +455,10 @@ class MergeSiteDataset(Dataset):
             # Check if node is close to merge site
             if not self.is_nearby_merge_site(brain_id, node):
                 return brain_id, subgraph, 0
+
+            # Check number of tries
+            if cnt > 20:
+                outcome = 1
 
     def get_img_patch(self, brain_id, center):
         """
@@ -529,7 +529,7 @@ class MergeSiteDataset(Dataset):
         int
             Number of positive examples of merge sites.
         """
-        return len(self.merge_sites_df)
+        return 2 * len(self.merge_sites_df)
 
     def check_nearby_branching(
         self, brain_id, root, max_depth=60, use_gt=False
@@ -618,37 +618,6 @@ class MergeSiteDataset(Dataset):
         dist, _ = self.merge_site_kdtrees[brain_id].query(xyz)
         return dist < 100
 
-    def relabel_nodes(self):
-        """
-        Reassigns contiguous node IDs and update all dependent structures.
-        """
-        # Set node ids
-        old_node_ids = np.array(self.nodes, dtype=int)
-        new_node_ids = np.arange(len(old_node_ids))
-
-        # Set edge ids
-        old_to_new = dict(zip(old_node_ids, new_node_ids))
-        old_edge_ids = list(self.edges)
-        old_irr_edge_ids = self.irreducible.edges
-        edge_attrs = {(i, j): data for i, j, data in self.edges(data=True)}
-
-        # Reset graph
-        self.clear()
-        for (i, j) in old_edge_ids:
-            self.add_edge(old_to_new[i], old_to_new[j], **edge_attrs[(i, j)])
-
-        self.irreducible.clear()
-        for (i, j) in old_irr_edge_ids:
-            self.irreducible.add_edge(old_to_new[i], old_to_new[j])
-
-        # Update attributes
-        self.node_radius = self.node_radius[old_node_ids]
-        self.node_xyz = self.node_xyz[old_node_ids]
-        self.node_component_id = self.node_component_id[old_node_ids]
-
-        self.reassign_component_ids()
-        self.set_kdtree()
-
     def sample_node_nearby_soma(self, brain_id):
         subgraph = self.gt_graphs[brain_id].get_rooted_subgraph(0, 600)
         gt_node = util.sample_once(subgraph.nodes)
@@ -730,7 +699,7 @@ class MergeSiteTrainDataset(MergeSiteDataset):
             return self.get_indexed_positive_site(idx)
         elif np.random.random() < self.random_negative_example_prob:
             return self.get_random_negative_site()
-        elif abs(idx) < len(self):
+        elif abs(idx) < len(self.merge_sites_df):
             return self.get_indexed_negative_site(abs(idx))
         else:
             return self.get_random_negative_site()
@@ -745,8 +714,9 @@ class MergeSiteTrainDataset(MergeSiteDataset):
         numpy.ndarray
             Example indices to iterate over.
         """
-        n_negative_examples = int(len(self) * (1 + self.negative_bias))
-        return np.arange(-n_negative_examples + 1, len(self))
+        n_pos_examples = len(self.merge_sites_df)
+        n_negative_examples = int(n_pos_examples * (1 + self.negative_bias))
+        return np.arange(-n_negative_examples + 1, n_pos_examples)
 
 
 class MergeSiteValDataset(MergeSiteDataset):
@@ -1034,7 +1004,10 @@ class MergeSiteDataLoader(DataLoader):
             targets = np.zeros((len(batch_idxs), 1))
             for thread in as_completed(pending.keys()):
                 i = pending.pop(thread)
-                patches[i], _, targets[i] = thread.result()
+                try:
+                    patches[i], _, targets[i] = thread.result()
+                except Exception as e:
+                    print(e)
         return ml_util.to_tensor(patches), ml_util.to_tensor(targets)
 
     def _load_image_pc_batch(self, batch_idxs):
@@ -1134,3 +1107,6 @@ class MergeSiteDataLoader(DataLoader):
             }
         )
         return batch, ml_util.to_tensor(targets)
+
+    def __len__(self):
+        return 2 * len(self.dataset)
