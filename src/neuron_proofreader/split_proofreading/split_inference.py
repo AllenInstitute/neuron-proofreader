@@ -60,7 +60,6 @@ class InferencePipeline:
         model,
         config,
         log_preamble="",
-        segmentation_path=None,
         soma_centroids=list(),
     ):
         """
@@ -81,9 +80,6 @@ class InferencePipeline:
         log_preamble : str, optional
             String to be added to the beginning of log. Default is an empty
             string.
-        segmentation_path : str, optional
-            Path to segmentation corresponding to the given fragments. Default
-            is None.
         soma_centroids : List[Tuple[float]], optional
             Physcial coordinates of soma centroids. Default is an empty list.
         """
@@ -102,9 +98,9 @@ class InferencePipeline:
         self.log(log_preamble)
 
         # Load data
-        self._load_data(fragments_path, img_path, segmentation_path)
+        self._load_data(fragments_path, img_path)
 
-    def _load_data(self, fragments_path, img_path, segmentation_path):
+    def _load_data(self, fragments_path, img_path):
         """
         Builds a graph from the given fragments.
 
@@ -114,8 +110,6 @@ class InferencePipeline:
             Path to SWC files to be loaded into graph.
         img_path : str
             Path to whole-brain image corresponding to the given fragments.
-        segmentation_path : str
-            Path to segmentation corresponding to the given fragments.
         """
         # Load data
         t0 = time()
@@ -124,7 +118,6 @@ class InferencePipeline:
             fragments_path,
             img_path,
             self.config,
-            segmentation_path=segmentation_path,
             soma_centroids=self.soma_centroids,
         )
         self.log(self.dataset.summary(prefix="\nInitial"))

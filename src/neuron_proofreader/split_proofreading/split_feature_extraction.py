@@ -11,6 +11,7 @@ correction.
 
 from concurrent.futures import as_completed, ThreadPoolExecutor
 from scipy.spatial import KDTree
+
 from skimage.transform import resize
 from torch_geometric.data import HeteroData
 
@@ -34,7 +35,6 @@ class FeaturePipeline:
         brightness_clip=400,
         padding=50,
         patch_shape=(96, 96, 96),
-        segmentation_path=None,
     ):
         """
         Instantiates a FeaturePipeline object.
@@ -53,8 +53,6 @@ class FeaturePipeline:
         patch_shape : Tuple[int], optional
             Shape of image patch expected by the vision model. Default is (96,
             96, 96).
-        segmentation_path : str, optional
-            Path to segmentation of whole-brain dataset.
         """
         self.extractors = [
             SkeletonFeatureExtractor(graph),
@@ -64,8 +62,7 @@ class FeaturePipeline:
                 brightness_clip=brightness_clip,
                 patch_shape=patch_shape,
                 padding=padding,
-                segmentation_path=segmentation_path,
-            ),
+           ),
         ]
 
     def __call__(self, subgraph):
@@ -226,7 +223,6 @@ class ImageFeatureExtractor:
         brightness_clip=400,
         patch_shape=(96, 96, 96),
         padding=40,
-        segmentation_path=None,
     ):
         """
         Instantiates an ImageExtractor object.
@@ -245,8 +241,6 @@ class ImageFeatureExtractor:
         padding : int, optional
             Number of voxels to be added in each dimension from start and end
             point of proposal for image patch extraction. Default is 40.
-        segmentation_path : str, optional
-            Path to segmentation of whole-brain dataset.
         """
         # Instance attributes
         self.brightness_clip = brightness_clip
@@ -256,10 +250,6 @@ class ImageFeatureExtractor:
 
         # Image reader
         self.img = img_util.TensorStoreReader(img_path)
-        if segmentation_path:
-            self.segmentation = img_util.TensorStoreReader(segmentation_path)
-        else:
-            self.segmentation = None
 
     def __call__(self, subgraph, features):
         """
@@ -304,8 +294,8 @@ class ImageFeatureExtractor:
         Returns
         -------
         extractor : PatchFeatureExtractor
-            Feature extractor configured with the cropped image, segmentation
-            mask, spatial offset, and patch shape.
+            Feature extractor configured with the cropped image, segment mask,
+            spatial offset, and patch shape.
         """
         # Compute patch specs
         center, shape = self.compute_crop(proposal)
@@ -313,7 +303,7 @@ class ImageFeatureExtractor:
 
         # Read images
         img = self.read_image(center, shape)
-        mask = self.read_segmentation(center, shape)
+        mask = self.create_segment_mask(proposal, img.shape, offset)
 
         # Create patch feature extractor
         extractor = PatchFeatureExtractor(
@@ -322,6 +312,25 @@ class ImageFeatureExtractor:
         return extractor
 
     # --- Helpers ---
+    def create_segment_mask(self, proposal, shape, offset):
+        # Find nearby nodes
+        center = self.graph.proposal_midpoint(proposal)
+        nodes = self.graph.kdtree.query_ball_point(center, self.padding + 10)
+
+        # Populate mask
+        mask = np.zeros(shape)
+        visited = set()
+        for i in nodes:
+            voxel_i = self.graph.node_local_voxel(i, offset)
+            for j in self.graph.neighbors(i):
+                if frozenset({i, j}) not in visited and j in nodes:
+                    voxel_j = self.graph.node_local_voxel(j, offset)
+                    voxels = geometry_util.make_digital_line(voxel_i, voxel_j)
+                    img_util.annotate_voxels(mask, voxels, val=0.25)
+                    visited.add(frozenset({i, j}))
+        return mask
+        
+
     def read_image(self, center, shape):
         """
         Reads the image patch specified by the given center and shape.
@@ -337,23 +346,6 @@ class ImageFeatureExtractor:
         patch = np.minimum(patch, self.brightness_clip)
         return img_util.normalize(patch)
 
-    def read_segmentation(self, center, shape):
-        """
-        Reads the segmentation patch specified by the given center and shape.
-
-        Parameters
-        ----------
-        center : Tuple[int]
-            Center of segmentation patch to be read.
-        shape : Tuple[int]
-            Center of segmentation patch to be read.
-        """
-        if self.segmentation:
-            patch = self.segmentation.read(center, shape)
-            return 0.25 * (patch > 0).astype(float)
-        else:
-            return np.zeros(shape)
-
     def compute_crop(self, proposal):
         """
         Extracts an intensity profile along a set of voxel coordinates.
@@ -364,15 +356,14 @@ class ImageFeatureExtractor:
             Image with shape (2, H, W, D) containing a raw image and proposal
             mask channels.
         """
-        # Get info
-        node1, node2 = tuple(proposal)
-        voxel1 = self.graph.node_voxel(node1)
-        voxel2 = self.graph.node_voxel(node2)
+        # Node info
+        node1, node2 = proposal
+        voxel1 = np.array(self.graph.node_voxel(node1))
+        voxel2 = np.array(self.graph.node_voxel(node2))
 
         # Compute bounds
-        bounds = img_util.get_minimal_bbox([voxel1, voxel2], self.padding)
-        center = tuple([int((v1 + v2) / 2) for v1, v2 in zip(voxel1, voxel2)])
-        length = np.max([u - l for u, l in zip(bounds["max"], bounds["min"])])
+        center = tuple(((voxel1 + voxel2) / 2).astype(int))
+        length = np.max(np.abs(voxel2 - voxel1)) + 2 * self.padding
         return center, (length, length, length)
 
 
@@ -455,11 +446,6 @@ class PatchFeatureExtractor:
         profile = np.concatenate(
             (branch1_profile, proposal_profile, branch2_profile)
         )
-
-        # Adjust intensities
-        max_val = np.max(profile) + 1e-5
-        self.img = np.minimum(max_val, self.img) / (max_val + 1e-5)
-        profile /= (max_val + 1e-5)
         return profile
 
     def get_branch_profile(self, node):
