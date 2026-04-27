@@ -177,7 +177,7 @@ class InferencePipeline:
             while self.dataset.proposals:
                 # Generate predictons
                 cnt += 1
-                self.log(f"Threshold={new_threshold} w/ only_leaf2leaf={only_leaf2leaf}")
+                self.log(f"\nThreshold={new_threshold} w/ only_leaf2leaf={only_leaf2leaf}")
                 preds = self.predict_proposals(suffix=f"{name}_round={cnt}_threshold={new_threshold}")
 
                 # Merge accetped proposals
@@ -217,7 +217,7 @@ class InferencePipeline:
                 self.dataset.remove_proposal(proposal)
                 cnt += 1
 
-        self.log("\nFilter Proposals")
+        self.log("Filter Proposals")
         self.log(f"# Proposals Removed: {cnt}")
         self.log(f"# Proposals Remaining: {self.dataset.n_proposals()}\n")
 
