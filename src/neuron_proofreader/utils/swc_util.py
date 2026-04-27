@@ -154,7 +154,7 @@ class Reader:
             # Assign processes
             processes = list()
             for path in swc_paths:
-                processes.append(executor.submit(self.read, path))
+                processes.append(executor.submit(self.read_from_path, path))
 
             # Store results
             swc_dicts = deque()
