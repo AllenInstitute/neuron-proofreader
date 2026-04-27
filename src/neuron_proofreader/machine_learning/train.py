@@ -84,7 +84,8 @@ class Trainer:
         scheduler_type="cosine",
         pos_weight=None,
         save_val_logits=False,
-        save_mistake_mips=False
+        save_mistake_mips=False,
+        on_best_model_saved=None,
     ):
         """
         Instantiates a Trainer object.
@@ -135,6 +136,7 @@ class Trainer:
         self.model_name = model_name
         self.save_val_logits = save_val_logits
         self.save_mistake_mips = save_mistake_mips
+        self.on_best_model_saved = on_best_model_saved
 
         if pos_weight is None:
             self.criterion = nn.BCEWithLogitsLoss()
@@ -667,6 +669,12 @@ class Trainer:
             self.model.module if hasattr(self.model, "module") else self.model
         )
         torch.save(model_to_save.state_dict(), path)
+
+        if self.on_best_model_saved is not None:
+            try:
+                self.on_best_model_saved(path)
+            except Exception as e:
+                logger.warning("on_best_model_saved callback failed: %s", e)
 
     def update_tensorboard(self, stats, epoch, prefix):
         """
