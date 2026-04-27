@@ -146,7 +146,9 @@ class InferencePipeline:
         self.log(f"Module Runtime: {elapsed:.2f} {unit}\n")
 
     # --- Pipelines ---
-    def __call__(self, search_radius, dt=0.1, low_threshold=0.3):
+    def __call__(
+        self, search_radius, dt=0.1, min_threshold=0.75, removal_threshold=0.3
+    ):
         """
         Executes the full inference pipeline.
 
@@ -156,7 +158,9 @@ class InferencePipeline:
             Search radius (in microns) used to generate proposals.
         dt : float, optional
             Increment that acceptance threshold is lowered by. Default is 0.1.
-        low_threshold : float, optional
+        min_threshold : float, optional
+            Minimum threshold for accepting proposals. Default is 0.75.
+        removal_threshold : float, optional
             Proposals with model predictions less than this value are removed.
             Default is 0.3.
         """
@@ -181,10 +185,10 @@ class InferencePipeline:
                 self.merge_with_threshold_schedule(
                     preds, cur_threshold, only_leaf2leaf=only_leaf2leaf
                 )
-                self.filter_proposals(preds, low_threshold)
+                self.filter_proposals(preds, removal_threshold)
 
                 # Update threshold
-                new_threshold = max(cur_threshold - dt, self.config.ml.threshold)
+                new_threshold = max(cur_threshold - dt, min_threshold)
                 if cur_threshold == new_threshold:
                     break
 
@@ -207,7 +211,7 @@ class InferencePipeline:
                 cnt += 1
 
         # Sanity check
-        for proposal in self.dataset.list_propsosals():
+        for proposal in self.dataset.list_proposals():
             i, j = proposal
             if self.dataset.degree[i] > 2 or self.dataset.degree[j] > 2:
                 self.dataset.remove_proposal(proposal)
