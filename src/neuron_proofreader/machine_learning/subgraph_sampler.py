@@ -114,8 +114,8 @@ class SubgraphSampler:
             # Yield batch
             yield subgraph
 
-    def populate_via_bfs(self, subgraph, root):
-        i, j = tuple(root)
+    def populate_via_bfs(self, subgraph, root_proposal):
+        i, j = root_proposal
         queue = deque([(i, 0), (j, 0)])
         visited = {i, j}
         while queue:

@@ -146,7 +146,7 @@ class InferencePipeline:
         self.log(f"Module Runtime: {elapsed:.2f} {unit}\n")
 
     # --- Pipelines ---
-    def __call__(self, search_radius):
+    def __call__(self, search_radius, dt=0.1, low_threshold=0.3):
         """
         Executes the full inference pipeline.
 
@@ -154,34 +154,27 @@ class InferencePipeline:
         ----------
         search_radius : float
             Search radius (in microns) used to generate proposals.
+        dt : float, optional
+            Increment that acceptance threshold is lowered by. Default is 0.1.
+        low_threshold : float, optional
+            Proposals with model predictions less than this value are removed.
+            Default is 0.3.
         """
-        # Generate proposal
-        t0 = time()
-        self.generate_proposals(search_radius)
-        preds = self.predict_proposals()
-
-        # Update graph
-        self.merge_with_threshold_schedule(preds, self.config.ml.threshold)
-
-        # Report results
-        t, unit = util.time_writer(time() - t0)
-        self.log(self.dataset.summary(prefix="\nFinal"))
-        self.log(f"Total Runtime: {t:.2f} {unit}\n")
-        self.save_results()
-
-    def multistep(self, search_radius, low_threshold=0.3, dt=0.1):
-        t0 = time()
+        # Generate proposals
         self.generate_proposals(search_radius)
         total_proposals = self.dataset.n_proposals()
+
+        # Run inference
+        cnt = 0
+        t0 = time()
         for only_leaf2leaf in [True, False]:
-            cnt = 0
             name = "_leaf2leaf" if only_leaf2leaf else ""
             new_threshold = 0.99
             while self.dataset.proposals:
                 # Generate predictons
                 cnt += 1
-                print(f"Threshold={new_threshold} w/ only_leaf2leaf={only_leaf2leaf}")
-                preds = self.predict_proposals(suffix=f"{name}_round={cnt}")
+                self.log(f"Threshold={new_threshold} w/ only_leaf2leaf={only_leaf2leaf}")
+                preds = self.predict_proposals(suffix=f"{name}_round={cnt}_threshold={new_threshold}")
 
                 # Merge accetped proposals
                 cur_threshold = new_threshold
@@ -205,10 +198,18 @@ class InferencePipeline:
 
     # --- Core Routines ---
     def filter_proposals(self, preds, threshold):
+        # Remove based on model predictions and mergeability
         cnt = 0
         for proposal, pred in preds.items():
             is_valid = self.dataset.is_mergeable(*proposal)
             if pred < threshold or not is_valid:
+                self.dataset.remove_proposal(proposal)
+                cnt += 1
+
+        # Sanity check
+        for proposal in self.dataset.list_propsosals():
+            i, j = proposal
+            if self.dataset.degree[i] > 2 or self.dataset.degree[j] > 2:
                 self.dataset.remove_proposal(proposal)
                 cnt += 1
 
