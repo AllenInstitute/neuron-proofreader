@@ -746,6 +746,8 @@ def remove_small_segments(segmentation, min_size):
         New segmentation of the same shape as the input, with only the
         retained segments renumbered contiguously.
     """
+    if not np.issubdtype(segmentation.dtype, np.integer):
+        segmentation = segmentation.astype(np.int64)
     ids, cnts = unique(segmentation, return_counts=True)
     ids = [i for i, cnt in zip(ids, cnts) if cnt > min_size and i != 0]
     ids = mask_except(segmentation, ids)
