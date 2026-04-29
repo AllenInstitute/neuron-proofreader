@@ -699,9 +699,8 @@ def normalize(img, eps=1e-8, percentiles=(1, 99.9)):
     img : numpy.ndarray
         Normalized image.
     """
-    #mn, mx = np.percentile(img, percentiles)
-    #return np.clip((img - mn) / (mx - mn + 1e-5), 0, 1)
-    return (img - img.mean()) / (img.std() + eps)
+    mn, mx = np.percentile(img, percentiles)
+    return np.clip((img - mn) / (mx - mn + eps), 0, 1)
 
 
 def pad_to_shape(img, target_shape, pad_value=0):

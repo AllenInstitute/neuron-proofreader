@@ -749,6 +749,9 @@ class MergeSiteTrainDataset(MergeSiteDataset):
         n_negative_examples = int(len(self) * (1 + self.negative_bias))
         return np.arange(-n_negative_examples + 1, len(self))
 
+    def __len__(self):
+        return len(self.get_idxs())
+
 
 class MergeSiteValDataset(MergeSiteDataset):
     """
