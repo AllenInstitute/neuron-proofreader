@@ -746,8 +746,9 @@ class MergeSiteTrainDataset(MergeSiteDataset):
         numpy.ndarray
             Example indices to iterate over.
         """
-        n_negative_examples = int(len(self) * (1 + self.negative_bias))
-        return np.arange(-n_negative_examples + 1, len(self))
+        n_positive = super().__len__()
+        n_negative = int(n_positive * (1 + self.negative_bias))
+        return np.arange(-n_negative + 1, n_positive)
 
     def __len__(self):
         n_positive = super().__len__()
