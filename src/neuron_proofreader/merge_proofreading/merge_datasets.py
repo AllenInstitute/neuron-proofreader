@@ -750,7 +750,9 @@ class MergeSiteTrainDataset(MergeSiteDataset):
         return np.arange(-n_negative_examples + 1, len(self))
 
     def __len__(self):
-        return len(self.get_idxs())
+        n_positive = super().__len__()
+        n_negative = int(n_positive * (1 + self.negative_bias))
+        return n_negative + n_positive - 1
 
 
 class MergeSiteValDataset(MergeSiteDataset):
