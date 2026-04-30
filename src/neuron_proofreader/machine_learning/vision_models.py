@@ -191,8 +191,7 @@ class MAE3D(nn.Module):
         img = x[:, 0:1, ...]   # (B, 1, D, H, W)
         mask = x[:, 1:2, ...]  # (B, 1, D, H, W)
 
-        # Encode image + mask → encoder sees spatial mask signal
-        latents = self.model.encode(img + mask)
+        latents = self.model.encode(img)
 
         # CLS token
         cls_token = latents[:, 0, :]  # (B, encoder_dim)
