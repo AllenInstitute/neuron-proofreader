@@ -9,12 +9,17 @@ NeuronProofreader pipelines.
 
 """
 
-# from neurobase.finetune import finetune_model
+#from neurobase.finetune import finetune_model
+from neurobase.model.taskheads import BinaryClassifier
+from neurobase.model.taskheads.base import BaseTaskModel
+
 from einops import rearrange
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
+from neuron_proofreader.utils import ml_util
 from neuron_proofreader.utils.ml_util import FeedForwardNet, init_mlp
 
 
@@ -133,32 +138,83 @@ class CNN3D(nn.Module):
 # --- Transformers ---
 class MAE3D(nn.Module):
 
-    def __init__(self, checkpoint_path, model_config):
-        # Call parent class
+    def __init__(
+        self,
+        checkpoint_path,
+        model_config,
+        freeze_encoder=True,
+        pool_power=2,
+    ):
         super().__init__()
 
-        # Load model
-        full_model = finetune_model(
-            checkpoint_path=checkpoint_path,
-            model_config=model_config,
-            task_head_config="binary_classifier",
-            freeze_encoder=True
+        if checkpoint_path is None:
+            # BinaryClassifier.__init__ doesn't expose random_init, so we
+            # bypass it and call BaseTaskModel.__init__ directly.
+            bc = BinaryClassifier.__new__(BinaryClassifier)
+            bc.hidden_dim = 512
+            bc.dropout = 0.1
+            BaseTaskModel.__init__(
+                bc,
+                checkpoint_path=None,
+                model_config=model_config,
+                freeze_encoder=freeze_encoder,
+                random_init=True,
+            )
+            self.model = bc
+        else:
+            self.model = BinaryClassifier(
+                checkpoint_path=checkpoint_path,
+                model_config=model_config,
+                freeze_encoder=freeze_encoder,
+            )
+
+        # Remove the unused BinaryClassifier head to avoid orphaned
+        # parameters (crashes DDP with find_unused_parameters=False)
+        self.model.classifier = nn.Identity()
+
+        # Cache encoder properties for mask-guided pooling
+        encoder = self.model.encoder
+        self.encoder_dim = self.model.encoder_dim
+        self.n_prefix_tokens = 1 + encoder.n_register_tokens
+        self.grid_size = tuple(int(g) for g in encoder.grid_size)
+        self.pool_power = pool_power
+
+        # Dual-stream classifier: [CLS, mask-pooled] → 1
+        self.classifier = nn.Sequential(
+            nn.Linear(2 * self.encoder_dim, 256),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(256, 1),
         )
 
-        # Instance attributes
-        self.encoder = full_model.encoder
-        self.output = FeedForwardNet(384, 1, 3)
-
     def forward(self, x):
-        latent0 = self.encoder(x[:, 0:1, ...])
-        latent1 = self.encoder(x[:, 1:2, ...])
+        img = x[:, 0:1, ...]   # (B, 1, D, H, W)
+        mask = x[:, 1:2, ...]  # (B, 1, D, H, W)
 
-        x0 = latent0["latents"][:, 0, :]
-        x1 = latent1["latents"][:, 0, :]
+        latents = self.model.encode(img)
 
-        x = torch.cat((x0, x1), dim=1)
-        x = self.output(x)
-        return x
+        # CLS token
+        cls_token = latents[:, 0, :]  # (B, encoder_dim)
+
+        # Patch tokens
+        patch_tokens = latents[:, self.n_prefix_tokens:, :]
+
+        # Downsample mask to patch grid via max pool (preserves 0/0.5/1 hierarchy)
+        weights = F.adaptive_max_pool3d(mask, self.grid_size)
+        weights = weights.reshape(weights.shape[0], -1)  # (B, n_patches)
+
+        # Power-scale: skeleton=1.0, segment=0.25, bg=0.0 (with power=2)
+        weights = weights ** self.pool_power
+
+        # Normalize weights to sum to 1
+        weights = weights / (weights.sum(dim=1, keepdim=True) + 1e-8)
+
+        # Weighted average pooling of patch tokens
+        pooled = (patch_tokens * weights.unsqueeze(-1)).sum(dim=1)
+
+        # Concatenate [CLS, pooled] and classify
+        combined = torch.cat([cls_token, pooled], dim=1)  # (B, 2*encoder_dim)
+        return self.classifier(combined)
 
 
 class ViT3D(nn.Module):
