@@ -137,3 +137,9 @@ dmypy.json
 
 # MacOs
 **/.DS_Store
+
+
+# Local sparse-sampling report (untracked)
+/report/
+/tests/test_set_recall.csv
+/tests/sweep_*.csv
