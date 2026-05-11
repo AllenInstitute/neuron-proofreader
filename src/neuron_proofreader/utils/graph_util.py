@@ -33,6 +33,7 @@ from tqdm import tqdm
 
 import networkx as nx
 import numpy as np
+import os
 
 from neuron_proofreader.utils import geometry_util as geometry, swc_util, util
 
@@ -48,7 +49,7 @@ class GraphLoader:
         anisotropy=(1.0, 1.0, 1.0),
         min_cable_length=40.0,
         node_spacing=1,
-        prefetch=128,
+        prefetch=4,
         prune_depth=24.0,
         verbose=False,
     ):
@@ -67,7 +68,10 @@ class GraphLoader:
         node_spacing : int, optional
             Spacing (in microns) between neighboring nodes. Default is 1.
         prefetch : int, optional
-            Number of jobs to prefetch. Default is 128.
+            Number of in-flight worker tasks. Each pending task holds a
+            pickled SWC dict in memory; whole-brain SWC dicts can be hundreds
+            of MB, so this caps load-time peak RSS at roughly prefetch ×
+            dict_size. Default is 4.
         prune_depth : int, optional
             Branches with length less than "prune_depth" microns are pruned.
             Default is 24.
@@ -104,8 +108,11 @@ class GraphLoader:
         if self.verbose:
             pbar = tqdm(total=len(swc_dicts), desc="Load Graphs")
 
-        # Load graphs
-        with ProcessPoolExecutor() as executor:
+        # Load graphs. max_workers is bounded so the default ProcessPoolExecutor
+        # doesn't pre-fork cpu_count() workers on high-core machines, which both
+        # multiplies fork-time RSS and lets prefetch over-commit memory.
+        n_workers = min(os.cpu_count() or 4, 4)
+        with ProcessPoolExecutor(max_workers=n_workers) as executor:
             # Start processes
             pending = set()
             while len(pending) < self.prefetch and swc_dicts:
