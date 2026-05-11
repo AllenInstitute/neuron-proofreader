@@ -14,12 +14,15 @@ from scipy.spatial import KDTree
 from torch.utils.data import Dataset, DataLoader
 
 import copy
+import logging
 import networkx as nx
 import numpy as np
 import os
 import pandas as pd
 import random
 import torch
+
+logger = logging.getLogger(__name__)
 
 from neuron_proofreader.machine_learning.augmentation import ImageTransforms
 from neuron_proofreader.machine_learning.geometric_gnn_models import (
@@ -202,10 +205,19 @@ class MergeSiteDataset(Dataset):
         segmentation_path : str
             Path to segmentation of whole-brain image.
         """
+        from time import time
+        t0 = time()
+        logger.info("[%s] Opening img reader: %s", brain_id, img_path)
         self.img_readers[brain_id] = img_util.TensorStoreReader(img_path)
+        t1 = time()
+        logger.info(
+            "[%s] img reader opened in %.1fs; opening seg reader",
+            brain_id, t1 - t0,
+        )
         self.segmentation_readers[brain_id] = img_util.TensorStoreReader(
             segmentation_path
         )
+        logger.info("[%s] seg reader opened in %.1fs", brain_id, time() - t1)
 
     # --- Create Subclass Dataset ---
     def subset(self, cls, idxs):

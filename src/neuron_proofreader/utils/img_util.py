@@ -131,7 +131,7 @@ class TensorStoreReader(ImageReader):
             return "zarr"
         elif ".n5" in img_path:
             return "n5"
-        elif is_precomputed(img_path):
+        elif is_precomputed(img_path) or util.is_gcs_path(img_path):
             return "neuroglancer_precomputed"
         else:
             raise ValueError(f"Unsupported image format: {img_path}")
@@ -144,7 +144,10 @@ class TensorStoreReader(ImageReader):
         bucket_name, path = util.parse_cloud_path(self.img_path)
         storage_driver = get_storage_driver(self.img_path)
 
-        # Load image
+        # Load image. The aws_credentials override is required for public
+        # buckets like aind-open-data: without it, tensorstore picks up the
+        # ambient AWS credential chain and (silently) hangs when those
+        # credentials lack permission on the bucket.
         self.img = ts.open(
             {
                 "driver": self.driver,
@@ -152,6 +155,7 @@ class TensorStoreReader(ImageReader):
                     "driver": storage_driver,
                     "bucket": bucket_name,
                     "path": path,
+                    **({"aws_credentials": {"anonymous": True}} if storage_driver == "s3" else {}),
                 },
                 "context": {
                     "cache_pool": {"total_bytes_limit": 1000000000},
