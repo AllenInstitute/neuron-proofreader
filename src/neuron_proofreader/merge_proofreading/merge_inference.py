@@ -298,11 +298,11 @@ class GraphDataset(IterableDataset, ABC):
     def find_fragments_to_search(self):
         component_ids = set()
         for nodes in nx.connected_components(self.graph):
-            # Compute path length
+            # Compute cable length of the component containing `node`
             node = util.sample_once(list(nodes))
-            length = self.graph.path_length(root=node, max_depth=self.min_size)
+            length = self.graph.cable_length(root=node, max_depth=self.min_size)
 
-            # Check if path length satisfies threshold
+            # Check if cable length satisfies threshold
             if length > self.min_size:
                 component_ids.add(self.graph.node_component_id[node])
         return component_ids
