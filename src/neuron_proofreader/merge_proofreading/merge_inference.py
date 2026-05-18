@@ -75,8 +75,6 @@ class MergeDetector:
             self.node_preds[np.array(nodes)] = y_nodes
             pbar.update(len(nodes))
 
-            break # TEMP
-
         # Non-maximum suppression of detected sites
         merge_sites = self.filter_with_nms(merge_sites, likelihoods)
         rate = self.dataset.distance_traversed / (time() - t0)
