@@ -65,6 +65,8 @@ class MergeDetector:
             self.node_preds[np.array(nodes)] = self.predict(x_nodes)
             pbar.update(len(nodes))
 
+            break # TEMP
+
         # Non-maximum suppression of detected sites
         merge_sites = np.where(self.node_preds > self.threshold)[0]
         likelihoods = self.node_preds[merge_sites]
