@@ -56,28 +56,20 @@ class MergeDetector:
         self.model = model
         ml_util.load_model(model, model_path, device=self.device)
 
-    # --- Core routines
+    # --- Core routines ---
     def search_graph(self):
-        # Initialize progress bar
-        pbar = tqdm(total=self.dataset.estimate_iterations())
-        t0 = time()
-
         # Iterate over dataset
-        likelihoods = list()
-        merge_sites = list()
+        t0 = time()
+        pbar = tqdm(total=self.dataset.estimate_iterations())
         for nodes, x_nodes in self.dataset:
-            y_nodes = self.predict(x_nodes)
-            idxs = np.where(y_nodes > self.threshold)[0]
-            if len(idxs) > 0:
-                merge_sites.extend(nodes[idxs].tolist())
-                likelihoods.extend(y_nodes[idxs].tolist())
-
-            self.node_preds[np.array(nodes)] = y_nodes
+            self.node_preds[np.array(nodes)] = self.predict(x_nodes)
             pbar.update(len(nodes))
 
             break # TEMP
 
         # Non-maximum suppression of detected sites
+        merge_sites = np.where(self.node_preds > self.threshold)[0]
+        likelihoods = self.node_preds[merge_sites]
         merge_sites = self.filter_with_nms(merge_sites, likelihoods)
         rate = self.dataset.distance_traversed / (time() - t0)
 
@@ -91,14 +83,15 @@ class MergeDetector:
             pass
         return merge_sites
 
-    def predict(self, x_nodes):
+    def predict(self, x):
         """
         Predicts merge site likelihoods for the given node features.
 
         Parameters
         ----------
-        x_nodes : torch.Tensor
-            Node features.
+        x : torch.Tensor
+            Node features with shape Nx2xMxMxM, where N is the number of nodes
+            and MxMxM is the patch shape.
 
         Returns
         -------
@@ -106,14 +99,13 @@ class MergeDetector:
             Predicted merge site likelihoods.
         """
         with torch.inference_mode():
-            x_nodes = x_nodes.to(self.device)
-            y_nodes = sigmoid(self.model(x_nodes))
-            return np.squeeze(ml_util.to_cpu(y_nodes, to_numpy=True), axis=1)
+            x = x.to(self.device)
+            y = sigmoid(self.model(x))
+            return np.squeeze(ml_util.to_cpu(y, to_numpy=True), axis=1)
 
     def filter_with_nms(self, merge_sites, likelihoods):
         # Sort by confidence
-        idxs = np.argsort(likelihoods)
-        merge_sites = [merge_sites[i] for i in idxs]
+        merge_sites = [merge_sites[i] for i in np.argsort(likelihoods)]
 
         # NMS
         merge_sites_set = set(merge_sites)
@@ -223,9 +215,9 @@ class MergeDetector:
         roots = list()
         visited_ids = set()
         for i in np.where(self.node_preds >= self.threshold)[0]:
-            cc_id = self.dataset.graph.node_component_ids[i]
+            cc_id = self.dataset.graph.node_component_id[i]
             if cc_id not in visited_ids:
-                roots.append(i)
+                roots.append([i])
                 visited_ids.add(cc_id)
 
         # Save fragments
