@@ -75,6 +75,8 @@ class MergeDetector:
             self.node_preds[np.array(nodes)] = y_nodes
             pbar.update(len(nodes))
 
+            break # TEMP
+
         # Non-maximum suppression of detected sites
         merge_sites = self.filter_with_nms(merge_sites, likelihoods)
         rate = self.dataset.distance_traversed / (time() - t0)
@@ -174,33 +176,6 @@ class MergeDetector:
         nodes = np.where(self.node_preds >= threshold)[0]
         return [self.dataset.graph.node_xyz[i] for i in nodes]
 
-    def save_results(
-        self, output_dir, output_prefix_s3=None, save_fragments=True
-    ):
-        # Get predicted merge sites
-        nodes = np.where(self.node_preds >= self.threshold)[0]
-        detected_sites = [self.dataset.graph.node_xyz[i] for i in nodes]
-
-        # Save predicted merge sites
-        zip_path = os.path.join(output_dir, "detected_sites.zip")
-        swc_util.write_points(
-            zip_path,
-            detected_sites,
-            color="1.0 0.0 0.0",
-            prefix="merge-site",
-            radius=10,
-        )
-
-        # Save fragments
-        if save_fragments:
-            fragments_path = os.path.join(output_dir, "fragments.zip")
-            self.dataset.graph.to_zipped_swcs(fragments_path)
-
-        # Upload results to S3 (if applicable)
-        if output_prefix_s3:
-            bucket_name, prefix = util.parse_cloud_path(output_prefix_s3)
-            util.upload_dir_to_s3(output_dir, bucket_name, prefix)
-
     def save_parameters(self, output_dir):
         json_path = os.path.join(output_dir, "detection_parameters.json")
         parameters = {
@@ -213,6 +188,51 @@ class MergeDetector:
             "subgraph_radius": self.dataset.subgraph_radius,
         }
         util.write_json(json_path, parameters)
+
+    def save_results(
+        self, output_dir, output_prefix_s3=None, save_fragments=True
+    ):
+        self.save_sites(output_dir)
+        if save_fragments:
+            fragments_path = os.path.join(output_dir, "fragments.zip")
+            self.dataset.graph.to_zipped_swcs(fragments_path)
+
+        # Upload results to S3 (if applicable)
+        if output_prefix_s3:
+            bucket_name, prefix = util.parse_cloud_path(output_prefix_s3)
+            util.upload_dir_to_s3(output_dir, bucket_name, prefix)
+
+    def save_sites(self, output_dir):
+        # Get predicted merge sites
+        nodes = np.where(self.node_preds >= self.threshold)[0]
+        detected_sites = [self.dataset.graph.node_xyz[i] for i in nodes]
+        print("# Sites Saved:", len(nodes))
+
+        # Save predicted merge sites
+        zip_path = os.path.join(output_dir, "detected_sites.zip")
+        swc_util.write_points(
+            zip_path,
+            detected_sites,
+            color="1.0 0.0 0.0",
+            prefix="merge-site",
+            radius=10,
+        )
+
+    def save_train_dataset(self, output_dir):
+        # Extract fragments to save
+        roots = list()
+        visited_ids = set()
+        for i in np.where(self.node_preds >= self.threshold)[0]:
+            cc_id = self.dataset.graph.node_component_ids[i]
+            if cc_id not in visited_ids:
+                roots.append(i)
+                visited_ids.add(cc_id)
+
+        # Save fragments
+        zip_path = os.path.join(output_dir, "fragments.zip")
+        self.dataset.graph._batch_to_zipped_swcs(roots, zip_path, False)
+        self.save_sites(output_dir)
+        print("# Fragments Saved:", len(roots))
 
 
 # --- Data Handling ---
