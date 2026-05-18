@@ -317,7 +317,7 @@ class GraphDataset(IterableDataset, ABC):
         for nodes in nx.connected_components(self.graph):
             # Compute path length
             node = util.sample_once(list(nodes))
-            length = self.graph.path_length(root=node, max_depth=self.min_size)
+            length = self.graph.cable_length(max_depth=self.min_size, root=node)
 
             # Check if path length satisfies threshold
             if length > self.min_size:
