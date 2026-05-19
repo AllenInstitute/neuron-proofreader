@@ -452,12 +452,21 @@ class MergeSiteDataset(Dataset):
         outcome = random.random()
         while True:
             # Sample node
-            if outcome < 0.4:
+            if outcome < 0.1:
+                # Near-merge hard negative: node 25–80 µm from a known merge
+                # site but confirmed not a merge itself.  These are the hardest
+                # false positives the detector encounters at deployment.
+                node = self._sample_near_merge_negative(brain_id)
+                if node is None:
+                    outcome = random.random()
+                    continue
+                subgraph = self.graphs[brain_id].get_rooted_subgraph(
+                    node, self.subgraph_radius
+                )
+                return brain_id, subgraph, 0
+            elif outcome < 0.44:
                 # Any node
                 node = util.sample_once(list(self.graphs[brain_id].nodes))
-            #elif outcome < 0.5:
-            #    # Node close to soma
-            #    node = self.sample_node_nearby_soma(brain_id)
             elif outcome < 0.8:
                 # Branching node
                 branching_nodes = self.graphs[brain_id].get_branchings()
@@ -490,6 +499,31 @@ class MergeSiteDataset(Dataset):
             # Check if node is close to merge site
             if not self.is_nearby_merge_site(brain_id, node):
                 return brain_id, subgraph, 0
+
+    def _sample_near_merge_negative(self, brain_id, min_dist=25.0, max_dist=80.0, max_tries=20):
+        """
+        Sample a fragment node that is near (but not at) a merge site.
+
+        Nodes between min_dist and max_dist µm from the nearest GT merge site
+        are the hardest false positives at deployment.  Adding ~10% of training
+        negatives from this zone makes the model discriminate them better.
+
+        Returns None after max_tries failed attempts (e.g. sparse brain).
+        """
+        if brain_id not in self.merge_site_kdtrees:
+            return None
+        kdtree = self.merge_site_kdtrees[brain_id]
+        graph = self.graphs[brain_id]
+        nodes = list(graph.nodes)
+        if not nodes:
+            return None
+        for _ in range(max_tries):
+            node = util.sample_once(nodes)
+            xyz = graph.node_xyz[node]
+            dist, _ = kdtree.query(xyz)
+            if min_dist <= dist <= max_dist:
+                return node
+        return None
 
     def get_img_patch(self, brain_id, center):
         """
@@ -537,8 +571,8 @@ class MergeSiteDataset(Dataset):
         else:
             segment_mask = np.zeros(self.patch_shape)
 
-        # Annotate fragment
-        center = subgraph.get_voxel(0)
+        # Annotate fragment — use the passed center so translation augmentation
+        # shifts the skeleton overlay to match the shifted image read window.
         offset = img_util.get_offset(center, self.patch_shape)
         for node1, node2 in subgraph.edges:
             # Get local voxel coordinates
@@ -663,7 +697,7 @@ class MergeSiteTrainDataset(MergeSiteDataset):
     A class for storing and retrieving training examples.
     """
 
-    def __init__(self, base_dataset=None, idxs=None, negative_bias=0):
+    def __init__(self, base_dataset=None, idxs=None, negative_bias=0, max_translation=20):
         """
         Instantiates a MergeSiteTrainDataset object.
 
@@ -675,6 +709,10 @@ class MergeSiteTrainDataset(MergeSiteDataset):
             Indices of examples to be kept in train dataset.
         negative_bias : float, optional
             Specifies percentage of additional negative examples to add.
+        max_translation : int, optional
+            Maximum voxel shift applied to the patch read center along each
+            axis during training. Shifts the merge site off-center to improve
+            robustness to misaligned inputs. Default is 20 voxels.
         """
         # Create sub-dataset
         subset_dataset = base_dataset.subset(self.__class__, idxs)
@@ -682,6 +720,7 @@ class MergeSiteTrainDataset(MergeSiteDataset):
 
         # Instance attributes
         self.negative_bias = negative_bias
+        self.max_translation = max_translation
         self.transform = ImageTransforms()
 
     # --- Getters ---
@@ -704,7 +743,25 @@ class MergeSiteTrainDataset(MergeSiteDataset):
         label : int
             1 if the example is positive and 0 otherwise.
         """
-        patches, subgraph, label = super().__getitem__(idx)
+        brain_id, subgraph, label = self.get_site(idx)
+        voxel = subgraph.get_voxel(0)
+
+        # Random translation: shift the read window so the site appears
+        # off-center, training the model to be robust to misaligned inputs.
+        if self.max_translation > 0:
+            delta = np.random.randint(-self.max_translation, self.max_translation + 1, 3)
+            voxel = tuple(int(v + d) for v, d in zip(voxel, delta))
+
+        img_patch = self.get_img_patch(brain_id, voxel)
+        segment_mask = self.get_segment_mask(brain_id, voxel, subgraph)
+
+        try:
+            patches = np.stack([img_patch, segment_mask], axis=0)
+        except ValueError:
+            img_patch = img_util.pad_to_shape(img_patch, self.patch_shape)
+            patches = np.stack([img_patch, segment_mask], axis=0)
+
+        patches[0] = (patches[0] - patches[0].mean()) / (patches[0].std() + 1e-8)
         patches = self.transform(patches)
         return patches, subgraph, label
 
