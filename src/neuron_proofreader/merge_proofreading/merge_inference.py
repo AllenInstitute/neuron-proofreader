@@ -65,15 +65,13 @@ class MergeDetector:
             self.node_preds[np.array(nodes)] = self.predict(x_nodes)
             pbar.update(len(nodes))
 
-            break # TEMP
-
         # Non-maximum suppression of detected sites
         merge_sites = np.where(self.node_preds > self.threshold)[0]
         likelihoods = self.node_preds[merge_sites]
         merge_sites = self.filter_with_nms(merge_sites, likelihoods)
-        rate = self.dataset.distance_traversed / (time() - t0)
 
         # Report results
+        rate = self.dataset.distance_traversed / (time() - t0)
         print("\n# Detected Merge Sites:", len(merge_sites))
         print(f"Distance Traversed: {self.dataset.distance_traversed:.2f}μm")
         print(f"Merge Proofreading Rate: {rate:.2f}μm/s")
