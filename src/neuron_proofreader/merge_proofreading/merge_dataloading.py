@@ -174,6 +174,19 @@ def load_images(
     segmentation_prefixes = util.read_json(segmentation_prefixes_path)
     brain_ids = get_brain_ids(dataset.merge_sites_df, is_test)
 
+    # Filter to brains present in both prefix maps. A missing key would
+    # KeyError inside the dict comprehension below before any futures are
+    # submitted, bypassing the try/except that guards future.result().
+    loadable = []
+    for bid in brain_ids:
+        if bid not in img_prefixes:
+            logger.warning("No image prefix for brain %s — skipping image load", bid)
+        elif bid not in segmentation_prefixes:
+            logger.warning("No seg prefix for brain %s — skipping image load", bid)
+        else:
+            loadable.append(bid)
+    brain_ids = loadable
+
     _log_ram("before images")
     logger.info("Loading images (%d brains, %d workers)", len(brain_ids), max_workers)
     completed = 0
