@@ -18,36 +18,7 @@ import networkx as nx
 import numpy as np
 
 
-# --- 3D Curve utils ---
-def fit_spline_3d(pts, k=3, s=None):
-    """
-    Fits a cubic spline to an array containing xyz coordinates.
-
-    Parameters
-    ----------
-    pts : numpy.ndarray
-        Array of xyz coordinates to be smoothed.
-    k : int, optional
-        Degree of the spline. Default is 3.
-    s : float, optional
-        A parameter that controls the smoothness of the spline. Default is
-        None.
-
-    Returns
-    -------
-    UnivariateSpline
-        Spline fit to x-coordinates of the given points.
-    UnivariateSpline
-        Spline fit to the y-coordinates of the given points.
-    UnivariateSpline
-        Spline fit to the z-coordinates of the given points.
-    """
-    spline_x = fit_spline_1d(pts[:, 0], k=k, s=s)
-    spline_y = fit_spline_1d(pts[:, 1], k=k, s=s)
-    spline_z = fit_spline_1d(pts[:, 2], k=k, s=s)
-    return spline_x, spline_y, spline_z
-
-
+# --- Curve Utils ---
 def fit_spline_1d(pts, k=3, s=None):
     """
     Fits a spline to 1D curve.
@@ -59,8 +30,7 @@ def fit_spline_1d(pts, k=3, s=None):
     k : int, optional
         Degree of the spline. Default is 3.
     s : float, optional
-        A parameter that controls the smoothness of the spline. Default is
-        None.
+        Parameter that controls the smoothness of the spline. Default is None.
 
     Returns
     -------
@@ -72,45 +42,32 @@ def fit_spline_1d(pts, k=3, s=None):
     return UnivariateSpline(t, pts, k=k, s=s)
 
 
-def make_voxels_connected(voxels):
+def fit_spline_3d(pts, k=3, s=None):
     """
-    Makes a list of voxels that form a discrete curve 27-connected.
+    Fits a cubic spline to an array containing xyz coordinates.
 
     Parameters
     ----------
-    voxels : List[Tuple[int]]
-        List of voxel coordinates that form a discrete path.
+    pts : numpy.ndarray
+        Array of xyz coordinates to be smoothed.
+    k : int, optional
+        Degree of the spline. Default is 3.
+    s : float, optional
+        Parameter that controls the smoothness of the spline. Default is None.
 
     Returns
     -------
-    voxels_out : numpy.ndarray
-        List of voxels that is 27-connected.
+    spline_x : UnivariateSpline
+        Spline fit to x-coordinates of the given points.
+    spline_y : UnivariateSpline
+        Spline fit to the y-coordinates of the given points.
+    spline_z : UnivariateSpline
+        Spline fit to the z-coordinates of the given points.
     """
-    voxels = np.asarray(voxels, dtype=int)
-    voxels_out = []
-    for a, b in zip(voxels[:-1], voxels[1:]):
-        line = make_digital_line(a, b)
-        if voxels_out:
-            line = line[1:]
-        voxels_out.extend(line)
-    return np.array(voxels_out, dtype=int)
-
-
-def path_length(path):
-    """
-    Computes the path length of list of xyz coordinates that form a path.
-
-    Parameters
-    ----------
-    path : list
-        List of coordinates that form a discrete path.
-
-    Returns
-    -------
-    float
-        Path length of "path".
-    """
-    return np.sqrt(np.sum((path[:-1] - path[1:]) ** 2))
+    spline_x = fit_spline_1d(pts[:, 0], k=k, s=s)
+    spline_y = fit_spline_1d(pts[:, 1], k=k, s=s)
+    spline_z = fit_spline_1d(pts[:, 2], k=k, s=s)
+    return spline_x, spline_y, spline_z
 
 
 def resample_curve_1d(pts, n_pts=None, s=None):
@@ -122,13 +79,12 @@ def resample_curve_1d(pts, n_pts=None, s=None):
     n_pts : int or None, optional
         Number of points to resample.
     s : float, optional
-        A parameter that controls the smoothness of the spline. Default is
-        None.
+        Parameter that controls the smoothness of the spline. Default is None.
 
     Returns
     -------
     numpy.ndarray
-        Smoothed points.
+        Resampled points.
     """
     # Fit spline
     dt = max(n_pts or len(pts), 5)
@@ -152,17 +108,16 @@ def resample_curve_3d(pts, n_pts=None, s=None):
     Parameters
     ----------
     pts: numpy.ndarray
-        Array of xyz coordinates to be smoothed.
+        Array of points to be smoothed.
     n_pts : int
-        Number of points sampled from spline. Default is None.
+        Number of points to be sampled from the spline. Default is None.
     s : float
-        A parameter that controls the smoothness of the spline, where
-        "s" in [0, N]. Note that the larger "s", the smoother the spline.
+        Parameter that controls the smoothness of the spline. Default is None.
 
     Returns
     -------
     pts : numpy.ndarray
-        Smoothed points.
+        Resampled points.
     """
     # Compute spline parameters
     dt = max(n_pts or len(pts), 5)
@@ -382,6 +337,30 @@ def make_line(p1, p2, n_steps):
     return np.array([(1 - t) * p1 + t * p2 for t in t_steps], dtype=int)
 
 
+def make_voxels_connected(voxels):
+    """
+    Makes a list of voxels that form a discrete curve 27-connected.
+
+    Parameters
+    ----------
+    voxels : List[Tuple[int]]
+        List of voxel coordinates that form a discrete path.
+
+    Returns
+    -------
+    voxels_out : numpy.ndarray
+        List of voxels that is 27-connected.
+    """
+    voxels = np.asarray(voxels, dtype=int)
+    voxels_out = []
+    for a, b in zip(voxels[:-1], voxels[1:]):
+        line = make_digital_line(a, b)
+        if voxels_out:
+            line = line[1:]
+        voxels_out.extend(line)
+    return np.array(voxels_out, dtype=int)
+
+
 def midpoint(xyz_1, xyz_2):
     """
     Computes the midpoint between "xyz_1" and "xyz_2".
@@ -424,6 +403,23 @@ def nearest_neighbor(pts, query_pt, return_index=False):
     dists = np.linalg.norm(pts - query_pt, axis=1)
     idx = np.argmin(dists)
     return idx if return_index else pts[idx]
+
+
+def path_length(path):
+    """
+    Computes the path length of list of xyz coordinates that form a path.
+
+    Parameters
+    ----------
+    path : list
+        List of coordinates that form a discrete path.
+
+    Returns
+    -------
+    float
+        Path length of "path".
+    """
+    return np.sqrt(np.sum((path[:-1] - path[1:]) ** 2))
 
 
 def tangent(pts):
