@@ -42,7 +42,6 @@ class FragmentsDataset(IterableDataset):
         config,
         gt_path=None,
         metadata_path=None,
-        segmentation_path=None,
         soma_centroids=set(),
     ):
         """
@@ -61,9 +60,6 @@ class FragmentsDataset(IterableDataset):
         metadata_path : str, optional
             Patch to JSON file containing metadata on block that fragments
             were extracted from. Default is None.
-        segmentation_path : str, optional
-            Path to the segmentation that fragments were generated from.
-            Default is None.
         soma_centroids : List[Tuple[int]], optional
             Phyiscal coordinates of soma centroids. Default is an empty list.
         """
@@ -82,7 +78,6 @@ class FragmentsDataset(IterableDataset):
             img_path,
             brightness_clip=self.config.ml.brightness_clip,
             patch_shape=self.config.ml.patch_shape,
-            segmentation_path=segmentation_path,
         )
 
     def _load_graph(self, fragments_path, metadata_path=None):
@@ -177,7 +172,6 @@ class FragmentsDatasetCollection(IterableDataset):
         config,
         gt_path=None,
         metadata_path=None,
-        segmentation_path=None,
         soma_centroids=list(),
     ):
         """
@@ -198,9 +192,6 @@ class FragmentsDatasetCollection(IterableDataset):
         metadata_path : str, optional
             Patch to JSON file containing metadata on block that fragments
             were extracted from. Default is None.
-        segmentation_path : str, optional
-            Path to the segmentation that fragments were generated from.
-            Default is None.
         soma_centroids : List[Tuple[int]], optional
             Phyiscal coordinates of soma centroids. Default is an empty list.
         """
@@ -211,7 +202,6 @@ class FragmentsDatasetCollection(IterableDataset):
             config,
             gt_path=gt_path,
             metadata_path=metadata_path,
-            segmentation_path=segmentation_path,
             soma_centroids=soma_centroids,
         )
 
