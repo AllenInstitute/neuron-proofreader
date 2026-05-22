@@ -165,8 +165,13 @@ class InferencePipeline:
         cnt = 0
         t0 = time()
         for only_leaf2leaf in [True, False]:
+            # Reset threshold
             name = "_leaf2leaf" if only_leaf2leaf else ""
             new_threshold = 0.99
+            if not only_leaf2leaf:
+                min_threshold += dt
+
+            # Generate predictions
             while self.dataset.proposals:
                 # Generate predictons
                 cnt += 1
