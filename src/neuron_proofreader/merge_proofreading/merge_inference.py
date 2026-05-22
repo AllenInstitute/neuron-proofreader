@@ -62,7 +62,7 @@ class MergeDetector:
     # --- Core routines
     def search_graph(self):
         # Initialize progress bar
-        pbar = tqdm(total=self.dataset.estimate_iterations())
+        pbar = tqdm(total=self.dataset.estimate_iterations(), miniters=1000, mininterval=0)
         t0 = time()
 
         # Iterate over dataset
