@@ -3,5 +3,5 @@ set -e
 
 git clone https://github.com/AllenInstitute/neuron-proofreader.git
 cd neuron-proofreader
-git checkout e047e2f
+git checkout a3f4765 #e047e2f
 pip install -e .

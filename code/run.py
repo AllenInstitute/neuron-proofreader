@@ -18,6 +18,8 @@ from neuron_proofreader.merge_proofreading.merge_inference import MergeDetector,
 from neuron_proofreader.skeleton_graph import SkeletonGraph
 from neuron_proofreader.utils import img_util, util
 
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/root/capsule/data/gcs-token.json"
+
 
 def main():
     # Build dataset
@@ -100,8 +102,8 @@ if __name__ == "__main__":
     step_size = 20
 
     # Paths
-    model_path = f"/home/jupyter/data/merge_proofreading/{model_name}.pth"
-    output_dir = f"/home/jupyter/results"
+    model_path = f"/root/capsule/data/V5/{model_name}.pth"
+    output_dir = f"/root/capsule/results"
     swc_pointer = f"gs://allen-nd-goog/from_google/{brain_id}/whole_brain/{segmentation_id}/swcs"
 
     # Model
