@@ -85,7 +85,8 @@ class ProposalGraph(SkeletonGraph):
 
         self.reset_proposals()
         self.proposal_generator = ProposalGenerator(
-            self, max_proposals_per_leaf=max_proposals_per_leaf,
+            self,
+            max_proposals_per_leaf=max_proposals_per_leaf,
         )
 
         # Graph Loader
@@ -138,7 +139,7 @@ class ProposalGraph(SkeletonGraph):
         self,
         search_radius,
         allow_nonleaf_proposals=False,
-        min_size_with_proposals=0
+        min_size_with_proposals=0,
     ):
         """
         Generates proposals from leaf nodes.
@@ -174,9 +175,9 @@ class ProposalGraph(SkeletonGraph):
 
     def is_mergeable(self, i, j):
         one_leaf = self.degree[i] == 1 or self.degree[j] == 1
-        branching = self.degree[i] > 2 or self.degree[j] > 2
+        not_branching = self.degree[i] < 3 and self.degree[j] < 3
         somas_check = not (self.is_soma(i) and self.is_soma(j))
-        return somas_check and (one_leaf and not branching)
+        return somas_check and (one_leaf and not_branching)
 
     def is_single_proposal(self, proposal):
         """

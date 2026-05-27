@@ -45,7 +45,6 @@ class FragmentsDataset(IterableDataset):
         gt_path=None,
         metadata_path=None,
         prefetch=4,
-        segmentation_path=None,
         soma_centroids=set(),
     ):
         """
@@ -64,9 +63,6 @@ class FragmentsDataset(IterableDataset):
         metadata_path : str, optional
             Patch to JSON file containing metadata on block that fragments
             were extracted from. Default is None.
-        segmentation_path : str, optional
-            Path to the segmentation that fragments were generated from.
-            Default is None.
         soma_centroids : List[Tuple[int]], optional
             Phyiscal coordinates of soma centroids. Default is an empty list.
         """
@@ -86,7 +82,6 @@ class FragmentsDataset(IterableDataset):
             img_path,
             brightness_clip=self.config.ml.brightness_clip,
             patch_shape=self.config.ml.patch_shape,
-            segmentation_path=segmentation_path,
         )
 
     def _load_graph(self, fragments_path, metadata_path=None):
@@ -137,6 +132,9 @@ class FragmentsDataset(IterableDataset):
             yield HeteroGraphData(features)
 
     # --- Helpers ---
+    def __getattr__(self, name):
+        return getattr(self.graph, name)
+
     def get_sampler(self):
         """
         Gets a subgraph sampler that is used to iterate over dataset.
@@ -179,7 +177,6 @@ class FragmentsDatasetCollection(IterableDataset):
         gt_path=None,
         metadata_path=None,
         prefetch=4,
-        segmentation_path=None,
         soma_centroids=list(),
     ):
         """
@@ -202,9 +199,6 @@ class FragmentsDatasetCollection(IterableDataset):
             were extracted from. Default is None.
         prefetch : int, optional
             Number of batches to prefetch. Default is 4.
-        segmentation_path : str, optional
-            Path to the segmentation that fragments were generated from.
-            Default is None.
         soma_centroids : List[Tuple[int]], optional
             Phyiscal coordinates of soma centroids. Default is an empty list.
         """
@@ -216,7 +210,6 @@ class FragmentsDatasetCollection(IterableDataset):
             gt_path=gt_path,
             metadata_path=metadata_path,
             prefetch=prefetch,
-            segmentation_path=segmentation_path,
             soma_centroids=soma_centroids,
         )
 

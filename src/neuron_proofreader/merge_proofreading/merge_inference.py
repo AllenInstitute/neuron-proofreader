@@ -19,6 +19,7 @@ from tqdm import tqdm
 import networkx as nx
 import numpy as np
 import os
+import pandas as pd
 import torch
 
 from neuron_proofreader.machine_learning.point_cloud_models import (
@@ -47,7 +48,7 @@ class MergeDetector:
         # Instance attributes
         self.dataset = dataset
         self.device = device
-        self.node_preds = np.ones((len(dataset.graph.node_xyz))) * 1e-2
+        self.node_preds = np.ones((len(dataset.node_xyz))) * 1e-2
         self.patch_shape = dataset.patch_shape
         self.remove_detected_sites = remove_detected_sites
         self.threshold = threshold
@@ -56,30 +57,22 @@ class MergeDetector:
         self.model = model
         ml_util.load_model(model, model_path, device=self.device)
 
-    # --- Core routines
+    # --- Core routines ---
     def search_graph(self):
-        # Initialize progress bar
-        pbar = tqdm(total=self.dataset.estimate_iterations())
-        t0 = time()
-
         # Iterate over dataset
-        likelihoods = list()
-        merge_sites = list()
+        t0 = time()
+        pbar = tqdm(total=self.dataset.estimate_iterations())
         for nodes, x_nodes in self.dataset:
-            y_nodes = self.predict(x_nodes)
-            idxs = np.where(y_nodes > self.threshold)[0]
-            if len(idxs) > 0:
-                merge_sites.extend(nodes[idxs].tolist())
-                likelihoods.extend(y_nodes[idxs].tolist())
-
-            self.node_preds[np.array(nodes)] = y_nodes
+            self.node_preds[np.array(nodes)] = self.predict(x_nodes)
             pbar.update(len(nodes))
 
         # Non-maximum suppression of detected sites
+        merge_sites = np.where(self.node_preds > self.threshold)[0]
+        likelihoods = self.node_preds[merge_sites]
         merge_sites = self.filter_with_nms(merge_sites, likelihoods)
-        rate = self.dataset.distance_traversed / (time() - t0)
 
         # Report results
+        rate = self.dataset.distance_traversed / (time() - t0)
         print("\n# Detected Merge Sites:", len(merge_sites))
         print(f"Distance Traversed: {self.dataset.distance_traversed:.2f}μm")
         print(f"Merge Proofreading Rate: {rate:.2f}μm/s")
@@ -89,14 +82,15 @@ class MergeDetector:
             pass
         return merge_sites
 
-    def predict(self, x_nodes):
+    def predict(self, x):
         """
         Predicts merge site likelihoods for the given node features.
 
         Parameters
         ----------
-        x_nodes : torch.Tensor
-            Node features.
+        x : torch.Tensor
+            Node features with shape Nx2xMxMxM, where N is the number of nodes
+            and MxMxM is the patch shape.
 
         Returns
         -------
@@ -104,14 +98,13 @@ class MergeDetector:
             Predicted merge site likelihoods.
         """
         with torch.inference_mode():
-            x_nodes = x_nodes.to(self.device)
-            y_nodes = sigmoid(self.model(x_nodes))
-            return np.squeeze(ml_util.to_cpu(y_nodes, to_numpy=True), axis=1)
+            x = x.to(self.device)
+            y = sigmoid(self.model(x))
+            return np.squeeze(ml_util.to_cpu(y, to_numpy=True), axis=1)
 
     def filter_with_nms(self, merge_sites, likelihoods):
         # Sort by confidence
-        idxs = np.argsort(likelihoods)
-        merge_sites = [merge_sites[i] for i in idxs]
+        merge_sites = [merge_sites[i] for i in np.argsort(likelihoods)]
 
         # NMS
         merge_sites_set = set(merge_sites)
@@ -119,7 +112,7 @@ class MergeDetector:
         while merge_sites:
             # Local max
             root = merge_sites.pop()
-            xyz_root = self.dataset.graph.node_xyz[root]
+            xyz_root = self.dataset.node_xyz[root]
             if root in merge_sites_set:
                 filtered_merge_sites.add(root)
                 merge_sites_set.remove(root)
@@ -133,7 +126,7 @@ class MergeDetector:
                 # Visit node
                 i, dist_i = queue.pop()
                 if i in merge_sites_set:
-                    xyz_i = self.dataset.graph.node_xyz[i]
+                    xyz_i = self.dataset.node_xyz[i]
                     iou = img_util.compute_iou3d(
                         xyz_i, xyz_root, self.patch_shape, self.patch_shape
                     )
@@ -142,8 +135,8 @@ class MergeDetector:
                         self.node_preds[i] = 1e-2
 
                 # Populate queue
-                for j in self.dataset.graph.neighbors(i):
-                    dist_j = dist_i + self.dataset.graph.dist(i, j)
+                for j in self.dataset.neighbors(i):
+                    dist_j = dist_i + self.dataset.dist(i, j)
                     if j not in visited and dist_j < self.patch_shape[0]:
                         queue.append((j, dist_j))
                         visited.add(j)
@@ -153,53 +146,26 @@ class MergeDetector:
         rm_nodes = set()
         for root in tqdm(merge_site_nodes, desc="Remove Merge Sites"):
             # Extract neighborhood
-            root = self.dataset.graph.find_nearby_branching_node(root)
-            nbhd = self.dataset.graph.nodes_within_distance(root, max_depth)
+            root = self.dataset.find_nearby_branching_node(root)
+            nbhd = self.dataset.nodes_within_distance(root, max_depth)
 
             # Check for branching node in neighborhood
             for i in list(nbhd):
-                if i != root and self.dataset.graph.degree[i] >= 3:
-                    nbhd_i = self.dataset.graph.nodes_within_distance(root, 8)
+                if i != root and self.dataset.degree[i] >= 3:
+                    nbhd_i = self.dataset.nodes_within_distance(root, 8)
                     nbhd.extend(nbhd_i)
 
             # Add nodes to removal list
             rm_nodes.update(set(nbhd))
 
         # Update graph
-        self.dataset.graph.remove_nodes(rm_nodes)
+        self.dataset.remove_nodes(rm_nodes)
         print("# Nodes Deleted:", len(rm_nodes))
 
     # --- Helpers ---
     def get_detected_sites(self, threshold):
         nodes = np.where(self.node_preds >= threshold)[0]
-        return [self.dataset.graph.node_xyz[i] for i in nodes]
-
-    def save_results(
-        self, output_dir, output_prefix_s3=None, save_fragments=True
-    ):
-        # Get predicted merge sites
-        nodes = np.where(self.node_preds >= self.threshold)[0]
-        detected_sites = [self.dataset.graph.node_xyz[i] for i in nodes]
-
-        # Save predicted merge sites
-        zip_path = os.path.join(output_dir, "detected_sites.zip")
-        swc_util.write_points(
-            zip_path,
-            detected_sites,
-            color="1.0 0.0 0.0",
-            prefix="merge-site",
-            radius=10,
-        )
-
-        # Save fragments
-        if save_fragments:
-            fragments_path = os.path.join(output_dir, "fragments.zip")
-            self.dataset.graph.to_zipped_swcs(fragments_path)
-
-        # Upload results to S3 (if applicable)
-        if output_prefix_s3:
-            bucket_name, prefix = util.parse_cloud_path(output_prefix_s3)
-            util.upload_dir_to_s3(output_dir, bucket_name, prefix)
+        return [self.dataset.node_xyz[i] for i in nodes]
 
     def save_parameters(self, output_dir):
         json_path = os.path.join(output_dir, "detection_parameters.json")
@@ -213,6 +179,60 @@ class MergeDetector:
             "subgraph_radius": self.dataset.subgraph_radius,
         }
         util.write_json(json_path, parameters)
+
+    def save_results(
+        self, output_dir, output_prefix_s3=None, save_fragments=True
+    ):
+        self.save_sites(output_dir)
+        if save_fragments:
+            fragments_path = os.path.join(output_dir, "fragments.zip")
+            self.dataset.to_zipped_swcs(fragments_path)
+
+        # Upload results to S3 (if applicable)
+        if output_prefix_s3:
+            bucket_name, prefix = util.parse_cloud_path(output_prefix_s3)
+            util.upload_dir_to_s3(output_dir, bucket_name, prefix)
+
+    def save_sites(self, output_dir):
+        # Save model predictions
+        df = pd.DataFrame(columns=["World", "Segment_ID", "Prediction"])
+        df["World"] = self.dataset.node_xyz
+        df["Prediction"] = self.node_preds
+        df["Segment_ID"] = [
+            self.dataset.node_segment_id(i) for i in self.dataset.nodes
+        ]
+        df.to_csv(os.path.join(output_dir, "model_predictions.csv"))
+
+        # Get predicted merge sites
+        nodes = np.where(self.node_preds >= self.threshold)[0]
+        detected_sites = [self.dataset.node_xyz[i] for i in nodes]
+        print("# Sites Saved:", len(nodes))
+
+        # Save predicted merge sites
+        zip_path = os.path.join(output_dir, "detected_sites.zip")
+        swc_util.write_points(
+            zip_path,
+            detected_sites,
+            color="1.0 0.0 0.0",
+            prefix="merge-site",
+            radius=10,
+        )
+
+    def save_train_dataset(self, output_dir):
+        # Extract fragments to save
+        roots = list()
+        visited_ids = set()
+        for i in np.where(self.node_preds >= self.threshold)[0]:
+            cc_id = self.dataset.node_component_id[i]
+            if cc_id not in visited_ids:
+                roots.append([i])
+                visited_ids.add(cc_id)
+
+        # Save fragments
+        zip_path = os.path.join(output_dir, "fragments.zip")
+        self.dataset._batch_to_zipped_swcs(roots, zip_path, False)
+        self.save_sites(output_dir)
+        print("# Fragments Saved:", len(roots))
 
 
 # --- Data Handling ---
@@ -230,7 +250,7 @@ class GraphDataset(IterableDataset, ABC):
         prefetch=64,
         segmentation_path=None,
         subgraph_radius=100,
-        use_new_mask=False
+        use_new_mask=False,
     ):
         # Call parent class
         super().__init__()
@@ -269,7 +289,7 @@ class GraphDataset(IterableDataset, ABC):
         # Search graph
         visited_ids = set()
         for u in self.graph.leaf_nodes():
-            component_id = self.graph.node_component_id[u]
+            component_id = self.node_component_id[u]
             if component_id not in visited_ids and component_id in valid_ids:
                 visited_ids.add(component_id)
                 yield from self._generate_batches_from_component(u)
@@ -297,15 +317,17 @@ class GraphDataset(IterableDataset, ABC):
         for nodes in nx.connected_components(self.graph):
             # Compute path length
             node = util.sample_once(list(nodes))
-            length = self.graph.path_length(root=node, max_depth=self.min_size)
+            length = self.graph.cable_length(
+                max_depth=self.min_size, root=node
+            )
 
             # Check if path length satisfies threshold
             if length > self.min_size:
-                component_ids.add(self.graph.node_component_id[node])
+                component_ids.add(self.node_component_id[node])
         return component_ids
 
     def get_patch_centers(self, nodes):
-        patch_centers = [self.graph.node_voxel(i) for i in nodes]
+        patch_centers = [self.node_voxel(i) for i in nodes]
         return np.array(patch_centers, dtype=int)
 
     def get_label_mask(self, nodes, img_shape, offset):
@@ -321,8 +343,8 @@ class GraphDataset(IterableDataset, ABC):
         # Annotate mask
         subgraph = self.get_contained_subgraph(nodes, img_shape, offset)
         for i, j in subgraph.edges:
-            voxel_i = self.graph.node_voxel(i) - offset
-            voxel_j = self.graph.node_voxel(j) - offset
+            voxel_i = self.node_voxel(i) - offset
+            voxel_j = self.node_voxel(j) - offset
             voxels = geometry_util.make_digital_line(voxel_i, voxel_j)
             img_util.annotate_voxels(segment_mask, voxels)
         return segment_mask
@@ -334,13 +356,13 @@ class GraphDataset(IterableDataset, ABC):
         while queue:
             # Visit node
             i = queue.pop()
-            voxel_i = self.graph.node_voxel(i) - offset
+            voxel_i = self.node_voxel(i) - offset
             if not img_util.is_contained(voxel_i, img_shape, buffer=1):
                 continue
 
             # Update queue
-            for j in self.graph.neighbors(i):
-                voxel_j = self.graph.node_voxel(j) - offset
+            for j in self.neighbors(i):
+                voxel_j = self.node_voxel(j) - offset
                 if img_util.is_contained(voxel_j, img_shape):
                     subgraph.add_edge(i, j)
                     if j not in visited:
@@ -349,7 +371,7 @@ class GraphDataset(IterableDataset, ABC):
         return subgraph
 
     def is_contained(self, node):
-        voxel = self.graph.node_voxel(node)
+        voxel = self.node_voxel(node)
         shape = self.img_reader.shape()[2::]
         buffer = np.max(self.patch_shape) + 1
         return img_util.is_contained(voxel, shape, buffer=buffer)
@@ -370,7 +392,7 @@ class GraphDataset(IterableDataset, ABC):
 
     def is_near_leaf(self, node, threshold=20):
         # Check if node is branching
-        if self.graph.degree[node] > 2:
+        if self.degree[node] > 2:
             return False
 
         # Search neighborhood
@@ -379,12 +401,12 @@ class GraphDataset(IterableDataset, ABC):
         while len(queue) > 0:
             # Visit node
             i, dist_i = queue.pop()
-            if self.graph.degree[i] == 1:
+            if self.degree[i] == 1:
                 return True
 
             # Update queue
-            for j in self.graph.neighbors(i):
-                dist_j = dist_i + self.graph.dist(i, j)
+            for j in self.neighbors(i):
+                dist_j = dist_i + self.dist(i, j)
                 if j not in visited and dist_j < threshold:
                     queue.append((j, dist_j))
                     visited.add(j)
@@ -411,7 +433,7 @@ class DenseGraphDataset(GraphDataset):
         segmentation_path=None,
         step_size=10,
         subgraph_radius=100,
-        use_new_mask=False
+        use_new_mask=False,
     ):
         # Call parent class
         super().__init__(
@@ -425,7 +447,7 @@ class DenseGraphDataset(GraphDataset):
             prefetch=prefetch,
             segmentation_path=segmentation_path,
             subgraph_radius=subgraph_radius,
-            use_new_mask=use_new_mask
+            use_new_mask=use_new_mask,
         )
 
         # Instance attributes
@@ -479,7 +501,7 @@ class DenseGraphDataset(GraphDataset):
         nodes = list()
         for i, j in nx.dfs_edges(self.graph, source=root):
             # Check if starting new batch
-            self.distance_traversed += self.graph.dist(i, j)
+            self.distance_traversed += self.dist(i, j)
             if len(nodes) == 0:
                 if self.is_node_valid(i):
                     root = i
@@ -489,7 +511,7 @@ class DenseGraphDataset(GraphDataset):
                     continue
 
             # Check whether to yield batch
-            is_node_far = self.graph.dist(root, j) > 512
+            is_node_far = self.dist(root, j) > 512
             is_batch_full = len(nodes) == self.batch_size
             if is_node_far or is_batch_full:
                 # Yield nodes in batch
@@ -499,8 +521,8 @@ class DenseGraphDataset(GraphDataset):
                 nodes = list()
 
             # Visit j
-            is_next = self.graph.dist(last_node, j) >= self.step_size - 2
-            is_branching = self.graph.degree[j] >= 3
+            is_next = self.dist(last_node, j) >= self.step_size - 2
+            is_branching = self.degree[j] >= 3
             if (is_next or is_branching) and self.is_node_valid(j):
                 last_node = j
                 nodes.append(j)
@@ -517,7 +539,13 @@ class DenseGraphDataset(GraphDataset):
         patch_centers = self.get_patch_centers(nodes) - offset
 
         # Populate batch array
-        batch = np.empty((len(nodes), 2,) + self.patch_shape)
+        batch = np.empty(
+            (
+                len(nodes),
+                2,
+            )
+            + self.patch_shape
+        )
         for i, center in enumerate(patch_centers):
             s = img_util.get_slices(center, self.patch_shape)
             batch[i, 0, ...] = img_util.normalize(img[s])
@@ -530,7 +558,13 @@ class DenseGraphDataset(GraphDataset):
         patch_centers = self.get_patch_centers(nodes) - offset
 
         # Populate batch array
-        patches = np.empty((len(nodes), 2,) + self.patch_shape)
+        patches = np.empty(
+            (
+                len(nodes),
+                2,
+            )
+            + self.patch_shape
+        )
         point_clouds = np.empty((len(nodes), 3, 3600), dtype=np.float32)
         for i, (node, center) in enumerate(zip(nodes, patch_centers)):
             s = img_util.get_slices(center, self.patch_shape)
@@ -550,6 +584,9 @@ class DenseGraphDataset(GraphDataset):
         return nodes, batch
 
     # --- Helpers ---
+    def __getattr__(self, name):
+        return getattr(self.graph, name)
+
     def estimate_iterations(self):
         """
         Estimates the number of iterations required to search graph.
@@ -563,7 +600,7 @@ class DenseGraphDataset(GraphDataset):
         total_cable_length = 0
         n_fragments = 0
         for nodes in map(list, nx.connected_components(self.graph)):
-            cable_length = self.graph.cable_length(root=nodes[0])
+            cable_length = self.cable_length(root=nodes[0])
             if cable_length > self.min_size:
                 total_cable_length += cable_length
                 n_fragments += 1
@@ -587,7 +624,7 @@ class SparseGraphDataset(GraphDataset):
         prefetch=128,
         segmentation_path=None,
         subgraph_radius=100,
-        use_new_mask=False
+        use_new_mask=False,
     ):
         # Call parent class
         super().__init__(
@@ -600,7 +637,7 @@ class SparseGraphDataset(GraphDataset):
             prefetch=prefetch,
             segmentation_path=segmentation_path,
             subgraph_radius=subgraph_radius,
-            use_new_mask=use_new_mask
+            use_new_mask=use_new_mask,
         )
 
         # Instance attributes
@@ -641,6 +678,9 @@ class SparseGraphDataset(GraphDataset):
                     root = j
 
     # --- Helpers ---
+    def __getattr__(self, name):
+        return getattr(self.graph, name)
+
     def estimate_iterations(self):
         """
         Estimates the number of iterations required to search graph.

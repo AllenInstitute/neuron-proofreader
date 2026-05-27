@@ -109,8 +109,6 @@ class MLConfig:
         Name of model used to perform inference. Default is None.
     patch_shape : Tuple[int]
         Shape of image patch expected by vision model. Default is (96, 96, 96).
-    threshold : float
-        A general threshold value used in classification. Default is 0.8.
     transform : bool
         Indication of whether to apply data augmentation to image patches.
         Default is False.
@@ -121,7 +119,6 @@ class MLConfig:
     device: str = "cuda"
     model_name: str = None
     patch_shape: tuple = (96, 96, 96)
-    threshold: float = 0.8
     transform: bool = False
 
     def to_dict(self):

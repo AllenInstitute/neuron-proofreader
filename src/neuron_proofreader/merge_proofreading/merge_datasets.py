@@ -29,7 +29,7 @@ from neuron_proofreader.machine_learning.point_cloud_models import (
     subgraph_to_point_cloud,
 )
 from neuron_proofreader.merge_proofreading.merge_dataloading import (
-    get_brain_merge_sites
+    get_brain_merge_sites,
 )
 from neuron_proofreader.skeleton_graph import SkeletonGraph
 from neuron_proofreader.utils import (
@@ -71,6 +71,7 @@ class MergeSiteDataset(Dataset):
     patch_shape : Tuple[int], optional
         Shape of the 3D image patches to extract.
     """
+
     random_negative_example_prob = 0.8
 
     def __init__(
@@ -121,9 +122,7 @@ class MergeSiteDataset(Dataset):
         self.merge_site_kdtrees = dict()
 
     # --- Load Data ---
-    def load_fragment_graphs(
-        self, brain_id, swc_pointer, use_anisotropy=True
-    ):
+    def load_fragment_graphs(self, brain_id, swc_pointer, use_anisotropy=True):
         """
         Loads fragments containing merge mistakes for a whole-brain dataset,
         then stores them in the "graphs" attribute.
@@ -139,7 +138,7 @@ class MergeSiteDataset(Dataset):
         graph = SkeletonGraph(
             anisotropy=self.anisotropy,
             node_spacing=self.node_spacing,
-            use_anisotropy=use_anisotropy
+            use_anisotropy=use_anisotropy,
         )
         graph.load(swc_pointer)
 
@@ -364,7 +363,7 @@ class MergeSiteDataset(Dataset):
         # Get site info
         brain_id = self.merge_sites_df["brain_id"].iloc[idx]
         xyz = self.merge_sites_df["xyz"].iloc[idx]
-        node = self.gt_graphs[brain_id].find_closest_node(xyz)
+        node = self.gt_graphs[brain_id].kdtree.query(xyz)[1]
 
         # Extract rooted subgraph
         subgraph = self.gt_graphs[brain_id].rooted_subgraph(
@@ -393,7 +392,7 @@ class MergeSiteDataset(Dataset):
         # Get site info
         brain_id = self.merge_sites_df["brain_id"].iloc[idx]
         xyz = self.merge_sites_df["xyz"].iloc[idx]
-        node = self.graphs[brain_id].find_closest_node(xyz)
+        node = self.graphs[brain_id].kdtree.query(xyz)[1]
 
         # Extract rooted subgraph
         subgraph = self.graphs[brain_id].rooted_subgraph(
@@ -414,19 +413,15 @@ class MergeSiteDataset(Dataset):
         label : int
             Label of example.
         """
-        # Sample graph
         brain_id = self.sample_brain_id()
-
-        # Sample node on graph
         outcome = random.random()
+        cnt = 0
         while True:
             # Sample node
+            cnt += 1
             if outcome < 0.4:
                 # Any node
                 node = util.sample_once(self.graphs[brain_id].nodes)
-            #elif outcome < 0.5:
-            #    # Node close to soma
-            #    node = self.sample_node_nearby_soma(brain_id)
             elif outcome < 0.8:
                 # Branching node
                 branching_nodes = self.graphs[brain_id].branching_nodes()
@@ -459,6 +454,10 @@ class MergeSiteDataset(Dataset):
             # Check if node is close to merge site
             if not self.is_nearby_merge_site(brain_id, node):
                 return brain_id, subgraph, 0
+
+            # Check number of tries
+            if cnt > 20:
+                outcome = 1
 
     def get_img_patch(self, brain_id, center):
         """
@@ -511,8 +510,8 @@ class MergeSiteDataset(Dataset):
         offset = img_util.get_offset(center, self.patch_shape)
         for node1, node2 in subgraph.edges:
             # Get local voxel coordinates
-            voxel1 = subgraph.get_local_voxel(node1, offset)
-            voxel2 = subgraph.get_local_voxel(node2, offset)
+            voxel1 = subgraph.node_local_voxel(node1, offset)
+            voxel2 = subgraph.node_local_voxel(node2, offset)
 
             # Populate mask
             voxels = geometry_util.make_digital_line(voxel1, voxel2)
@@ -529,7 +528,7 @@ class MergeSiteDataset(Dataset):
         int
             Number of positive examples of merge sites.
         """
-        return len(self.merge_sites_df)
+        return 2 * len(self.merge_sites_df)
 
     def check_nearby_branching(
         self, brain_id, root, max_depth=60, use_gt=False
@@ -618,37 +617,6 @@ class MergeSiteDataset(Dataset):
         dist, _ = self.merge_site_kdtrees[brain_id].query(xyz)
         return dist < 100
 
-    def relabel_nodes(self):
-        """
-        Reassigns contiguous node IDs and update all dependent structures.
-        """
-        # Set node ids
-        old_node_ids = np.array(self.nodes, dtype=int)
-        new_node_ids = np.arange(len(old_node_ids))
-
-        # Set edge ids
-        old_to_new = dict(zip(old_node_ids, new_node_ids))
-        old_edge_ids = list(self.edges)
-        old_irr_edge_ids = self.irreducible.edges
-        edge_attrs = {(i, j): data for i, j, data in self.edges(data=True)}
-
-        # Reset graph
-        self.clear()
-        for (i, j) in old_edge_ids:
-            self.add_edge(old_to_new[i], old_to_new[j], **edge_attrs[(i, j)])
-
-        self.irreducible.clear()
-        for (i, j) in old_irr_edge_ids:
-            self.irreducible.add_edge(old_to_new[i], old_to_new[j])
-
-        # Update attributes
-        self.node_radius = self.node_radius[old_node_ids]
-        self.node_xyz = self.node_xyz[old_node_ids]
-        self.node_component_id = self.node_component_id[old_node_ids]
-
-        self.reassign_component_ids()
-        self.set_kdtree()
-
     def sample_node_nearby_soma(self, brain_id):
         subgraph = self.gt_graphs[brain_id].get_rooted_subgraph(0, 600)
         gt_node = util.sample_once(subgraph.nodes)
@@ -730,7 +698,7 @@ class MergeSiteTrainDataset(MergeSiteDataset):
             return self.get_indexed_positive_site(idx)
         elif np.random.random() < self.random_negative_example_prob:
             return self.get_random_negative_site()
-        elif abs(idx) < len(self):
+        elif abs(idx) < len(self.merge_sites_df):
             return self.get_indexed_negative_site(abs(idx))
         else:
             return self.get_random_negative_site()
@@ -745,8 +713,9 @@ class MergeSiteTrainDataset(MergeSiteDataset):
         numpy.ndarray
             Example indices to iterate over.
         """
-        n_negative_examples = int(len(self) * (1 + self.negative_bias))
-        return np.arange(-n_negative_examples + 1, len(self))
+        n_pos_examples = len(self.merge_sites_df)
+        n_negative_examples = int(n_pos_examples * (1 + self.negative_bias))
+        return np.arange(-n_negative_examples + 1, n_pos_examples)
 
 
 class MergeSiteValDataset(MergeSiteDataset):
@@ -801,6 +770,7 @@ class MergeSiteValDataset(MergeSiteDataset):
         negative_examples : List[dict]
             List of negative examples collected across all graphs.
         """
+
         # Subroutines
         def add_examples():
             """
@@ -954,7 +924,7 @@ class MergeSiteDataLoader(DataLoader):
         is_multimodal=False,
         modality=None,
         sampler=None,
-        use_shuffle=True
+        use_shuffle=True,
     ):
         """
         Instantiates a MergeSiteDataLoader object.
@@ -1000,11 +970,11 @@ class MergeSiteDataLoader(DataLoader):
         for start in range(0, len(idxs), self.batch_size):
             end = min(start + self.batch_size, len(idxs))
             if self.is_multimodal and self.modality == "graph":
-                yield self._load_image_graph_batch(idxs[start: end])
+                yield self._load_image_graph_batch(idxs[start:end])
             elif self.is_multimodal and self.modality == "pointcloud":
-                yield self._load_image_pc_batch(idxs[start: end])
+                yield self._load_image_pc_batch(idxs[start:end])
             else:
-                yield self._load_image_batch(idxs[start: end])
+                yield self._load_image_batch(idxs[start:end])
 
     def _load_image_batch(self, batch_idxs):
         """
@@ -1114,9 +1084,7 @@ class MergeSiteDataLoader(DataLoader):
                 h.append(h_i)
                 x.append(x_i)
                 edge_index.append(edge_index_i)
-                batches.append(
-                    torch.full((n_i,), i, dtype=torch.long)
-                )
+                batches.append(torch.full((n_i,), i, dtype=torch.long))
 
                 node_offset += n_i
 
@@ -1130,7 +1098,10 @@ class MergeSiteDataLoader(DataLoader):
         batch = ml_util.TensorDict(
             {
                 "img": ml_util.to_tensor(patches),
-                "graph": (h, x, edge_index, batches)
+                "graph": (h, x, edge_index, batches),
             }
         )
         return batch, ml_util.to_tensor(targets)
+
+    def __len__(self):
+        return 2 * len(self.dataset)

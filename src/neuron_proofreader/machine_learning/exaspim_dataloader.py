@@ -328,9 +328,7 @@ class ExaspimDataset(IterableDataset):
                 pending = dict()
                 for _ in range(self.prefetch_foreground_sampling):
                     voxel = self.sample_interior_voxel(brain_id)
-                    thread = executor.submit(
-                        self.read_image, brain_id, voxel
-                    )
+                    thread = executor.submit(self.read_image, brain_id, voxel)
                     pending[thread] = voxel
 
                 # Check if image patch is bright enough
@@ -489,8 +487,20 @@ class DataLoader:
                 )
 
             # Process results
-            img_patches = np.zeros((batch_size, 1,) + self.patch_shape)
-            mask_patches = np.zeros((batch_size, 1,) + self.patch_shape)
+            img_patches = np.zeros(
+                (
+                    batch_size,
+                    1,
+                )
+                + self.patch_shape
+            )
+            mask_patches = np.zeros(
+                (
+                    batch_size,
+                    1,
+                )
+                + self.patch_shape
+            )
             for i, process in enumerate(as_completed(processes)):
                 img, mask = process.result()
                 img_patches[i, 0, ...] = img

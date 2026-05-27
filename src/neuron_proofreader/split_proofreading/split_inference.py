@@ -60,7 +60,6 @@ class InferencePipeline:
         model,
         config,
         log_preamble="",
-        segmentation_path=None,
         soma_centroids=list(),
     ):
         """
@@ -81,9 +80,6 @@ class InferencePipeline:
         log_preamble : str, optional
             String to be added to the beginning of log. Default is an empty
             string.
-        segmentation_path : str, optional
-            Path to segmentation corresponding to the given fragments. Default
-            is None.
         soma_centroids : List[Tuple[float]], optional
             Physcial coordinates of soma centroids. Default is an empty list.
         """
@@ -102,9 +98,9 @@ class InferencePipeline:
         self.log(log_preamble)
 
         # Load data
-        self._load_data(fragments_path, img_path, segmentation_path)
+        self._load_data(fragments_path, img_path)
 
-    def _load_data(self, fragments_path, img_path, segmentation_path):
+    def _load_data(self, fragments_path, img_path):
         """
         Builds a graph from the given fragments.
 
@@ -114,8 +110,6 @@ class InferencePipeline:
             Path to SWC files to be loaded into graph.
         img_path : str
             Path to whole-brain image corresponding to the given fragments.
-        segmentation_path : str
-            Path to segmentation corresponding to the given fragments.
         """
         # Load data
         t0 = time()
@@ -124,21 +118,20 @@ class InferencePipeline:
             fragments_path,
             img_path,
             self.config,
-            segmentation_path=segmentation_path,
             soma_centroids=self.soma_centroids,
         )
-        self.log(self.dataset.graph.summary(prefix="\nInitial"))
+        self.log(self.dataset.summary(prefix="\nInitial"))
         self.save_fragment_ids()
         self.save_graph("original_swcs")
 
         # Postprocess fragments with somas
-        self.log(self.dataset.graph.remove_soma_merges())
-        self.log(self.dataset.graph.connect_soma_fragments())
+        self.log(self.dataset.remove_soma_merges())
+        self.log(self.dataset.connect_soma_fragments())
 
         # Break high risk merges (if applicable)
         if self.config.graph.remove_high_risk_merges:
-            self.log(self.dataset.graph.remove_high_risk_merges())
-        self.log(self.dataset.graph.summary(prefix="\nPre-Corrected"))
+            self.log(self.dataset.remove_high_risk_merges())
+        self.log(self.dataset.summary(prefix="\nPre-Corrected"))
         self.save_graph("precorrected_swcs")
 
         # Report runtime
@@ -146,7 +139,9 @@ class InferencePipeline:
         self.log(f"Module Runtime: {elapsed:.2f} {unit}\n")
 
     # --- Pipelines ---
-    def __call__(self, search_radius):
+    def __call__(
+        self, search_radius, dt=0.1, min_threshold=0.75, removal_threshold=0.3
+    ):
         """
         Executes the full inference pipeline.
 
@@ -154,59 +149,79 @@ class InferencePipeline:
         ----------
         search_radius : float
             Search radius (in microns) used to generate proposals.
+        dt : float, optional
+            Increment that acceptance threshold is lowered by. Default is 0.1.
+        min_threshold : float, optional
+            Minimum threshold for accepting proposals. Default is 0.75.
+        removal_threshold : float, optional
+            Proposals with model predictions less than this value are removed.
+            Default is 0.3.
         """
-        # Generate proposal
-        t0 = time()
-        self.generate_proposals(search_radius)
-        preds = self.predict_proposals()
-
-        # Update graph
-        self.merge_with_threshold_schedule(preds, self.config.ml.threshold)
-
-        # Report results
-        t, unit = util.time_writer(time() - t0)
-        self.log(self.dataset.graph.summary(prefix="\nFinal"))
-        self.log(f"Total Runtime: {t:.2f} {unit}\n")
-        self.save_results()
-
-    def multistep(
-        self, search_radius, low_threshold=0.3, high_threshold=0.8
-    ):
         # Generate proposals
-        t0 = time()
         self.generate_proposals(search_radius)
+        total_proposals = self.dataset.n_proposals()
 
-        # Round 1: Update graph
-        preds = self.predict_proposals(suffix="_round1")
-        self.merge_with_threshold_schedule(
-            preds, high_threshold, only_leaf2leaf=True
-        )
-        self.filter_proposals(preds, low_threshold)
+        # Run inference
+        cnt = 0
+        t0 = time()
+        for only_leaf2leaf in [True, False]:
+            # Reset threshold
+            name = "_leaf2leaf" if only_leaf2leaf else ""
+            new_threshold = 0.99
+            if not only_leaf2leaf:
+                min_threshold += dt
 
-        # Round 2: Update graph
-        preds = self.predict_proposals()
-        self.merge_with_threshold_schedule(
-            preds, self.config.ml.threshold, only_leaf2leaf=False
-        )
+            # Generate predictions
+            while self.dataset.proposals:
+                # Generate predictons
+                cnt += 1
+                self.log(
+                    f"\nThreshold={new_threshold} w/ only_leaf2leaf={only_leaf2leaf}"
+                )
+                preds = self.predict_proposals(
+                    suffix=f"{name}_round={cnt}_threshold={new_threshold}"
+                )
+
+                # Merge accetped proposals
+                cur_threshold = new_threshold
+                self.merge_with_threshold_schedule(
+                    preds, cur_threshold, only_leaf2leaf=only_leaf2leaf
+                )
+                self.filter_proposals(preds, removal_threshold)
+
+                # Update threshold
+                new_threshold = max(cur_threshold - dt, min_threshold)
+                if cur_threshold == new_threshold:
+                    break
 
         # Report results
         t, unit = util.time_writer(time() - t0)
-        self.log(self.dataset.graph.summary(prefix="\nFinal"))
+        p_accepts = len(self.dataset.accepts) / total_proposals
+        self.log(self.dataset.summary(prefix="\nFinal"))
+        self.log(f"Overall Acceptance Rate: {p_accepts:.2f}")
         self.log(f"Total Runtime: {t:.2f} {unit}\n")
         self.save_results()
 
     # --- Core Routines ---
     def filter_proposals(self, preds, threshold):
+        # Remove based on model predictions and mergeability
         cnt = 0
         for proposal, pred in preds.items():
-            is_valid = self.dataset.graph.is_mergeable(*proposal)
+            is_valid = self.dataset.is_mergeable(*proposal)
             if pred < threshold or not is_valid:
-                self.dataset.graph.remove_proposal(proposal)
+                self.dataset.remove_proposal(proposal)
                 cnt += 1
 
-        self.log("\nFilter Proposals")
+        # Sanity check
+        for proposal in self.dataset.list_proposals():
+            i, j = proposal
+            if self.dataset.degree[i] > 2 or self.dataset.degree[j] > 2:
+                self.dataset.remove_proposal(proposal)
+                cnt += 1
+
+        self.log("Filter Proposals")
         self.log(f"# Proposals Removed: {cnt}")
-        self.log(f"# Proposals Remaining: {self.dataset.graph.n_proposals()}")
+        self.log(f"# Proposals Remaining: {self.dataset.n_proposals()}\n")
 
     def generate_proposals(self, search_radius):
         """
@@ -222,13 +237,13 @@ class InferencePipeline:
         t0 = time()
         self.log("\nStep 2: Generate Proposals")
         self.log(f"Search Radius: {search_radius}")
-        self.dataset.graph.generate_proposals(
+        self.dataset.generate_proposals(
             search_radius,
             allow_nonleaf_proposals=self.config.graph.allow_nonleaf_proposals,
         )
 
-        n_proposals = format(self.dataset.graph.n_proposals(), ",")
-        n_proposals_blocked = self.dataset.graph.n_proposals_blocked
+        n_proposals = format(self.dataset.n_proposals(), ",")
+        n_proposals_blocked = self.dataset.n_proposals_blocked
 
         # Report results
         t, unit = util.time_writer(time() - t0)
@@ -259,7 +274,7 @@ class InferencePipeline:
         # Initializations
         t0 = time()
         self.log("\nStep 3: Run Inference")
-        n_proposals = self.dataset.graph.n_proposals()
+        n_proposals = self.dataset.n_proposals()
         n_accepts = 0
 
         # Progressive merging
@@ -278,7 +293,7 @@ class InferencePipeline:
 
         # Report results
         t, unit = util.time_writer(time() - t0)
-        self.log(f"# Merges Blocked: {self.dataset.graph.n_merges_blocked}")
+        self.log(f"# Merges Blocked: {self.dataset.n_merges_blocked}")
         self.log(f"# Accepted: {format(n_accepts, ',')}")
         self.log(f"% Accepted: {100 * n_accepts / n_proposals:.2f}")
         self.log(f"Module Runtime: {t:.2f} {unit}\n")
@@ -295,7 +310,7 @@ class InferencePipeline:
         """
         # Main
         preds = dict()
-        pbar = tqdm(total=self.dataset.graph.n_proposals(), desc="Inference")
+        pbar = tqdm(total=self.dataset.n_proposals(), desc="Inference")
         for data in self.dataset:
             preds.update(self.predict(data))
             pbar.update(data.n_proposals())
@@ -321,21 +336,21 @@ class InferencePipeline:
             is False.
         """
         n_accepts = 0
-        proposals = self.dataset.graph.sorted_proposals()
+        proposals = self.dataset.sorted_proposals()
         for proposal in [p for p in proposals if p in preds]:
             # Check for leaf2leaf condition
-            is_leaf2leaf = self.dataset.graph.is_leaf2leaf(proposal)
+            is_leaf2leaf = self.dataset.is_leaf2leaf(proposal)
             if only_leaf2leaf and not is_leaf2leaf:
                 continue
 
             # Check if proposal satifies threshold
-            i, j = proposal
             if preds[proposal] < threshold:
                 continue
 
             # Check if proposal creates a loop
+            i, j = proposal
             if not nx.has_path(self.dataset.graph, i, j):
-                self.dataset.graph.merge_proposal(proposal)
+                self.dataset.merge_proposal(proposal)
                 n_accepts += 1
             del preds[proposal]
         return n_accepts
@@ -399,7 +414,7 @@ class InferencePipeline:
         util.mkdir(os.path.join(self.output_dir, dirname))
 
         # Save swcs
-        self.dataset.graph.to_zipped_swcs_multithreaded(temp_dir)
+        self.dataset.to_zipped_swcs_multithreaded(temp_dir)
         zip_paths = util.list_paths(temp_dir, extension=".zip")
         util.combine_zips(zip_paths, output_zip_path)
         util.rmdir(temp_dir)
@@ -409,22 +424,22 @@ class InferencePipeline:
         for proposal, pred in preds_dict.items():
             # Extract info
             i, j = proposal
-            segment_i = self.dataset.graph.node_swc_id(i)
-            segment_j = self.dataset.graph.node_swc_id(j)
+            segment_i = self.dataset.node_swc_id(i)
+            segment_j = self.dataset.node_swc_id(j)
 
             # Add info
             summary.append(
                 {
                     "Proposal": (segment_i, segment_j),
-                    "Leaf2Leaf": self.dataset.graph.is_leaf2leaf(proposal),
-                    "Length": self.dataset.graph.proposal_length(proposal),
+                    "Leaf2Leaf": self.dataset.is_leaf2leaf(proposal),
+                    "Length": self.dataset.proposal_length(proposal),
                     "Prediction": pred,
                     "Segment1": segment_i,
                     "Segment2": segment_j,
-                    "Voxel1": self.dataset.graph.node_voxel(i),
-                    "Voxel2": self.dataset.graph.node_voxel(j),
-                    "World1": self.dataset.graph.node_xyz[i],
-                    "World2": self.dataset.graph.node_xyz[j],
+                    "Voxel1": self.dataset.node_voxel(i),
+                    "Voxel2": self.dataset.node_voxel(j),
+                    "World1": self.dataset.node_xyz[i],
+                    "World2": self.dataset.node_xyz[j],
                 }
             )
 
@@ -433,11 +448,11 @@ class InferencePipeline:
         pd.DataFrame(summary).set_index("Proposal").to_csv(path)
 
     def reconfigure_node_radius(self):
-        n_nodes = len(self.dataset.graph.node_radius)
-        self.dataset.graph.node_radius = np.ones((n_nodes), dtype=np.float16)
-        for i, j in self.dataset.graph.accepts:
-            self.dataset.graph.node_radius[i] = 6
-            self.dataset.graph.node_radius[j] = 6
+        n_nodes = len(self.dataset.node_radius)
+        self.dataset.node_radius = np.ones((n_nodes), dtype=np.float16)
+        for i, j in self.dataset.accepts:
+            self.dataset.node_radius[i] = 6
+            self.dataset.node_radius[j] = 6
 
     def save_connections(self):
         """
@@ -446,10 +461,10 @@ class InferencePipeline:
         """
         path = os.path.join(self.output_dir, "connections.txt")
         with open(path, "w") as f:
-            for id1, id2 in self.dataset.graph.merged_ids:
+            for id1, id2 in self.dataset.merged_ids:
                 f.write(f"{id1}, {id2}" + "\n")
 
     def save_fragment_ids(self):
         path = f"{self.output_dir}/segment_ids.txt"
-        segment_ids = list(self.dataset.graph.component_id_to_swc_id.values())
+        segment_ids = list(self.dataset.component_id_to_swc_id.values())
         util.write_list(path, segment_ids)

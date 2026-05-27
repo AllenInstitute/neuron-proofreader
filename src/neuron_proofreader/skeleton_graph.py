@@ -330,7 +330,7 @@ class SkeletonGraph(nx.Graph):
         self.relabel_nodes()
         results = [
             f"# Soma Fragments: {len(self.soma_centroids)}",
-            f"# Soma Merges: {n_soma_merges}"
+            f"# Soma Merges: {n_soma_merges}",
         ]
         return "\n".join(results)
 
@@ -896,7 +896,7 @@ class SkeletonGraph(nx.Graph):
         str
             Segment ID corresponding to the given node.
         """
-        return self.get_swc_id(node).split(".")[0]
+        return self.node_swc_id(node).split(".")[0]
 
     def node_swc_id(self, i):
         """
@@ -948,13 +948,13 @@ class SkeletonGraph(nx.Graph):
         """
         return set(np.where(self.node_component_id == component_id)[0])
 
-    def nodes_with_segment_id(self, segment_id):
+    def nodes_with_segment_id(self, query_segment_id):
         """
         Gets all nodes with the given segment ID.
 
         Parameters
         ----------
-        segment_id : int
+        query_segment_id : int
             Unique identifier of a segment to be queried.
 
         Returns
@@ -963,9 +963,9 @@ class SkeletonGraph(nx.Graph):
             Nodes with the given segment ID.
         """
         nodes = set()
-        query_id = f"{segment_id}."
+        query_id = str(query_segment_id)
         for swc_id in self.swc_ids():
-            segment_id = int(swc_id.replace(".0", ""))
+            segment_id = swc_id.split(".")[0]
             if segment_id == query_id:
                 component_id = self.component_id_from_swc_id(swc_id)
                 nodes = nodes.union(self.nodes_with_component_id(component_id))
