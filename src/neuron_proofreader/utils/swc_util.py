@@ -638,6 +638,9 @@ def to_graph(swc_dict):
     ----------
     swc_dict : dict
         Contents of an SWC file.
+    set_attrs : bool, optional
+        Indication of whether to set "xyz" and "radius" as graph-level
+        attributes. Default is False.
 
     Returns
     -------
