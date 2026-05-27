@@ -196,7 +196,7 @@ class Reader:
             Dictionaries whose keys and values are the attribute names and
             values from an SWC file.
         """
-        pbar = tqdm(total=len(zip_paths), desc="Read SWCs")
+        pbar = self.manual_progress_bar(len(zip_paths))
         with ProcessPoolExecutor() as executor:
             # Assign processes
             futures = {executor.submit(read_fn, path) for path in zip_paths}
@@ -338,12 +338,16 @@ class Reader:
             Dictionaries whose keys and values are the attribute names and
             values from an SWC file.
         """
-        # Initialize cloud reader
-        client = storage.Client()
+        # Download ZIP
         bucket_name, path = util.parse_cloud_path(path)
-        bucket = client.bucket(bucket_name)
+        bucket = storage.Client().bucket(bucket_name)
+        try:
+            zip_content = bucket.blob(path).download_as_bytes()
+        except TransportError:
+            print(f"Failed to read {path}!")
+            return deque()
 
-        # Parse Zip
+        # Parse ZIP
         swc_dicts = deque()
         zip_content = bucket.blob(path).download_as_bytes()
         with ZipFile(BytesIO(zip_content), "r") as zf:
@@ -549,21 +553,21 @@ def write_points(
     radius : float, optional
         Radius to be used in SWC file. Default is 10.
     """
-    zip_writer = ZipFile(zip_path, write_mode)
+    zf = ZipFile(zip_path, write_mode)
     for i, xyz in enumerate(points):
         filename = prefix + str(i + 1) + ".swc"
-        to_zipped_point(zip_writer, filename, xyz, color=color, radius=radius)
+        to_zipped_point(zf, filename, xyz, color=color, radius=radius)
 
 
-def to_zipped_point(zip_writer, filename, xyz, color=None, radius=5):
+def to_zipped_point(zf, filename, xyz, color=None, radius=5):
     """
     Writes a point to an SWC file format, which is then stored in a ZIP
     archive.
 
     Parameters
     ----------
-    zip_writer : zipfile.ZipFile
-        ZipFile object that will store the generated SWC file.
+    zf : zipfile.ZipFile
+        ZipFile used to write the generated SWC file.
     filename : str
         Filename of SWC file.
     xyz : ArrayLike
@@ -571,7 +575,7 @@ def to_zipped_point(zip_writer, filename, xyz, color=None, radius=5):
     color : str, optional
         Color of nodes. Default is None.
     radius : float, optional
-        Radius of point. Default is 5um.
+        Radius (in microns) of point. Default is 5.
     """
     with StringIO() as text_buffer:
         # Preamble
@@ -584,7 +588,7 @@ def to_zipped_point(zip_writer, filename, xyz, color=None, radius=5):
         text_buffer.write("\n" + f"1 5 {x} {y} {z} {radius} -1")
 
         # Finish
-        zip_writer.writestr(filename, text_buffer.getvalue())
+        zf.writestr(filename, text_buffer.getvalue())
 
 
 # --- Helpers ---
@@ -595,7 +599,7 @@ def get_segment_id(swc_name):
     Parameters
     ----------
     swc_name : str
-        SWC filename, expected to be in the format "{segment_id}.swc".
+        SWC filename in the format "{segment_id}.swc".
 
     Returns
     -------
@@ -611,7 +615,7 @@ def get_segment_id(swc_name):
 
 def get_swc_name(path):
     """
-    Gets name of the SWC file loacted at the given path, minus the extension.
+    Gets name of the SWC file at the given path, minus the extension.
 
     Parameters
     ----------
@@ -630,7 +634,7 @@ def get_swc_name(path):
 
 def to_graph(swc_dict):
     """
-    Converts an SWC dict to a NetworkX graph with reindexed nodes.
+    Converts an SWC dictionary to a NetworkX graph with reindexed nodes.
 
     Parameters
     ----------
@@ -653,8 +657,10 @@ def to_graph(swc_dict):
     ]
 
     # Build graph with reindexed edges
-    graph = nx.Graph(swc_name=swc_dict["swc_name"])
+    graph = nx.Graph(
+        swc_name=swc_dict["swc_name"],
+        radius=swc_dict["radius"],
+        xyz=swc_dict["xyz"],
+    )
     graph.add_edges_from(edges)
-    graph.graph["xyz"] = swc_dict["xyz"]
-    graph.graph["radius"] = swc_dict["radius"]
     return graph
