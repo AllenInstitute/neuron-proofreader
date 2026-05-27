@@ -177,7 +177,12 @@ class MAE3D(nn.Module):
         self.encoder_dim = self.model.encoder_dim
         self.n_prefix_tokens = 1 + encoder.n_register_tokens
         self.grid_size = tuple(int(g) for g in encoder.grid_size)
-        self.pool_power = pool_power
+        # Learnable pooling power γ (log-parameterized so it stays positive).
+        # exp(log(pool_power)) = pool_power at init, so skeleton tokens start
+        # pool_power× heavier than segment tokens and background stays zero.
+        self.pool_log_power = nn.Parameter(
+            torch.tensor(float(pool_power)).log()
+        )
 
         # Dual-stream classifier: [CLS, mask-pooled] → 1
         self.classifier = nn.Sequential(
@@ -203,8 +208,8 @@ class MAE3D(nn.Module):
         weights = F.adaptive_max_pool3d(mask, self.grid_size)
         weights = weights.reshape(weights.shape[0], -1)  # (B, n_patches)
 
-        # Power-scale: skeleton=1.0, segment=0.25, bg=0.0 (with power=2)
-        weights = weights ** self.pool_power
+        # Power-scale with learned γ; exp keeps γ strictly positive.
+        weights = weights ** self.pool_log_power.exp()
 
         # Normalize weights to sum to 1
         weights = weights / (weights.sum(dim=1, keepdim=True) + 1e-8)

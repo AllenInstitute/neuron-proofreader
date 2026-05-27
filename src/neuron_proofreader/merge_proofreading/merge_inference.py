@@ -24,6 +24,9 @@ import torch
 from neuron_proofreader.machine_learning.point_cloud_models import (
     subgraph_to_point_cloud,
 )
+from neuron_proofreader.merge_proofreading.sparse_sampling import (
+    compute_interesting_nodes,
+)
 from neuron_proofreader.utils import (
     geometry_util,
     img_util,
@@ -59,7 +62,7 @@ class MergeDetector:
     # --- Core routines
     def search_graph(self):
         # Initialize progress bar
-        pbar = tqdm(total=self.dataset.estimate_iterations())
+        pbar = tqdm(total=self.dataset.estimate_iterations(), miniters=1000, mininterval=0)
         t0 = time()
 
         # Iterate over dataset
@@ -556,7 +559,13 @@ class DenseGraphDataset(GraphDataset):
         return int(length / self.step_size)
 
 
-class SparseGraphDataset(GraphDataset):
+class SparseGraphDataset(DenseGraphDataset):
+    """
+    Inference dataset that samples only nodes near branch points or near
+    other axons, skipping long isolated axon segments. Inherits the
+    image-prefetch and per-node feature extraction from DenseGraphDataset
+    and overrides only the node-selection logic.
+    """
 
     def __init__(
         self,
@@ -564,72 +573,93 @@ class SparseGraphDataset(GraphDataset):
         img_path,
         patch_shape,
         batch_size=16,
+        branch_radius=25.0,
+        brightness_clip=300,
         is_multimodal=False,
         min_search_size=0,
         prefetch=128,
+        proximity_radius=15.0,
         segmentation_path=None,
+        step_size=10,
         subgraph_radius=100,
-        use_new_mask=False
+        use_new_mask=False,
     ):
-        # Call parent class
         super().__init__(
             graph,
             img_path,
             patch_shape,
             batch_size=batch_size,
+            brightness_clip=brightness_clip,
             is_multimodal=is_multimodal,
             min_search_size=min_search_size,
             prefetch=prefetch,
             segmentation_path=segmentation_path,
+            step_size=step_size,
             subgraph_radius=subgraph_radius,
-            use_new_mask=use_new_mask
+            use_new_mask=use_new_mask,
         )
 
         # Instance attributes
-        self.search_mode = "branching_points"
-
-    def _generate_batches_from_component(self):
-        pass
+        self.search_mode = "biased_sparse"
+        self.branch_radius = branch_radius
+        self.proximity_radius = proximity_radius
+        self._interesting_nodes = compute_interesting_nodes(
+            graph,
+            branch_radius=branch_radius,
+            proximity_radius=proximity_radius,
+        )
 
     def _generate_batch_nodes(self, root):
+        """
+        Iterates the connected component containing "root" via DFS at the
+        same "step_size" cadence as DenseGraphDataset, but emits only nodes
+        pre-selected by "compute_interesting_nodes". Long, isolated axon
+        segments contribute zero samples.
+        """
         nodes = list()
-        patch_centers = list()
         for i, j in nx.dfs_edges(self.graph, source=root):
-            # Check if starting new batch
             self.distance_traversed += self.graph.dist(i, j)
-            if len(patch_centers) == 0 and self.graph.degree[i] > 2:
-                root = i
-                nodes.append(i)
-                patch_centers.append(self.graph.get_voxel(i))
 
-            # Check whether to yield batch
-            is_node_far = self.graph.dist(root, j) > 256
-            is_batch_full = len(patch_centers) == self.batch_size
+            # Open a batch on the first interesting node we reach
+            if len(nodes) == 0:
+                if i in self._interesting_nodes and self.is_node_valid(i):
+                    root = i
+                    last_node = i
+                    nodes.append(i)
+                else:
+                    continue
+
+            # Yield when batch is full or has spread too far for prefetch
+            is_node_far = self.graph.dist(root, j) > 512
+            is_batch_full = len(nodes) == self.batch_size
             if is_node_far or is_batch_full:
-                # Yield batch metadata
-                patch_centers = np.array(patch_centers, dtype=int)
-                nodes = np.array(nodes, dtype=int)
-                yield nodes, patch_centers
-
-                # Reset batch metadata
+                yield np.array(nodes, dtype=int)
                 nodes = list()
-                patch_centers = list()
 
-            # Visit j
-            if self.graph.degree[j] > 2:
+            # Visit j: same step_size cadence as Dense, gated on the
+            # interesting set so only branch- and proximity-region nodes
+            # are emitted.
+            is_next = self.graph.dist(last_node, j) >= self.step_size - 2
+            is_branching = self.graph.degree[j] >= 3
+            if (
+                (is_next or is_branching)
+                and j in self._interesting_nodes
+                and self.is_node_valid(j)
+            ):
+                last_node = j
                 nodes.append(j)
-                patch_centers.append(self.graph.get_voxel(j))
-                if len(patch_centers) == 1:
+                if len(nodes) == 1:
                     root = j
+
+        if nodes:
+            yield np.array(nodes, dtype=int)
 
     # --- Helpers ---
     def estimate_iterations(self):
         """
-        Estimates the number of iterations required to search graph.
-
-        Returns
-        -------
-        int
-            Estimated number of iterations required to search graph.
+        Estimates the number of iterations required to search graph: the
+        size of the interesting set, divided by the step_size cadence used
+        within those regions.
         """
-        return len(self.graph.get_branchings())
+        step = max(1, self.step_size)
+        return max(1, len(self._interesting_nodes) // step)
