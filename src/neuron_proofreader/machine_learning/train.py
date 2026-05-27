@@ -57,7 +57,7 @@ class FocalLoss(nn.Module):
         return (focal_weight * bce).mean()
 
 logger = logging.getLogger(__name__)
-_LOG_EVERY = 100  # batches between progress log lines
+_LOG_EVERY = 1000  # batches between progress log lines
 
 
 class Trainer:
