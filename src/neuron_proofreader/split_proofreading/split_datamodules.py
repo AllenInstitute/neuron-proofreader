@@ -44,7 +44,6 @@ class FragmentsDataset(IterableDataset):
         config,
         gt_path=None,
         metadata_path=None,
-        prefetch=4,
         soma_centroids=set(),
     ):
         """
@@ -69,7 +68,6 @@ class FragmentsDataset(IterableDataset):
         # Instance attributes
         self.config = config
         self.gt_path = gt_path
-        self.prefetch = prefetch
         self.transform = ImageTransforms() if config.ml.transform else False
 
         # Build graph
@@ -155,7 +153,7 @@ class FragmentsDatasetCollection(IterableDataset):
     to different whole-brain images.
     """
 
-    def __init__(self, shuffle=True):
+    def __init__(self, prefetch=8, shuffle=True):
         """
         Instantiates a FragmentsDatasetCollection object.
 
@@ -166,6 +164,7 @@ class FragmentsDatasetCollection(IterableDataset):
         """
         # Instance attributes
         self.datasets = dict()
+        self.prefetch = prefetch
         self.shuffle = shuffle
 
     def add_dataset(
@@ -176,7 +175,6 @@ class FragmentsDatasetCollection(IterableDataset):
         config,
         gt_path=None,
         metadata_path=None,
-        prefetch=4,
         soma_centroids=list(),
     ):
         """
@@ -198,7 +196,7 @@ class FragmentsDatasetCollection(IterableDataset):
             Patch to JSON file containing metadata on block that fragments
             were extracted from. Default is None.
         prefetch : int, optional
-            Number of batches to prefetch. Default is 4.
+            Number of batches to prefetch. Default is 8.
         soma_centroids : List[Tuple[int]], optional
             Phyiscal coordinates of soma centroids. Default is an empty list.
         """
@@ -209,7 +207,6 @@ class FragmentsDatasetCollection(IterableDataset):
             config,
             gt_path=gt_path,
             metadata_path=metadata_path,
-            prefetch=prefetch,
             soma_centroids=soma_centroids,
         )
 

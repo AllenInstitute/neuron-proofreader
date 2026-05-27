@@ -37,7 +37,7 @@ import pandas as pd
 import os
 import torch
 
-from neuron_proofreader.split_proofreading.split_datasets import (
+from neuron_proofreader.split_proofreading.split_datamodules import (
     FragmentsDataset,
 )
 from neuron_proofreader.utils import ml_util, util
