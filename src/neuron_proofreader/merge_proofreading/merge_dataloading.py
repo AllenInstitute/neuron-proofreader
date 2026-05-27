@@ -43,7 +43,9 @@ def load_fragments(dataset, is_test=False):
         sub_df = merge_sites_df.loc[merge_sites_df["brain_id"] == brain_id]
         for segmentation_id in sub_df["segmentation_id"].unique():
             if (brain_id, segmentation_id) in target_pairs:
-                swc_pointer = f"{root}/{brain_id}/{segmentation_id}/merged_fragments.zip"
+                swc_pointer = (
+                    f"{root}/{brain_id}/{segmentation_id}/merged_fragments.zip"
+                )
                 dataset.load_fragment_graphs(
                     brain_id, swc_pointer, use_anisotropy=False
                 )

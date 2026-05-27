@@ -26,6 +26,7 @@ class VisionHGAT(torch.nn.Module):
     Heterogeneous graph attention network that processes multimodal features
     such as image patches and feature vectors.
     """
+
     # Class attributes
     relations = [
         str(("branch", "to", "branch")),
@@ -47,7 +48,9 @@ class VisionHGAT(torch.nn.Module):
 
         # Initial embeddings
         self.node_embedding = init_node_embedding(hidden_dim)
-        self.patch_embedding = init_patch_embedding(patch_shape, hidden_dim // 2)
+        self.patch_embedding = init_patch_embedding(
+            patch_shape, hidden_dim // 2
+        )
 
         # Message passing layers
         self.disable_msg_passing = disable_msg_passing
@@ -58,7 +61,7 @@ class VisionHGAT(torch.nn.Module):
         else:
             self.gat1 = self.init_gat(hidden_dim, hidden_dim, heads)
             self.gat2 = self.init_gat(hidden_dim * heads, hidden_dim, heads)
-            self.output = nn.Linear(hidden_dim * heads ** 2, 1)
+            self.output = nn.Linear(hidden_dim * heads**2, 1)
 
         # Initialize weights
         self.init_weights()
@@ -81,9 +84,7 @@ class VisionHGAT(torch.nn.Module):
         for _ in range(n_layers):
             layers.append(
                 nn_geometric.HeteroDictLinear(
-                    hidden_dim,
-                    hidden_dim,
-                    types=("branch", "proposal")
+                    hidden_dim, hidden_dim, types=("branch", "proposal")
                 )
             )
         return layers
@@ -160,10 +161,12 @@ def init_node_embedding(output_dim):
     dim_p = node_input_dims["proposal"]
 
     # Set node embedding layer
-    node_embedding = nn.ModuleDict({
-        "branch": FeedForwardNet(dim_b, output_dim, 3),
-        "proposal": FeedForwardNet(dim_p, output_dim // 2, 3),
-    })
+    node_embedding = nn.ModuleDict(
+        {
+            "branch": FeedForwardNet(dim_b, output_dim, 3),
+            "proposal": FeedForwardNet(dim_p, output_dim // 2, 3),
+        }
+    )
     return node_embedding
 
 

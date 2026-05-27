@@ -7,19 +7,6 @@ Created on Wed June 5 16:00:00 2023
 Code that loads and preprocesses neuron fragments stored as SWC files, then
 constructs a custom graph object called a "FragmentsGraph".
 
-    Graph Loading Algorithm:
-        1. Load Soma Locations (Optional)
-
-        2. Extract Irreducibles from SWC files
-            a. Build graph from SWC file
-            b. Break soma merges (optional)
-            c. Break high risk merges (optional)
-            d. Find irreducible nodes
-            e. Find irreducible edges
-
-
-Note: We use the term "branch" to refer to a path in a graph from a branching
-      node to a leaf.
 """
 
 from collections import deque
@@ -80,7 +67,7 @@ class GraphLoader:
         self.node_spacing = node_spacing
         self.prefetch = prefetch
         self.prune_depth = prune_depth
-        self.swc_reader = swc_util.Reader(anisotropy, min_cable_length, verbose)
+        self.swc_reader = swc_util.Reader(anisotropy, verbose)
         self.verbose = verbose
 
     def __call__(self, swc_pointer):
@@ -146,7 +133,7 @@ class GraphLoader:
             subgraph.
         """
         # Build graph
-        graph = swc_util.to_graph(swc_dict, set_attrs=True)
+        graph = swc_util.to_graph(swc_dict)
         prune_branches(graph, self.prune_depth)
 
         # Extract irreducible components (if applicable)

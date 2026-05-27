@@ -62,7 +62,7 @@ class FeaturePipeline:
                 brightness_clip=brightness_clip,
                 patch_shape=patch_shape,
                 padding=padding,
-           ),
+            ),
         ]
 
     def __call__(self, subgraph):
@@ -249,7 +249,7 @@ class ImageFeatureExtractor:
         self.padding = padding
 
         # Image reader
-        self.img = img_util.TensorStoreReader(img_path)
+        self.img = img_util.TensorStoreImage(img_path)
 
     def __call__(self, subgraph, features):
         """
@@ -329,7 +329,6 @@ class ImageFeatureExtractor:
                     img_util.annotate_voxels(mask, voxels, val=0.25)
                     visited.add(frozenset({i, j}))
         return mask
-        
 
     def read_image(self, center, shape):
         """

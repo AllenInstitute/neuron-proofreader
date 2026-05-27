@@ -75,9 +75,7 @@ class SkeletonGNN(nn.Module):
         # Set geometric gnn
         if ggnn_name == "egnn":
             self.geometric_gnn = EGNN(
-                in_node_dim=1,
-                hidden_dim=32,
-                out_node_dim=output_dim
+                in_node_dim=1, hidden_dim=32, out_node_dim=output_dim
             )
 
     # --- Core Routines ---
@@ -97,7 +95,9 @@ class SkeletonGNN(nn.Module):
             )
 
             # Pool node embeddings
-            h_g, x_g, edge_index_g = self.pool_nonbranching_paths(h_g, x_g, edge_index_g)
+            h_g, x_g, edge_index_g = self.pool_nonbranching_paths(
+                h_g, x_g, edge_index_g
+            )
 
             # Encode pooled graph
             h_g = self.encode_pooled_graph(h_g, x_g, edge_index_g)
@@ -158,7 +158,9 @@ class SkeletonGNN(nn.Module):
         # Finish
         h_pooled = torch.stack(h_pooled, dim=0)
         x_pooled = torch.stack(x_pooled, dim=0)
-        edge_index_pooled = self.get_edge_index_pooled(edge_index, node_to_path)
+        edge_index_pooled = self.get_edge_index_pooled(
+            edge_index, node_to_path
+        )
         return h_pooled, x_pooled, edge_index_pooled
 
     def get_adj_and_deg(self, edge_index, num_nodes):
@@ -201,10 +203,13 @@ class SkeletonGNN(nn.Module):
         id_map = {int(n): i for i, n in enumerate(node_ids.tolist())}
         edge_mask = node_mask[edge_index[0]] & node_mask[edge_index[1]]
         edge_index_g = edge_index[:, edge_mask]
-        edge_index_g = torch.stack([
-            torch.tensor([id_map[int(u)] for u in edge_index_g[0]]),
-            torch.tensor([id_map[int(v)] for v in edge_index_g[1]])
-        ], dim=0)
+        edge_index_g = torch.stack(
+            [
+                torch.tensor([id_map[int(u)] for u in edge_index_g[0]]),
+                torch.tensor([id_map[int(v)] for v in edge_index_g[1]]),
+            ],
+            dim=0,
+        )
         return h_g, x_g, edge_index_g
 
     @staticmethod

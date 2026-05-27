@@ -8,7 +8,6 @@ Helper routines for reading and processing images.
 
 """
 
-from abc import ABC, abstractmethod
 from fastremap import mask_except, renumber, unique
 from matplotlib.colors import ListedColormap
 from scipy.ndimage import zoom
@@ -21,39 +20,54 @@ import tensorstore as ts
 from neuron_proofreader.utils import util
 
 
-class ImageReader(ABC):
+class TensorStoreImage:
     """
-    Abstract class to create image readers classes.
+    Class that reads images with the TensorStore library.
     """
 
     def __init__(self, img_path):
         """
-        Instantiates an ImageReader object.
+        Instantiates a TensorStoreImage object.
 
         Parameters
         ----------
         img_path : str
             Path to image.
-        is_segmentation : bool, optional
-            Indication of whether image is a segmentation.
         """
-        self.img_path = img_path
-        self._load_image()
+        # Load image
+        bucket_name, inner_path = util.parse_cloud_path(img_path)
+        self.img = ts.open(
+            {
+                "driver": get_driver(img_path),
+                "kvstore": {
+                    "driver": get_storage_driver(img_path),
+                    "bucket": bucket_name,
+                    "path": inner_path,
+                },
+                "context": {
+                    "cache_pool": {"total_bytes_limit": 1000000000},
+                    "cache_pool#remote": {"total_bytes_limit": 1000000000},
+                    "data_copy_concurrency": {"limit": 8},
+                },
+                "recheck_cached_data": "open",
+            }
+        ).result()
 
-    @abstractmethod
-    def _load_image(self):
-        """
-        Method to be implemented by subclasses to load the image.
-        """
-        pass
+        # Check for Google segmentation
+        if "from_google" in img_path:
+            self.img = self.img[ts.d[:].transpose[3, 2, 1, 0]]
 
-    def read(self, center, shape):
+        # Check dimensions
+        while self.img.ndim < 5:
+            self.img = self.img[ts.newaxis, ...]
+
+    def read(self, voxel, shape):
         """
-        Reads an image patch centered at the given voxel coordinate.
+        Reads a patch from an image given a voxel coordinate and patch shape.
 
         Parameters
         ----------
-        center : Tuple[int]
+        voxel : Tuple[int]
             Center of image patch to be read.
         shape : Tuple[int]
             Shape of image patch to be read.
@@ -63,26 +77,7 @@ class ImageReader(ABC):
         numpy.ndarray
             Image patch.
         """
-        s = get_slices(center, shape)
-        return self.img[s] if self.img.ndim == 3 else self.img[(0, 0, *s)]
-
-    def read_voxel(self, voxel, thread_id=None):
-        """
-        Reads the intensity value at a given voxel.
-
-        Parameters
-        ----------
-        voxel : Tuple[int]
-            Voxel to be read.
-        thread_id : Any
-            Identifier associated with output. Default is None.
-
-        Returns
-        -------
-        int
-            Intensity value at voxel.
-        """
-        return thread_id, self.img[voxel]
+        return self.img[(0, 0, *get_slices(voxel, shape))].read().result()
 
     def shape(self):
         """
@@ -94,119 +89,6 @@ class ImageReader(ABC):
             Shape of image.
         """
         return self.img.shape
-
-
-class TensorStoreReader(ImageReader):
-    """
-    Class that reads images with TensorStore library.
-    """
-
-    def __init__(self, img_path):
-        """
-        Instantiates a TensorStoreReader object.
-
-        Parameters
-        ----------
-        img_path : str
-            Path to image.
-        """
-        self.driver = self.get_driver(img_path)
-        super().__init__(img_path)
-
-    def get_driver(self, img_path):
-        """
-        Gets the storage driver needed to read the image.
-
-        Parameters
-        ----------
-        img_path : str
-            Path to image
-
-        Returns
-        -------
-        str
-            Storage driver needed to read the image.
-        """
-        if ".zarr" in img_path:
-            return "zarr"
-        elif ".n5" in img_path:
-            return "n5"
-        elif is_precomputed(img_path):
-            return "neuroglancer_precomputed"
-        else:
-            raise ValueError(f"Unsupported image format: {img_path}")
-
-    def _load_image(self):
-        """
-        Loads image with TensorStore library.
-        """
-        # Extract metadata
-        bucket_name, path = util.parse_cloud_path(self.img_path)
-        storage_driver = get_storage_driver(self.img_path)
-
-        # Load image
-        self.img = ts.open(
-            {
-                "driver": self.driver,
-                "kvstore": {
-                    "driver": storage_driver,
-                    "bucket": bucket_name,
-                    "path": path,
-                },
-                "context": {
-                    "cache_pool": {"total_bytes_limit": 1000000000},
-                    "cache_pool#remote": {"total_bytes_limit": 1000000000},
-                    "data_copy_concurrency": {"limit": 8},
-                },
-                "recheck_cached_data": "open",
-            }
-        ).result()
-
-        # Check whether to absorb channel
-        if bucket_name == "allen-nd-goog" and is_precomputed(self.img_path):
-            self.img = self.img[ts.d["channel"][0]]
-            self.img = self.img[ts.d[0].transpose[2]]
-            self.img = self.img[ts.d[0].transpose[1]]
-
-    def read(self, center, shape):
-        """
-        Reads an image patch centered at the given voxel.
-
-        Parameters
-        ----------
-        center : Tuple[int]
-            Center of image patch to be read.
-        shape : Tuple[int]
-            Shape of image patch to be read.
-
-        Returns
-        -------
-        numpy.ndarray
-            Image patch.
-        """
-        try:
-            return super().read(center, shape).read().result()
-        except Exception:
-            print(f"Unable to read image patch at {center} w/ shape {shape}!")
-            return np.zeros(shape)
-
-    def read_voxel(self, voxel, thread_id):
-        """
-        Reads the intensity value at a given voxel.
-
-        Parameters
-        ----------
-        voxel : Tuple[int]
-            Voxel to be read.
-        thread_id : Any
-            Identifier associated with output.
-
-        Returns
-        -------
-        int
-            Intensity value at voxel.
-        """
-        return thread_id, int(self.img[voxel].read().result())
 
 
 # --- Visualization ---
@@ -441,6 +323,27 @@ def get_contained_voxels(voxels, shape, buffer=0):
         and "buffer".
     """
     return [v for v in voxels if is_contained(v, shape, buffer)]
+
+
+def get_driver(img_path):
+    """
+    Gets the driver needed to read the image.
+
+    Parameters
+    ----------
+    img_path : str
+        Path to image.
+
+    Returns
+    -------
+    str
+        Storage driver needed to read the image.
+    """
+    if ".zarr" in img_path:
+        return "zarr"
+    elif is_precomputed(img_path):
+        return "neuroglancer_precomputed"
+    raise Exception(f"Invalid image path at {img_path}")
 
 
 def get_neighbors(voxel, shape):

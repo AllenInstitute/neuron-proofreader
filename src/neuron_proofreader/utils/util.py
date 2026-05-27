@@ -223,20 +223,25 @@ def read_json(path):
 
 def read_txt(path):
     """
-    Reads txt file located at the given path.
+    Reads txt file at the given path.
 
     Parameters
     ----------
     path : str
-        Path to txt file to be read.
+        Path to txt file.
 
     Returns
     -------
     str
-        Contents of txt file.
+        Text from the txt file.
     """
-    with open(path, "r") as f:
-        return f.read().splitlines()
+    if is_s3_path(path):
+        return read_s3_txt(path)
+    elif is_gcs_path(path):
+        return read_gcs_txt(path)
+    else:
+        with open(path, "r") as f:
+            return f.read()
 
 
 def read_zip(zip_file, path):
@@ -328,7 +333,59 @@ def write_txt(path, contents):
     f.close()
 
 
-# --- GCS utils ---
+# --- Cloud Utils ---
+def list_cloud_paths(path, extension=""):
+    """
+    Lists all files in a GCS/S3 bucket with the given extension.
+
+    Parameters
+    ----------
+    path : str
+        Path to cloud prefix to be searched, must be in the format:
+        f"{scheme}://{bucket_name}/{prefix}".
+    extension : str, optional
+        File extension of filenames to be listed. Default is an empty string.
+
+    Returns
+    -------
+    List[str]
+        Filenames stored at the GCS path with the given extension.
+    """
+    assert is_gcs_path(path) or is_s3_path(path)
+    bucket_name, prefix = parse_cloud_path(path)
+    list_fn = list_gcs_paths if is_gcs_path(path) else list_s3_paths
+    return list_fn(bucket_name, prefix, extension=extension)
+
+
+def parse_cloud_path(path):
+    """
+    Parses a cloud storage path into its bucket name and key/prefix. Supports
+    paths of the form: "{scheme}://bucket_name/prefix" or without a scheme.
+
+    Parameters
+    ----------
+    path : str
+        Path to be parsed.
+
+    Returns
+    -------
+    bucket_name : str
+        Name of the bucket.
+    prefix : str
+        Cloud prefix.
+    """
+    # Remove s3:// or gs:// if present
+    if path.startswith("s3://") or path.startswith("gs://"):
+        path = path[len("s3://"):]
+
+    # Split path
+    parts = path.split("/", 1)
+    bucket_name = parts[0]
+    prefix = parts[1] if len(parts) > 1 else ""
+    return bucket_name, prefix
+
+
+# --- GCS Utils ---
 def check_gcs_file_exists(bucket_name, path):
     """
     Checks if the given path exists.
@@ -368,14 +425,14 @@ def is_gcs_path(path):
     return path.startswith("gs://")
 
 
-def list_gcs_filenames(bucket_name, prefix, extension=""):
+def list_gcs_paths(bucket_name, prefix, extension=""):
     """
-    Lists all files in a GCS bucket with the given extension.
+    Lists paths at a GCS prefix with the given extension.
 
     Parameters
     ----------
     bucket_name : str
-        Name of bucket to be searched.
+        Name of bucket containing prefix.
     prefix : str
         Path to location within bucket to be searched.
     extension : str, optional
@@ -384,11 +441,14 @@ def list_gcs_filenames(bucket_name, prefix, extension=""):
     Returns
     -------
     List[str]
-        Filenames stored at the GCS path with the given extension.
+        Paths under the GCS prefix with the given extension.
     """
     bucket = storage.Client().bucket(bucket_name)
-    blobs = bucket.list_blobs(prefix=prefix)
-    return [blob.name for blob in blobs if extension in blob.name]
+    paths = list()
+    for name in [b.name for b in bucket.list_blobs(prefix=prefix)]:
+        if extension in name:
+            paths.append(os.path.join(f"gs://{bucket_name}", name))
+    return paths
 
 
 def list_gcs_subdirectories(bucket_name, prefix):
@@ -425,6 +485,25 @@ def list_gcs_subdirectories(bucket_name, prefix):
     return subdirs
 
 
+def read_gcs_txt(path):
+    """
+    Reads a txt file stored in a GCS bucket.
+
+    Parameters
+    ----------
+    path : str
+        Path to txt file to be read.
+
+    Returns
+    -------
+    str
+        Contents of txt file.
+    """
+    bucket_name, subpath = parse_cloud_path(path)
+    bucket = storage.Client().bucket(bucket_name)
+    return bucket.blob(subpath).download_as_text()
+
+
 def read_json_from_gcs(bucket_name, blob_path):
     """
     Reads JSON file stored in a GCS bucket.
@@ -447,7 +526,7 @@ def read_json_from_gcs(bucket_name, blob_path):
     return json.loads(blob.download_as_text())
 
 
-# --- S3 utils ---
+# --- S3 Utils ---
 def is_s3_path(path):
     """
     Checks if the path is an S3 path.
@@ -494,6 +573,60 @@ def list_s3_prefixes(bucket_name, prefix):
         return [cp["Prefix"] for cp in response["CommonPrefixes"]]
     else:
         return list()
+
+
+def list_s3_paths(bucket_name, prefix, extension=""):
+    """
+    Lists all object keys in a public S3 bucket under a given prefix,
+    optionally filters by file extension.
+
+    Parameters
+    ----------
+    bucket_name : str
+        Name of the S3 bucket.
+    prefix : str
+        Prefix to search under.
+    extension : str, optional
+        File extension to filter by. Default is an empty string.
+
+    Returns
+    -------
+    paths : List[str]
+        S3 object keys that match the prefix and extension filter.
+    """
+    # Create an anonymous client for public buckets
+    s3 = boto3.client("s3", config=Config(signature_version=UNSIGNED))
+    response = s3.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
+
+    # List all objects under the prefix
+    paths = list()
+    if "Contents" in response:
+        for obj in response["Contents"]:
+            filename = obj["Key"]
+            if filename.endswith(extension):
+                path = os.path.join(f"s3://{bucket_name}", filename)
+                paths.append(path)
+    return paths
+
+
+def read_s3_txt(path):
+    """
+    Reads a txt file stored in an S3 bucket.
+
+    Parameters
+    ----------
+    path : str
+        Path to txt file to be read.
+
+    Returns
+    -------
+    str
+        Contents of txt file.
+    """
+    bucket_name, subpath = parse_cloud_path(path)
+    s3 = boto3.client("s3", config=Config(signature_version=UNSIGNED))
+    obj = s3.get_object(Bucket=bucket_name, Key=subpath)
+    return obj["Body"].read().decode("utf-8")
 
 
 def upload_dir_to_s3(dir_path, bucket_name, prefix):
@@ -616,34 +749,6 @@ def numpy_to_hashable(arr):
         Hashable items from "arr".
     """
     return [tuple(item) for item in arr.tolist()]
-
-
-def parse_cloud_path(path):
-    """
-    Parses a cloud storage path into its bucket name and key/prefix. Supports
-    paths of the form: "{scheme}://bucket_name/prefix" or without a scheme.
-
-    Parameters
-    ----------
-    path : str
-        Path to be parsed.
-
-    Returns
-    -------
-    bucket_name : str
-        Name of the bucket.
-    prefix : str
-        Cloud prefix.
-    """
-    # Remove s3:// or gs:// if present
-    if path.startswith("s3://") or path.startswith("gs://"):
-        path = path[len("s3://"):]
-
-    # Split path
-    parts = path.split("/", 1)
-    bucket_name = parts[0]
-    prefix = parts[1] if len(parts) > 1 else ""
-    return bucket_name, prefix
 
 
 def sample_once(my_container):
