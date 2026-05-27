@@ -30,7 +30,7 @@ class ImageTransforms:
             RandomFlip3D(),
             RandomRotation3D(),
             RandomNoise3D(),
-            RandomContrast3D()
+            RandomContrast3D(),
         ]
 
     def __call__(self, patches):

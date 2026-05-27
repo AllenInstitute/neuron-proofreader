@@ -29,7 +29,7 @@ from neuron_proofreader.machine_learning.point_cloud_models import (
     subgraph_to_point_cloud,
 )
 from neuron_proofreader.merge_proofreading.merge_dataloading import (
-    get_brain_merge_sites
+    get_brain_merge_sites,
 )
 from neuron_proofreader.skeleton_graph import SkeletonGraph
 from neuron_proofreader.utils import (
@@ -71,6 +71,7 @@ class MergeSiteDataset(Dataset):
     patch_shape : Tuple[int], optional
         Shape of the 3D image patches to extract.
     """
+
     random_negative_example_prob = 0.8
 
     def __init__(
@@ -121,9 +122,7 @@ class MergeSiteDataset(Dataset):
         self.merge_site_kdtrees = dict()
 
     # --- Load Data ---
-    def load_fragment_graphs(
-        self, brain_id, swc_pointer, use_anisotropy=True
-    ):
+    def load_fragment_graphs(self, brain_id, swc_pointer, use_anisotropy=True):
         """
         Loads fragments containing merge mistakes for a whole-brain dataset,
         then stores them in the "graphs" attribute.
@@ -139,7 +138,7 @@ class MergeSiteDataset(Dataset):
         graph = SkeletonGraph(
             anisotropy=self.anisotropy,
             node_spacing=self.node_spacing,
-            use_anisotropy=use_anisotropy
+            use_anisotropy=use_anisotropy,
         )
         graph.load(swc_pointer)
 
@@ -771,6 +770,7 @@ class MergeSiteValDataset(MergeSiteDataset):
         negative_examples : List[dict]
             List of negative examples collected across all graphs.
         """
+
         # Subroutines
         def add_examples():
             """
@@ -924,7 +924,7 @@ class MergeSiteDataLoader(DataLoader):
         is_multimodal=False,
         modality=None,
         sampler=None,
-        use_shuffle=True
+        use_shuffle=True,
     ):
         """
         Instantiates a MergeSiteDataLoader object.
@@ -970,11 +970,11 @@ class MergeSiteDataLoader(DataLoader):
         for start in range(0, len(idxs), self.batch_size):
             end = min(start + self.batch_size, len(idxs))
             if self.is_multimodal and self.modality == "graph":
-                yield self._load_image_graph_batch(idxs[start: end])
+                yield self._load_image_graph_batch(idxs[start:end])
             elif self.is_multimodal and self.modality == "pointcloud":
-                yield self._load_image_pc_batch(idxs[start: end])
+                yield self._load_image_pc_batch(idxs[start:end])
             else:
-                yield self._load_image_batch(idxs[start: end])
+                yield self._load_image_batch(idxs[start:end])
 
     def _load_image_batch(self, batch_idxs):
         """
@@ -1084,9 +1084,7 @@ class MergeSiteDataLoader(DataLoader):
                 h.append(h_i)
                 x.append(x_i)
                 edge_index.append(edge_index_i)
-                batches.append(
-                    torch.full((n_i,), i, dtype=torch.long)
-                )
+                batches.append(torch.full((n_i,), i, dtype=torch.long))
 
                 node_offset += n_i
 
@@ -1100,7 +1098,7 @@ class MergeSiteDataLoader(DataLoader):
         batch = ml_util.TensorDict(
             {
                 "img": ml_util.to_tensor(patches),
-                "graph": (h, x, edge_index, batches)
+                "graph": (h, x, edge_index, batches),
             }
         )
         return batch, ml_util.to_tensor(targets)

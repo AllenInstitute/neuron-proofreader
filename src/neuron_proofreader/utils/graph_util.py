@@ -80,7 +80,9 @@ class GraphLoader:
         self.node_spacing = node_spacing
         self.prefetch = prefetch
         self.prune_depth = prune_depth
-        self.swc_reader = swc_util.Reader(anisotropy, min_cable_length, verbose)
+        self.swc_reader = swc_util.Reader(
+            anisotropy, min_cable_length, verbose
+        )
         self.verbose = verbose
 
     def __call__(self, swc_pointer):
@@ -146,7 +148,7 @@ class GraphLoader:
             subgraph.
         """
         # Build graph
-        graph = swc_util.to_graph(swc_dict, set_attrs=True)
+        graph = swc_util.to_graph(swc_dict)
         prune_branches(graph, self.prune_depth)
 
         # Extract irreducible components (if applicable)

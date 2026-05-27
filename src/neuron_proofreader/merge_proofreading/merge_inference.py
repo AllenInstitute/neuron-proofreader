@@ -250,7 +250,7 @@ class GraphDataset(IterableDataset, ABC):
         prefetch=64,
         segmentation_path=None,
         subgraph_radius=100,
-        use_new_mask=False
+        use_new_mask=False,
     ):
         # Call parent class
         super().__init__()
@@ -317,7 +317,9 @@ class GraphDataset(IterableDataset, ABC):
         for nodes in nx.connected_components(self.graph):
             # Compute path length
             node = util.sample_once(list(nodes))
-            length = self.graph.cable_length(max_depth=self.min_size, root=node)
+            length = self.graph.cable_length(
+                max_depth=self.min_size, root=node
+            )
 
             # Check if path length satisfies threshold
             if length > self.min_size:
@@ -431,7 +433,7 @@ class DenseGraphDataset(GraphDataset):
         segmentation_path=None,
         step_size=10,
         subgraph_radius=100,
-        use_new_mask=False
+        use_new_mask=False,
     ):
         # Call parent class
         super().__init__(
@@ -445,7 +447,7 @@ class DenseGraphDataset(GraphDataset):
             prefetch=prefetch,
             segmentation_path=segmentation_path,
             subgraph_radius=subgraph_radius,
-            use_new_mask=use_new_mask
+            use_new_mask=use_new_mask,
         )
 
         # Instance attributes
@@ -537,7 +539,13 @@ class DenseGraphDataset(GraphDataset):
         patch_centers = self.get_patch_centers(nodes) - offset
 
         # Populate batch array
-        batch = np.empty((len(nodes), 2,) + self.patch_shape)
+        batch = np.empty(
+            (
+                len(nodes),
+                2,
+            )
+            + self.patch_shape
+        )
         for i, center in enumerate(patch_centers):
             s = img_util.get_slices(center, self.patch_shape)
             batch[i, 0, ...] = img_util.normalize(img[s])
@@ -550,7 +558,13 @@ class DenseGraphDataset(GraphDataset):
         patch_centers = self.get_patch_centers(nodes) - offset
 
         # Populate batch array
-        patches = np.empty((len(nodes), 2,) + self.patch_shape)
+        patches = np.empty(
+            (
+                len(nodes),
+                2,
+            )
+            + self.patch_shape
+        )
         point_clouds = np.empty((len(nodes), 3, 3600), dtype=np.float32)
         for i, (node, center) in enumerate(zip(nodes, patch_centers)):
             s = img_util.get_slices(center, self.patch_shape)
@@ -610,7 +624,7 @@ class SparseGraphDataset(GraphDataset):
         prefetch=128,
         segmentation_path=None,
         subgraph_radius=100,
-        use_new_mask=False
+        use_new_mask=False,
     ):
         # Call parent class
         super().__init__(
@@ -623,7 +637,7 @@ class SparseGraphDataset(GraphDataset):
             prefetch=prefetch,
             segmentation_path=segmentation_path,
             subgraph_radius=subgraph_radius,
-            use_new_mask=use_new_mask
+            use_new_mask=use_new_mask,
         )
 
         # Instance attributes

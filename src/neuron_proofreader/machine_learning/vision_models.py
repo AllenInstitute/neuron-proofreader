@@ -142,7 +142,7 @@ class MAE3D(nn.Module):
             checkpoint_path=checkpoint_path,
             model_config=model_config,
             task_head_config="binary_classifier",
-            freeze_encoder=True
+            freeze_encoder=True,
         )
 
         # Instance attributes

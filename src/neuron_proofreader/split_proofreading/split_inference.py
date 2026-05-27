@@ -175,8 +175,12 @@ class InferencePipeline:
             while self.dataset.proposals:
                 # Generate predictons
                 cnt += 1
-                self.log(f"\nThreshold={new_threshold} w/ only_leaf2leaf={only_leaf2leaf}")
-                preds = self.predict_proposals(suffix=f"{name}_round={cnt}_threshold={new_threshold}")
+                self.log(
+                    f"\nThreshold={new_threshold} w/ only_leaf2leaf={only_leaf2leaf}"
+                )
+                preds = self.predict_proposals(
+                    suffix=f"{name}_round={cnt}_threshold={new_threshold}"
+                )
 
                 # Merge accetped proposals
                 cur_threshold = new_threshold

@@ -330,7 +330,7 @@ class SkeletonGraph(nx.Graph):
         self.relabel_nodes()
         results = [
             f"# Soma Fragments: {len(self.soma_centroids)}",
-            f"# Soma Merges: {n_soma_merges}"
+            f"# Soma Merges: {n_soma_merges}",
         ]
         return "\n".join(results)
 
