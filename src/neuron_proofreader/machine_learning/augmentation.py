@@ -62,8 +62,7 @@ class RandomFlip3D:
         Parameters
         ----------
         axes : Tuple[float], optional
-            Tuple of integers representing the axes along which to flip the
-            image. Default is (0, 1, 2).
+            Axes along which to flip the image. Default is (0, 1, 2).
         """
         self.axes = axes
 
@@ -79,8 +78,8 @@ class RandomFlip3D:
         """
         for axis in self.axes:
             if random.random() > 0.5:
-                patches[0, ...] = np.flip(patches[0, ...], axis=axis)
-                patches[1, ...] = np.flip(patches[1, ...], axis=axis)
+                patches[0] = np.flip(patches[0], axis=axis)
+                patches[1] = np.flip(patches[1], axis=axis)
         return patches
 
 
@@ -116,8 +115,8 @@ class RandomRotation3D:
         for axes in self.axes:
             if random.random() < 0.5:
                 angle = random.uniform(*self.angles)
-                self.rotate3d(patches[0, ...], angle, axes, False)
-                self.rotate3d(patches[1, ...], angle, axes, True)
+                patches[0] = self.rotate3d(patches[0], angle, axes, False)
+                patches[1] = self.rotate3d(patches[1], angle, axes, True)
         return patches
 
     @staticmethod
@@ -149,6 +148,7 @@ class RandomRotation3D:
             order=order,
         )
         img_patch /= multipler
+        return img_patch
 
 
 class RandomScale3D:
@@ -197,8 +197,8 @@ class RandomScale3D:
         ]
 
         # Rescale images
-        patches[0, ...] = zoom(patches[0, ...], zoom_factors, order=3)
-        patches[1, ...] = zoom(patches[1, ...], zoom_factors, order=0)
+        patches[0] = zoom(patches[0], zoom_factors, order=3)
+        patches[1] = zoom(patches[1], zoom_factors, order=0)
         return patches
 
 
@@ -208,7 +208,7 @@ class RandomContrast3D:
     Adjusts the contrast of a 3D image by scaling voxel intensities.
     """
 
-    def __init__(self, p_low=(0, 90), p_high=(97.5, 100)):
+    def __init__(self, p_low=(0, 80), p_high=(98, 100)):
         """
         Initializes a RandomContrast3D transformer.
 
@@ -253,7 +253,7 @@ class RandomNoise3D:
         """
         self.max_std = max_std
 
-    def __call__(self, img_patches):
+    def __call__(self, patches):
         """
         Adds Gaussian noise to the input 3D image.
 
@@ -264,6 +264,6 @@ class RandomNoise3D:
             the input image and "patches[1, ...]" is from the segmentation.
         """
         std = self.max_std * random.random()
-        img_patches[0] += np.random.uniform(-std, std, img_patches[0].shape)
-        img_patches[0] = np.clip(img_patches[0], 0, 1)
-        return img_patches
+        patches[0] += np.random.uniform(-std, std, patches[0].shape)
+        patches[0] = np.clip(patches[0], 0, 1)
+        return patches

@@ -1,5 +1,5 @@
 """
-Created on Thu May 21 12:00:00 2026
+Created on Wed June 5 16:00:00 2023
 
 @author: Anna Grim
 @email: anna.grim@alleninstitute.org
@@ -14,17 +14,17 @@ series of nodes such that each has the following attributes:
     "z" (float): z coordinate
     "pid" (int): node ID of parent
 
-Note: Each line in an SWC file corresponds to a node and contains these
-      attributes in the same order.
+Note: Each uncommented line in an SWC file corresponds to a node and contains
+      these attributes in the same order.
 """
 
 from botocore import UNSIGNED
-from botocore.client import Config
+from botocore.config import Config
 from collections import deque
 from concurrent.futures import (
-    as_completed,
     ProcessPoolExecutor,
     ThreadPoolExecutor,
+    as_completed,
 )
 from google.auth.exceptions import RefreshError, TransportError
 from google.cloud import storage
@@ -92,6 +92,10 @@ class Reader:
                 - "filename": filename of SWC file
                 - "swc_id": name of SWC file, minus the ".swc".
         """
+        # List of paths
+        if isinstance(swc_pointer, list):
+            return self.read_swcs(swc_pointer)
+
         # Directory containing...
         if os.path.isdir(swc_pointer):
             # Local ZIP archives with SWC files
@@ -102,7 +106,7 @@ class Reader:
             # Local SWC files
             paths = util.read_paths(swc_pointer, extension=".swc")
             if len(paths) > 0:
-                return self.read_swcs(paths, self.read_swc)
+                return self.read_swcs(paths)
 
             raise Exception("Directory is Invalid!")
 
@@ -143,14 +147,12 @@ class Reader:
         filename = os.path.basename(path)
         return self.parse(content, filename)
 
-    def read_swcs(self, swc_paths, read_fn):
+    def read_swcs(self, swc_paths):
         """
         Reads SWC files stored in a GCS or S3 bucket.
 
         Parameters
         ----------
-        bucket_name : str
-            Name of bucket containing SWC files.
         swc_paths : List[str]
             List of paths to SWC files to be read.
 
@@ -164,7 +166,7 @@ class Reader:
             # Assign threads
             threads = set()
             for path in swc_paths:
-                threads.add(executor.submit(read_fn, path))
+                threads.add(executor.submit(self.read_swc, path))
 
             # Store results
             swc_dicts = deque()
@@ -288,7 +290,7 @@ class Reader:
 
         # Call reader
         if swc_paths:
-            return self.read_swcs(swc_paths, self.read_swc)
+            return self.read_swcs(swc_paths)
         elif zip_paths:
             read_fn = self.read_s3_zip if use_s3 else self.read_gcs_zip
             return self.read_zips(zip_paths, read_fn)
@@ -345,17 +347,17 @@ class Reader:
             print(f"Failed to read {path}!")
             return deque()
 
-        # Parse ZIP contents
+        # Parse ZIP
         swc_dicts = deque()
+        zip_content = bucket.blob(path).download_as_bytes()
         with ZipFile(BytesIO(zip_content), "r") as zf:
             with ThreadPoolExecutor() as executor:
                 # Assign threads
                 threads = set()
                 for name in zf.namelist():
-                    if self.confirm_read(name):
-                        threads.add(
-                            executor.submit(self.read_zipped_swc, zf, name)
-                        )
+                    threads.add(
+                        executor.submit(self.read_zipped_swc, zf, name)
+                    )
 
                 # Process results
                 for thread in as_completed(threads):
@@ -460,6 +462,7 @@ class Reader:
                 "pid": np.zeros((len(content)), dtype=int),
                 "radius": np.zeros((len(content)), dtype=float),
                 "xyz": np.zeros((len(content), 3), dtype=np.int32),
+                "soma_nodes": set(),
                 "swc_name": swc_name,
             }
 
@@ -470,6 +473,9 @@ class Reader:
                 swc_dict["pid"][i] = parts[-1]
                 swc_dict["radius"][i] = float(parts[-2])
                 swc_dict["xyz"][i] = self.read_coordinate(parts[2:5], offset)
+
+                if int(parts[1]) == 1:
+                    swc_dict["soma_nodes"].add(parts[0])
 
             # Convert radius from nanometers to microns
             if swc_dict["radius"][0] > 100:
@@ -553,15 +559,15 @@ def write_points(
         to_zipped_point(zf, filename, xyz, color=color, radius=radius)
 
 
-def to_zipped_point(zip_writer, filename, xyz, color=None, radius=5):
+def to_zipped_point(zf, filename, xyz, color=None, radius=5):
     """
     Writes a point to an SWC file format, which is then stored in a ZIP
     archive.
 
     Parameters
     ----------
-    zip_writer : zipfile.ZipFile
-        ZipFile object that will store the generated SWC file.
+    zf : zipfile.ZipFile
+        ZipFile used to write the generated SWC file.
     filename : str
         Filename of SWC file.
     xyz : ArrayLike
@@ -569,7 +575,7 @@ def to_zipped_point(zip_writer, filename, xyz, color=None, radius=5):
     color : str, optional
         Color of nodes. Default is None.
     radius : float, optional
-        Radius of point. Default is 5um.
+        Radius (in microns) of point. Default is 5.
     """
     with StringIO() as text_buffer:
         # Preamble
@@ -582,7 +588,7 @@ def to_zipped_point(zip_writer, filename, xyz, color=None, radius=5):
         text_buffer.write("\n" + f"1 5 {x} {y} {z} {radius} -1")
 
         # Finish
-        zip_writer.writestr(filename, text_buffer.getvalue())
+        zf.writestr(filename, text_buffer.getvalue())
 
 
 # --- Helpers ---
@@ -593,7 +599,7 @@ def get_segment_id(swc_name):
     Parameters
     ----------
     swc_name : str
-        SWC filename, expected to be in the format "{segment_id}.swc".
+        SWC filename in the format "{segment_id}.swc".
 
     Returns
     -------
@@ -609,7 +615,7 @@ def get_segment_id(swc_name):
 
 def get_swc_name(path):
     """
-    Gets name of the SWC file loacted at the given path, minus the extension.
+    Gets name of the SWC file at the given path, minus the extension.
 
     Parameters
     ----------
@@ -634,6 +640,9 @@ def to_graph(swc_dict):
     ----------
     swc_dict : dict
         Contents of an SWC file.
+    set_attrs : bool, optional
+        Indication of whether to set "xyz" and "radius" as graph-level
+        attributes. Default is False.
 
     Returns
     -------
