@@ -56,7 +56,7 @@ class ProposalGenerator:
         self,
         initial_radius,
         allow_nonleaf_proposals=False,
-        min_size_with_proposals=0
+        min_size_with_proposals=0,
     ):
         """
         Generates edge proposals between fragments within the given search

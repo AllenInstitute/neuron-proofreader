@@ -85,7 +85,8 @@ class ProposalGraph(SkeletonGraph):
 
         self.reset_proposals()
         self.proposal_generator = ProposalGenerator(
-            self, max_proposals_per_leaf=max_proposals_per_leaf,
+            self,
+            max_proposals_per_leaf=max_proposals_per_leaf,
         )
 
         # Graph Loader
@@ -138,7 +139,7 @@ class ProposalGraph(SkeletonGraph):
         self,
         search_radius,
         allow_nonleaf_proposals=False,
-        min_size_with_proposals=0
+        min_size_with_proposals=0,
     ):
         """
         Generates proposals from leaf nodes.
