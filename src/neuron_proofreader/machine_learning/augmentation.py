@@ -62,8 +62,7 @@ class RandomFlip3D:
         Parameters
         ----------
         axes : Tuple[float], optional
-            Tuple of integers representing the axes along which to flip the
-            image. Default is (0, 1, 2).
+            Axes along which to flip the image. Default is (0, 1, 2).
         """
         self.axes = axes
 
