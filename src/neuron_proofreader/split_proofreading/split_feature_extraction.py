@@ -347,13 +347,19 @@ class ImageFeatureExtractor:
 
     def compute_crop(self, proposal):
         """
-        Extracts an intensity profile along a set of voxel coordinates.
+        Computes the center and cubic shape of the image patch for a proposal.
+
+        Parameters
+        ----------
+        proposal : Frozenset[int]
+            Proposal to compute image crop of.
 
         Returns
         -------
-        profile : numpy.ndarray
-            Image with shape (2, H, W, D) containing a raw image and proposal
-            mask channels.
+        center : Tuple[int]
+            Center of the bounding box between the two proposal nodes.
+        shape : Tuple[int]
+            Cubic shape large enough to contain both nodes with padding.
         """
         # Node info
         node1, node2 = proposal
@@ -481,8 +487,8 @@ class PatchFeatureExtractor:
             Image with shape (2, H, W, D) containing a raw image and proposal
             mask channels.
         """
-        voxels = check_list_length(voxels, min_length=16)
-        profile = np.array([self.img[tuple(voxel)] for voxel in voxels])
+        voxels = np.asarray(check_list_length(voxels, min_length=16))
+        profile = self.img[voxels[:, 0], voxels[:, 1], voxels[:, 2]]
         profile = np.append(profile, [profile.mean(), profile.std()])
         return profile
 
