@@ -451,16 +451,16 @@ def list_gcs_paths(bucket_name, prefix, extension=""):
     return paths
 
 
-def list_gcs_subdirectories(bucket_name, prefix):
+def list_gcs_subprefixes(bucket_name, prefix):
     """
     Lists all direct subdirectories of a given prefix in a GCS bucket.
 
     Parameters
     ----------
-    bucket : str
-        Name of bucket to be read from.
+    bucket_name : str
+        Name of bucket containing prefix.
     prefix : str
-        Path to directory in "bucket".
+        Path to location within bucket to be searched.
 
     Returns
     -------
@@ -468,8 +468,7 @@ def list_gcs_subdirectories(bucket_name, prefix):
          Direct subdirectories.
     """
     # Load blobs
-    storage_client = storage.Client()
-    blobs = storage_client.list_blobs(
+    blobs = storage.Client().list_blobs(
         bucket_name, prefix=prefix, delimiter="/"
     )
     [blob.name for blob in blobs]

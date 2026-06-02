@@ -294,8 +294,8 @@ class Reader:
         elif zip_paths:
             read_fn = self.read_s3_zip if use_s3 else self.read_gcs_zip
             return self.read_zips(zip_paths, read_fn)
-
-        raise Exception(f"SWC Pointer is invalid {path}")
+        else:
+            return list()
 
     def read_gcs_swc(self, path):
         """

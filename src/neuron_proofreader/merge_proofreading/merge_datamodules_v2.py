@@ -32,6 +32,7 @@ from torch.utils.data import Dataset, DataLoader
 import networkx as nx
 import numpy as np
 import os
+import pandas as pd
 import queue
 import random
 import threading
@@ -54,40 +55,33 @@ from neuron_proofreader.utils import (
 )
 
 
-# ---------------------------------------------------------------------------
-# BrainDataset
-# ---------------------------------------------------------------------------
-
-
+# -- Datasets ---
 class BrainDataset:
     """
     All data and retrieval logic for a single whole-brain dataset.
 
     Parameters
     ----------
-    brain_id : str
-        Unique identifier for this brain.
     anisotropy : Tuple[float]
         Voxel-to-physical scaling factors.
+    brain_id : str
+        Unique identifier for this brain.
     brightness_clip : int
         Maximum raw image intensity before normalisation.
-    subgraph_radius : int
-        Radius (um) used when extracting rooted subgraphs.
-    node_spacing : int
-        Spacing (um) between neighbouring graph nodes.
+    node_spacing : float
+        Spacing (in microns) between neighbouring graph nodes.
     patch_shape : Tuple[int]
         Shape of the 3D image patches to extract.
-    use_segmentation_mask : bool
-        Whether to overlay a volumetric segmentation when building the
-        segment mask.
+    subgraph_radius : float
+        Radius (in microns) used when extracting rooted subgraphs.
     """
+
+    giant_component_cable_length = 10**4
 
     def __init__(
         self,
         brain_id,
         sites_prefix,
-        pos_site_paths,
-        neg_site_paths,
         img_path,
         anisotropy=(1.0, 1.0, 1.0),
         brightness_clip=500,
@@ -96,28 +90,32 @@ class BrainDataset:
         patch_shape=(128, 128, 128),
         probability_random_nonmerge_site=0.5,
         use_transform=False,
-        use_segmentation_mask=False,
     ):
         # Instance attributes
         self.anisotropy = anisotropy
         self.brain_id = brain_id
         self.brightness_clip = brightness_clip
-        self.subgraph_radius = subgraph_radius
+        self.ignore_fragments = set()
         self.node_spacing = node_spacing
         self.patch_shape = patch_shape
         self.probability_random_nonmerge_site = (
             probability_random_nonmerge_site
         )
-        self.use_segmentation_mask = use_segmentation_mask
+        self.subgraph_radius = subgraph_radius
 
         # Core data structures
         self.graph = self.load_fragments(sites_prefix)
         self.img = img_util.TensorStoreImage(img_path)
-        self.segmentation_reader = None
+        self.set_giant_components()
 
-        self.nonmerge_sites = self.load_sites(neg_site_paths)
-        self.merge_sites = self.load_sites(pos_site_paths)
+        self.merge_sites = self.load_sites(
+            os.path.join(sites_prefix, "merge_sites/")
+        )
+        self.nonmerge_sites = self.load_sites(
+            os.path.join(sites_prefix, "nonmerge_sites/")
+        )
         self.set_merge_site_info()
+        self.set_valid_branching_nodes()
 
         # Image augmentation for training
         self.transform = ImageTransforms() if use_transform else None
@@ -132,24 +130,64 @@ class BrainDataset:
         graph.load(os.path.join(sites_prefix, "fragments"))
         return graph
 
-    def load_sites(self, site_paths):
+    def load_sites(self, sites_prefix):
         sites = list()
         swc_reader = swc_util.Reader(verbose=False)
-        for swc_dict in swc_reader(site_paths):
-            sites.append(swc_dict["xyz"])
-        return np.vstack(sites)
+        for swc_dict in swc_reader(sites_prefix):
+            xyz = swc_dict["xyz"][0]
+            dd, ii = self.graph.kdtree.query(xyz)
+            sites.append(
+                {"xyz": xyz, "node": ii, "filename": swc_dict["swc_name"]}
+            )
+        return pd.DataFrame(sites)
 
     def set_merge_site_info(self):
-        # Build kdtree of merge sites
-        self.merge_sites_kdtree = KDTree(self.merge_sites)
+        if len(self.merge_sites) > 0:
+            # Build kdtree of merge sites
+            xyz_arr = np.vstack(self.merge_sites["xyz"])
+            self.merge_sites_kdtree = KDTree(xyz_arr)
 
-        # Store fragment IDs corresponding to merge sites
-        self.fragments_with_merge = set()
-        for xyz in self.merge_sites:
-            _, ii = self.graph.kdtree.query(xyz)
-            self.fragments_with_merge.add(self.graph.node_component_id[ii])
+            # Store fragment IDs corresponding to merge sites
+            for xyz in self.merge_sites["xyz"]:
+                _, ii = self.graph.kdtree.query(xyz)
+                self.ignore_fragments.add(self.graph.node_component_id[ii])
 
-    # --- Site retrieval ---
+    def set_giant_components(self):
+        for nodes in map(list, nx.connected_components(self.graph)):
+            # Compute cable length
+            root = util.sample_once(nodes)
+            cable_length = self.graph.cable_length(
+                max_depth=self.giant_component_cable_length, root=root
+            )
+
+            # Check if giant component
+            if cable_length > self.giant_component_cable_length:
+                self.ignore_fragments.add(self.graph.node_component_id[root])
+
+    def set_valid_branching_nodes(self):
+        self.valid_branching_nodes = set()
+        for node in self.graph.branching_nodes():
+            # Reject if high-degree
+            if self.graph.degree(node) > 3:
+                continue
+
+            # Reject if node belongs to fragment with merge
+            # if self.graph.node_component_id[node] in self.ignore_fragments:
+            #    continue
+
+            # Reject if branching and near another branching node
+            if self._has_nearby_branching(node):
+                continue
+
+            # Reject if near merge site
+            dd, _ = self.merge_sites_kdtree.query(self.graph.node_xyz[node])
+            if dd < 50:
+                continue
+
+            # Node is valid
+            self.valid_branching_nodes.add(node)
+
+    # --- Site Retrieval ---
     def __getitem__(self, idx):
         # Get example
         node, label = self.get_site(idx)
@@ -174,49 +212,20 @@ class BrainDataset:
 
     def get_site(self, idx):
         if idx > 0:
-            return self.get_merge_site(idx)
+            return self.merge_sites["node"][idx], 1
         elif np.random.random() < self.probability_random_nonmerge_site:
             return self.get_random_nonmerge_site()
         elif abs(idx) < len(self.nonmerge_sites):
-            return self.get_indexed_nonmerge_site(abs(idx))
+            return self.nonmerge_sites["node"][abs(idx)], 0
         else:
             return self.get_random_nonmerge_site()
 
-    def get_merge_site(self, idx):
-        _, node = self.graph.kdtree.query(self.merge_sites[idx])
-        return node, 1
-
-    def get_indexed_nonmerge_site(self, idx):
-        _, node = self.graph.kdtree.query(self.nonmerge_sites[idx])
-        return node, 0
-
     def get_random_nonmerge_site(self):
-        # Search for valid nonmerge site
-        branching_nodes = self.graph.branching_nodes()
-        use_branching = branching_nodes and random.random() < 0.5
-        for cnt in range(10**4):
-            # Sample node
-            if use_branching:
-                node = util.sample_once(branching_nodes)
-            else:
-                node = util.sample_once(self.graph.nodes)
-
-            # Reject if high-degree
-            if self.graph.degree(node) > 3:
-                continue
-
-            # Reject if branching and near another branching node
-            if use_branching and self._has_nearby_branching(node):
-                continue
-
-            # Reject if near merge site
-            dd, _ = self.merge_sites_kdtree.query(self.graph.node_xyz[node])
-            if dd < 100:
-                continue
-
-            # Site is valid
-            break
-
+        use_branching = self.valid_branching_nodes and random.random() < 0.5
+        if use_branching:
+            node = util.sample_once(self.valid_branching_nodes)
+        else:
+            node = util.sample_once(self.graph.nodes)
         return node, 0
 
     # --- Image / Mask Extraction ---
@@ -239,8 +248,7 @@ class BrainDataset:
 
     def get_segment_mask(self, center, subgraph):
         """
-        Builds the segment mask for subgraph, optionally incorporating a
-        volumetric segmentation read.
+        Builds the segment mask for subgraph.
 
         Parameters
         ----------
@@ -252,13 +260,7 @@ class BrainDataset:
         -------
         numpy.ndarray
         """
-        if self.use_segmentation_mask:
-            return self._segment_mask_with_segmentation(center, subgraph)
-        return self._segment_mask_skeleton_only(subgraph)
-
-    def _segment_mask_skeleton_only(self, subgraph):
         mask = np.zeros(self.patch_shape)
-        center = subgraph.node_voxel(0)
         offset = img_util.get_offset(center, self.patch_shape)
         for node1, node2 in subgraph.edges:
             v1 = subgraph.node_local_voxel(node1, offset)
@@ -268,33 +270,27 @@ class BrainDataset:
             )
         return mask
 
-    def _segment_mask_with_segmentation(self, center, subgraph):
-        mask = self.segmentation_reader.read(center, self.patch_shape)
-        mask = img_util.remove_small_segments(mask, 1000)
-        mask = 0.5 * (mask > 0).astype(float)
-        offset = img_util.get_offset(center, self.patch_shape)
-        for node1, node2 in subgraph.edges:
-            v1 = subgraph.node_local_voxel(node1, offset)
-            v2 = subgraph.node_local_voxel(node2, offset)
-            img_util.annotate_voxels(
-                mask, geometry_util.make_digital_line(v1, v2)
+    # --- Helpers ---
+    def add_nonmerge_sites(self, num_sites):
+        # Generate sites
+        new_sites = list()
+        for _ in range(num_sites):
+            node, _ = self.get_random_nonmerge_site()
+            site = {
+                "node": node,
+                "xyz": self.graph.node_xyz[node],
+                "filename": "random"
+            }
+            new_sites.append(site)
+
+        # Add sites to existing
+        if len(self.nonmerge_sites) > 0:
+            df = pd.DataFrame(new_sites)
+            self.nonmerge_sites = pd.concat(
+                [df, self.nonmerge_sites], ignore_index=True
             )
-        return mask
-
-    # --- Private helpers ---
-    def _list_indices(self):
-        # Set idxs
-        pos_idxs = np.arange(len(self.merge_sites))
-        neg_idxs = np.arange(len(self.nonmerge_sites))
-
-        # Check for class imbalance
-        if len(neg_idxs) < len(pos_idxs):
-            neg_idxs = -pos_idxs
         else:
-            neg_idxs = -np.random.choice(
-                neg_idxs, size=len(pos_idxs), replace=False
-            )
-        return np.concatenate((pos_idxs, neg_idxs))
+            self.nonmerge_sites = pd.DataFrame(new_sites)
 
     def _has_nearby_branching(self, root, max_depth=60):
         queue = [(root, 0)]
@@ -313,13 +309,31 @@ class BrainDataset:
                     visited.add(j)
         return False
 
+    def _list_indices(self):
+        # Set idxs
+        pos_idxs = np.arange(len(self.merge_sites))
+        neg_idxs = np.arange(len(self.nonmerge_sites))
+
+        # Check for class imbalance
+        if len(neg_idxs) < len(pos_idxs):
+            neg_idxs = -pos_idxs
+        else:
+            neg_idxs = -np.random.choice(
+                neg_idxs, size=len(pos_idxs), replace=False
+            )
+        return np.concatenate((pos_idxs, neg_idxs))
+
     def __len__(self):
         return len(self._list_indices())
 
-
-# ---------------------------------------------------------------------------
-# BrainDatasetCollection
-# ---------------------------------------------------------------------------
+    def __repr__(self):
+        return (
+            f"BrainDataset("
+            f"brain_id={self.brain_id}, "
+            f"n_examples={len(self)}, "
+            f"n_pos_examples={len(self.merge_sites)}, "
+            f"n_neg_examples={len(self.nonmerge_sites)})"
+        )
 
 
 class BrainDatasetCollection(Dataset):
@@ -392,7 +406,6 @@ class BrainDatasetCollection(Dataset):
         return np.arange(len(self._index_table))
 
     # --- Helpers ---
-
     def brain_ids(self):
         """Returns the list of brain IDs in this collection."""
         return [bd.brain_id for bd in self.brain_datasets]
@@ -417,11 +430,7 @@ class BrainDatasetCollection(Dataset):
         )
 
 
-# ---------------------------------------------------------------------------
-# MergeSiteDataLoader
-# ---------------------------------------------------------------------------
-
-
+# --- Dataloader ---
 class ThreadedDataLoader(DataLoader):
 
     _VALID_MODALITIES = {None, "graph", "pointcloud"}
@@ -469,7 +478,7 @@ class ThreadedDataLoader(DataLoader):
             np.random.shuffle(idxs)
 
         # Split into batches upfront
-        batch_index_groups = [
+        batch_idx_groups = [
             idxs[start: min(start + self.batch_size, len(idxs))]
             for start in range(0, len(idxs), self.batch_size)
         ]
@@ -480,7 +489,7 @@ class ThreadedDataLoader(DataLoader):
 
         def prefetch_worker():
             try:
-                for batch_idxs in batch_index_groups:
+                for batch_idxs in batch_idx_groups:
                     buffer.put(self._load_batch(batch_idxs))
             except Exception as e:
                 buffer.put(e)
@@ -608,9 +617,7 @@ class ThreadedDataLoader(DataLoader):
                 h.append(h_i)
                 x.append(x_i)
                 edge_index.append(edge_index_i)
-                batches.append(
-                    torch.full((n_i,), i, dtype=torch.long)
-                )
+                batches.append(torch.full((n_i,), i, dtype=torch.long))
 
                 node_offset += n_i
 
@@ -624,7 +631,55 @@ class ThreadedDataLoader(DataLoader):
         batch = ml_util.TensorDict(
             {
                 "img": ml_util.to_tensor(patches),
-                "graph": (h, x, edge_index, batches)
+                "graph": (h, x, edge_index, batches),
             }
         )
         return batch, ml_util.to_tensor(targets)
+
+
+# --- Sites Loading ---
+def create_dataset_collection(
+    img_prefixes_path,
+    root_path,
+    anisotropy=(1.0, 1.0, 1.0),
+    brightness_clip=500,
+    subgraph_radius=100,
+    node_spacing=5,
+    patch_shape=(128, 128, 128),
+    probability_random_nonmerge_site=0.5,
+    use_transform=False,
+):
+    # Load image prefixes
+    bucket, root_prefix = util.parse_cloud_path(root_path)
+    img_prefixes = util.read_json(img_prefixes_path)
+
+    # Iterate over brains
+    datasets = list()
+    for subprefix in util.list_gcs_subprefixes(bucket, root_prefix):
+        # Extract dataset info
+        brain_id = subprefix.split("/")[-2]
+        segmentation_id = get_segmentation_id(bucket, subprefix)
+        dataset_path = os.path.join(root_path, brain_id, segmentation_id)
+        img_path = os.path.join(img_prefixes[brain_id], "0")
+
+        # Add dataset
+        dataset = BrainDataset(
+            brain_id,
+            dataset_path,
+            img_path,
+            anisotropy=anisotropy,
+            brightness_clip=brightness_clip,
+            subgraph_radius=subgraph_radius,
+            node_spacing=node_spacing,
+            patch_shape=patch_shape,
+            probability_random_nonmerge_site=probability_random_nonmerge_site,
+            use_transform=use_transform,
+        )
+        datasets.append(dataset)
+    return BrainDatasetCollection(datasets)
+
+
+def get_segmentation_id(bucket, prefix):
+    subprefixes = util.list_gcs_subprefixes(bucket, prefix)
+    assert len(subprefixes) == 1
+    return subprefixes[0].split("/")[-2]

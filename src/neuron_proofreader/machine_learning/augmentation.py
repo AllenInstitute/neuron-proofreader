@@ -209,7 +209,7 @@ class RandomContrast3D:
     Adjusts the contrast of a 3D image by scaling voxel intensities.
     """
 
-    def __init__(self, p_low=(0, 80), p_high=(98, 100)):
+    def __init__(self, p_low=(0, 80), p_high=(99, 100)):
         """
         Initializes a RandomContrast3D transformer.
 
@@ -242,7 +242,7 @@ class RandomNoise3D:
     Adds random Gaussian noise to a 3D image.
     """
 
-    def __init__(self, max_std=0.2):
+    def __init__(self, max_std=0.1):
         """
         Initializes a RandomNoise3D transformer.
 
