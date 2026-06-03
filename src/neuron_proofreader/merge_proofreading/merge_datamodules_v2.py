@@ -39,7 +39,7 @@ import threading
 import torch
 
 from neuron_proofreader.machine_learning.image_dataloader import (
-    DetectionPatchLoader,
+    DetectionPatchLoader as PatchLoader,
 )
 from neuron_proofreader.machine_learning.geometric_gnn_models import (
     subgraph_to_data,
@@ -68,7 +68,7 @@ class BrainDataset:
         Spacing (in microns) between neighbouring graph nodes.
     patch_shape : Tuple[int]
         Shape of the 3D image patches to extract.
-    subgraph_radius : float
+    subgraph_depth : float
         Radius (in microns) used when extracting rooted subgraphs.
     """
 
@@ -77,59 +77,44 @@ class BrainDataset:
     def __init__(
         self,
         brain_id,
-        sites_prefix,
         img_path,
+        sites_prefix,
+        swcs_path,
         anisotropy=(1.0, 1.0, 1.0),
-        brightness_clip=500,
-        subgraph_radius=100,
+        img_config=None,
         node_spacing=5,
-        normalization_percentiles=(1, 99.5),
-        patch_shape=(128, 128, 128),
         random_nonmerge_site_prob=0.5,
-        use_transform=False,
+        subgraph_depth=100,
     ):
         # Instance attributes
-        self.anisotropy = anisotropy
         self.brain_id = brain_id
-        self.brightness_clip = brightness_clip
         self.ignore_fragments = set()
-        self.node_spacing = node_spacing
-        self.patch_shape = patch_shape
         self.random_nonmerge_site_prob = random_nonmerge_site_prob
-        self.subgraph_radius = subgraph_radius
+        self.subgraph_depth = subgraph_depth
 
         # Core data structures
-        self.graph = self.load_fragments(sites_prefix)
+        self.graph = self.load_fragments(anisotropy, node_spacing, swcs_path)
         self.merge_sites = self.load_sites(
             os.path.join(sites_prefix, "merge_sites")
         )
         self.nonmerge_sites = self.load_sites(
             os.path.join(sites_prefix, "nonmerge_sites")
         )
-
-        # Image loading
-        self.patch_loader = DetectionPatchLoader(
-            self.graph,
-            img_path,
-            brightness_clip=brightness_clip,
-            normalization_percentiles=normalization_percentiles,
-            patch_shape=patch_shape,
-            use_transform=use_transform,
-        )
+        self.patch_loader = PatchLoader(self.graph, img_config, img_path)
 
         # Store dataset info
         self.set_giant_components()
         self.set_merge_site_info()
         self.set_valid_branching_nodes()
 
-    def load_fragments(self, sites_prefix):
+    def load_fragments(self, anisotropy, node_spacing, swcs_path):
         graph = SkeletonGraph(
-            anisotropy=self.anisotropy,
-            node_spacing=self.node_spacing,
+            anisotropy=anisotropy,
+            node_spacing=node_spacing,
             use_anisotropy=False,
             verbose=True,
         )
-        graph.load(os.path.join(sites_prefix, "fragments"))
+        graph.load(swcs_path)
         return graph
 
     def load_sites(self, sites_prefix):
@@ -192,7 +177,7 @@ class BrainDataset:
     # --- Site Retrieval ---
     def __getitem__(self, idx):
         node, label = self.get_site(idx)
-        subgraph = self.graph.rooted_subgraph(node, self.subgraph_radius)
+        subgraph = self.graph.rooted_subgraph(node, self.subgraph_depth)
         patches = self.patch_loader(node)
         return patches, subgraph, label
 
@@ -404,7 +389,7 @@ class ThreadedDataLoader(DataLoader):
         self.modality = modality
         self.use_shuffle = use_shuffle
         self.prefetch_batches = prefetch_batches
-        self.patches_shape = (2,) + dataset.brain_datasets[0].patch_shape
+        self.patches_shape = (2,) + dataset.brain_datasets[0].patch_loader.patch_shape
 
         # Set batch loader
         if self.is_multimodal and self.modality == "graph":
@@ -583,47 +568,49 @@ class ThreadedDataLoader(DataLoader):
 
 # --- Sites Loading ---
 def create_dataset_collection(
+    brain_ids,
     img_prefixes_path,
-    root_path,
+    sites_root_path,
+    swcs_root_path,
     anisotropy=(1.0, 1.0, 1.0),
-    brightness_clip=500,
-    subgraph_radius=100,
+    img_config=None,
     node_spacing=5,
-    patch_shape=(128, 128, 128),
     random_nonmerge_site_prob=0.5,
-    use_transform=False,
+    subgraph_depth=100,
 ):
     # Load image prefixes
-    bucket, root_prefix = util.parse_cloud_path(root_path)
+    bucket, root_prefix = util.parse_cloud_path(sites_root_path)
     img_prefixes = util.read_json(img_prefixes_path)
 
     # Iterate over brains
     datasets = list()
-    for subprefix in util.list_gcs_subprefixes(bucket, root_prefix):
+    for brain_id in brain_ids:
         # Extract dataset info
-        brain_id = subprefix.split("/")[-2]
-        segmentation_id = get_segmentation_id(bucket, subprefix)
-        dataset_path = os.path.join(root_path, brain_id, segmentation_id)
         img_path = os.path.join(img_prefixes[brain_id], "0")
+        segmentation_id = get_segmentation_id(sites_root_path, brain_id)
+        sites_path = os.path.join(sites_root_path, brain_id, segmentation_id)
+        swcs_path = util.get_google_swcs_prefix(
+            swcs_root_path, brain_id, segmentation_id
+        )
 
         # Add dataset
         dataset = BrainDataset(
             brain_id,
-            dataset_path,
             img_path,
+            sites_path,
+            swcs_path,
             anisotropy=anisotropy,
-            brightness_clip=brightness_clip,
-            subgraph_radius=subgraph_radius,
+            img_config=img_config,
+            subgraph_depth=subgraph_depth,
             node_spacing=node_spacing,
-            patch_shape=patch_shape,
             random_nonmerge_site_prob=random_nonmerge_site_prob,
-            use_transform=use_transform,
         )
         datasets.append(dataset)
     return BrainDatasetCollection(datasets)
 
 
-def get_segmentation_id(bucket, prefix):
-    subprefixes = util.list_gcs_subprefixes(bucket, prefix)
+def get_segmentation_id(sites_path, brain_id):
+    brain_sites_path = os.path.join(sites_path, brain_id)
+    subprefixes = util.list_gcs_subprefixes(brain_sites_path)
     assert len(subprefixes) == 1
     return subprefixes[0].split("/")[-2]

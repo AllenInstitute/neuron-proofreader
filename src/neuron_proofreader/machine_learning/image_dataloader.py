@@ -100,15 +100,7 @@ class PatchLoader(ABC):
 
     max_voxel_shift = 5
 
-    def __init__(
-        self,
-        graph,
-        img_path,
-        brightness_clip=400,
-        normalization_percentiles=(1, 99.5),
-        patch_shape=(128, 128, 128),
-        use_transform=False,
-    ):
+    def __init__(self, graph, img_config, img_path):
         """
         Instantiates a PatchLoader object.
 
@@ -118,22 +110,12 @@ class PatchLoader(ABC):
             Graph used to compute patch voxel coordinates.
         img_path : str
             Path to whole-brain image.
-        brightness_clip : int, optional
-            Intensity value that voxel brightnesses are clipped to.
-        normalization_percentiles : Tuple[float], optional
-            Percentiles used to normalize patches. Default is (1, 99.5).
-        patch_shape : Tuple[int], optional
-            Shape of patch to be read from image. Default is (128, 128, 128).
-        """
-        # Instance attributes
-        self.brightness_clip = brightness_clip
-        self.graph = graph
-        self.patch_shape = patch_shape
-        self.percentiles = normalization_percentiles
 
-        # Image operations
+        """
+        self.config = img_config
+        self.graph = graph
         self.img = TensorStoreImage(img_path)
-        self.transform = ImageTransforms() if use_transform else None
+        self.transform = ImageTransforms() if img_config.transform else None
 
     # --- Abstract Interface ---
     @abstractmethod
@@ -201,6 +183,9 @@ class PatchLoader(ABC):
         return patch
 
     # --- Helpers ---
+    def __getattr__(self, name):
+        return getattr(self.config, name)
+
     def adjust_voxel(self, voxel):
         if self.transform:
             voxel += np.random.randint(
@@ -219,25 +204,6 @@ class PatchLoader(ABC):
 
 
 class DetectionPatchLoader(PatchLoader):
-
-    def __init__(
-        self,
-        graph,
-        img_path,
-        brightness_clip=400,
-        normalization_percentiles=(1, 99.5),
-        patch_shape=(128, 128, 128),
-        use_transform=False,
-    ):
-        # Call parent class
-        super().__init__(
-            graph,
-            img_path,
-            brightness_clip=brightness_clip,
-            normalization_percentiles=normalization_percentiles,
-            patch_shape=patch_shape,
-            use_transform=use_transform,
-        )
 
     # --- Implementation of Abstract Inferface ---
     def __call__(self, node):

@@ -206,7 +206,7 @@ class Reader:
             for process in as_completed(futures):
                 try:
                     swc_dicts.extend(process.result())
-                except RefreshError:
+                except (TransportError, RefreshError):
                     pass
 
                 if self.verbose:

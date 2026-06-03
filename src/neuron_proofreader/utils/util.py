@@ -24,7 +24,7 @@ import psutil
 import shutil
 
 
-# --- OS utils ---
+# --- OS Utils ---
 def listdir(path, extension=None):
     """
     Lists all files in the directory at "path". If an extension is
@@ -179,7 +179,7 @@ def set_filename_in_zip(zipfile, name):
     return filename
 
 
-# --- IO utils ---
+# --- IO Utils ---
 def combine_zips(zip_paths, output_zip_path):
     """
     Combines a list of ZIP archives into a single ZIP archive.
@@ -334,6 +334,31 @@ def write_txt(path, contents):
 
 
 # --- Cloud Utils ---
+def get_google_swcs_prefix(root_prefix, brain_id, segmentation_id):
+    # Determine old vs. new result
+    prefix1 = os.path.join(root_prefix, brain_id, "whole_brain")
+    prefix2 = os.path.join(root_prefix, "whole_brain", brain_id)
+    if check_gcs_exists(prefix1, is_prefix=True):
+        prefix = prefix1
+    elif check_gcs_exists(prefix2, is_prefix=True):
+        prefix = prefix2
+    else:
+        raise Exception("Unable to find Google swcs result!")
+
+    # Get SWC dirname
+    prefix = os.path.join(prefix, segmentation_id)
+    dirname = get_google_swcs_dirname(prefix)
+    return os.path.join(prefix, dirname)
+
+
+def get_google_swcs_dirname(prefix):
+    for subprefix in list_gcs_subprefixes(prefix):
+        dirname = subprefix.split("/")[-2]
+        if "swc" in dirname:
+            return dirname
+    return "swcs"
+
+
 def list_cloud_paths(path, extension=""):
     """
     Lists all files in a GCS/S3 bucket with the given extension.
@@ -386,26 +411,38 @@ def parse_cloud_path(path):
 
 
 # --- GCS Utils ---
-def check_gcs_file_exists(bucket_name, path):
+def check_gcs_exists(path, is_prefix=False):
     """
-    Checks if the given path exists.
-
+    Checks if a file or prefix exists in GCS.
     Parameters
     ----------
-    bucket_name : str
-        Name of bucket to be checked.
     path : str
-        Path to be checked.
-
+        GCS path to check.
+    prefix : bool
+        If True, checks whether any object exists under the given prefix.
+        If False, checks whether the exact file exists.
     Returns
     -------
     bool
         Indication of whether the path exists.
     """
-    client = storage.Client()
-    bucket = client.bucket(bucket_name)
-    blob = bucket.blob(path)
-    return blob.exists()
+    bucket_name, key = parse_cloud_path(path)
+    bucket = storage.Client().bucket(bucket_name)
+    if is_prefix:
+        key = key.rstrip("/") + "/"
+        return any(bucket.list_blobs(prefix=key, max_results=1))
+    else:
+        return bucket.blob(key).exists()
+
+
+def check_gcs_prefix_exists(path):
+    bucket_name, prefix = parse_cloud_path(path)
+    prefix = prefix.rstrip("/") + "/"
+    bucket = storage.Client().bucket(bucket_name)
+    exists = any(
+        bucket.list_blobs(prefix=prefix, max_results=1)
+    )
+    return exists
 
 
 def is_gcs_path(path):
@@ -451,22 +488,23 @@ def list_gcs_paths(bucket_name, prefix, extension=""):
     return paths
 
 
-def list_gcs_subprefixes(bucket_name, prefix):
+def list_gcs_subprefixes(path):
     """
-    Lists all direct subdirectories of a given prefix in a GCS bucket.
+    Lists all direct subdirectories of a given location in a GCS bucket.
 
     Parameters
     ----------
-    bucket_name : str
-        Name of bucket containing prefix.
-    prefix : str
-        Path to location within bucket to be searched.
+    path : str
+        Path to location in a GCS bucket.
 
     Returns
     -------
     List[str]
          Direct subdirectories.
     """
+    bucket_name, prefix = parse_cloud_path(path)
+    prefix = prefix.rstrip("/") + "/"
+
     # Load blobs
     blobs = storage.Client().list_blobs(
         bucket_name, prefix=prefix, delimiter="/"
@@ -641,7 +679,7 @@ def upload_file_to_s3(src_path, bucket_name, dst_path):
     s3.upload_file(src_path, bucket_name, dst_path)
 
 
-# --- Dictionary utils ---
+# --- Dictionary Utils ---
 def find_best(my_dict, maximize=True):
     """
     Finds the key associated with the largest integer or longest list.

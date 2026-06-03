@@ -8,7 +8,6 @@ Helper routines for reading and processing images.
 
 """
 
-from fastremap import mask_except, renumber, unique
 from matplotlib.colors import ListedColormap
 from scipy.ndimage import zoom
 

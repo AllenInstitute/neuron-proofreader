@@ -18,6 +18,92 @@ from neuron_proofreader.utils import util
 
 
 @dataclass
+class GraphConfig:
+    pass
+
+
+@dataclass
+class ImageConfig:
+    """
+    Configuration class for image processing parameters.
+
+    Attributes
+    ----------
+    brightness_clip : int
+        Intensity value that voxel brightness is clipped to.
+    percentiles : Tuple[float], optional
+        Percentiles used to normalize patches.
+    patch_shape : Tuple[int]
+        Shape of patch to be read from image.
+    transform : bool
+        Indication of whether to use image augmentation.
+    """
+    brightness_clip: int = 400
+    percentiles: tuple = (1, 99.5)
+    patch_shape: tuple = (128, 128, 128)
+    transform: bool = False
+
+
+@dataclass
+class MLConfig:
+    """
+    Configuration class for machine learning model parameters.
+
+    Attributes
+    ----------
+    batch_size : int
+        The number of samples processed in one batch during training or
+        inference. Default is 64.
+    brightness_clip : int
+        Maximum brightness value that image intensities are clipped to.
+        Default is 400.
+    device : str
+        Device to load model onto. Default is "cuda".
+    model_name : str
+        Name of model used to perform inference. Default is None.
+    patch_shape : Tuple[int]
+        Shape of image patch expected by vision model. Default is (96, 96, 96).
+    transform : bool
+        Indication of whether to apply data augmentation to image patches.
+        Default is False.
+    """
+    batch_size: int = 64
+    brightness_clip: int = 400
+    device: str = "cuda"
+    model_name: str = None
+    patch_shape: tuple = (96, 96, 96)
+    transform: bool = False
+
+    def to_dict(self):
+        """
+        Converts configuration attributes to a dictionary.
+
+        Returns
+        -------
+        dict
+            Dictionary containing configuration attributes.
+        """
+        attributes = dict()
+        for k, v in vars(self).items():
+            if isinstance(v, tuple):
+                attributes[k] = list(v)
+            else:
+                attributes[k] = v
+        return attributes
+
+    def save(self, path):
+        """
+        Saves configuration attributes to a JSON file.
+        """
+        util.write_json(path, self.to_dict())
+
+
+@dataclass
+class ProposalsConfig:
+    pass
+
+
+@dataclass
 class ProposalGraphConfig:
     """
     Represents configuration settings related to graph properties and
@@ -65,61 +151,6 @@ class ProposalGraphConfig:
     remove_high_risk_merges: bool = False
     trim_endpoints_bool: bool = True
     verbose: bool = True
-
-    def to_dict(self):
-        """
-        Converts configuration attributes to a dictionary.
-
-        Returns
-        -------
-        dict
-            Dictionary containing configuration attributes.
-        """
-        attributes = dict()
-        for k, v in vars(self).items():
-            if isinstance(v, tuple):
-                attributes[k] = list(v)
-            else:
-                attributes[k] = v
-        return attributes
-
-    def save(self, path):
-        """
-        Saves configuration attributes to a JSON file.
-        """
-        util.write_json(path, self.to_dict())
-
-
-@dataclass
-class MLConfig:
-    """
-    Configuration class for machine learning model parameters.
-
-    Attributes
-    ----------
-    batch_size : int
-        The number of samples processed in one batch during training or
-        inference. Default is 64.
-    brightness_clip : int
-        Maximum brightness value that image intensities are clipped to.
-        Default is 400.
-    device : str
-        Device to load model onto. Default is "cuda".
-    model_name : str
-        Name of model used to perform inference. Default is None.
-    patch_shape : Tuple[int]
-        Shape of image patch expected by vision model. Default is (96, 96, 96).
-    transform : bool
-        Indication of whether to apply data augmentation to image patches.
-        Default is False.
-    """
-
-    batch_size: int = 64
-    brightness_clip: int = 400
-    device: str = "cuda"
-    model_name: str = None
-    patch_shape: tuple = (96, 96, 96)
-    transform: bool = False
 
     def to_dict(self):
         """

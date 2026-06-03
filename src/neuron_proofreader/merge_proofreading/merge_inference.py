@@ -244,7 +244,7 @@ class GraphDataset(IterableDataset, ABC):
         img_path,
         patch_shape,
         batch_size=16,
-        brightness_clip=300,
+        brightness_clip=400,
         is_multimodal=False,
         min_search_size=0,
         prefetch=64,
