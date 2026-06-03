@@ -597,60 +597,6 @@ def read_s3_txt(path):
     return obj["Body"].read().decode("utf-8")
 
 
-def list_s3_paths(bucket_name, prefix, extension=""):
-    """
-    Lists all object keys in a public S3 bucket under a given prefix,
-    optionally filters by file extension.
-
-    Parameters
-    ----------
-    bucket_name : str
-        Name of the S3 bucket.
-    prefix : str
-        Prefix to search under.
-    extension : str, optional
-        File extension to filter by. Default is an empty string.
-
-    Returns
-    -------
-    paths : List[str]
-        S3 object keys that match the prefix and extension filter.
-    """
-    # Create an anonymous client for public buckets
-    s3 = boto3.client("s3", config=Config(signature_version=UNSIGNED))
-    response = s3.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
-
-    # List all objects under the prefix
-    paths = list()
-    if "Contents" in response:
-        for obj in response["Contents"]:
-            filename = obj["Key"]
-            if filename.endswith(extension):
-                path = os.path.join(f"s3://{bucket_name}", filename)
-                paths.append(path)
-    return paths
-
-
-def read_s3_txt(path):
-    """
-    Reads a txt file stored in an S3 bucket.
-
-    Parameters
-    ----------
-    path : str
-        Path to txt file to be read.
-
-    Returns
-    -------
-    str
-        Contents of txt file.
-    """
-    bucket_name, subpath = parse_cloud_path(path)
-    s3 = boto3.client("s3", config=Config(signature_version=UNSIGNED))
-    obj = s3.get_object(Bucket=bucket_name, Key=subpath)
-    return obj["Body"].read().decode("utf-8")
-
-
 def upload_dir_to_s3(dir_path, bucket_name, prefix):
     """
     Uploads a directory on the local machine to an S3 bucket.

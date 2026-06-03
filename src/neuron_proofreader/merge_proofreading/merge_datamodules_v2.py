@@ -38,7 +38,9 @@ import random
 import threading
 import torch
 
-from neuron_proofreader.machine_learning.augmentation import ImageTransforms
+from neuron_proofreader.machine_learning.image_dataloader import (
+    DetectionPatchLoader,
+)
 from neuron_proofreader.machine_learning.geometric_gnn_models import (
     subgraph_to_data,
 )
@@ -46,13 +48,7 @@ from neuron_proofreader.machine_learning.point_cloud_models import (
     subgraph_to_point_cloud,
 )
 from neuron_proofreader.skeleton_graph import SkeletonGraph
-from neuron_proofreader.utils import (
-    geometry_util,
-    img_util,
-    ml_util,
-    swc_util,
-    util,
-)
+from neuron_proofreader.utils import ml_util, swc_util, util
 
 
 # -- Datasets ---
@@ -87,8 +83,9 @@ class BrainDataset:
         brightness_clip=500,
         subgraph_radius=100,
         node_spacing=5,
+        normalization_percentiles=(1, 99.5),
         patch_shape=(128, 128, 128),
-        probability_random_nonmerge_site=0.5,
+        random_nonmerge_site_prob=0.5,
         use_transform=False,
     ):
         # Instance attributes
@@ -98,27 +95,32 @@ class BrainDataset:
         self.ignore_fragments = set()
         self.node_spacing = node_spacing
         self.patch_shape = patch_shape
-        self.probability_random_nonmerge_site = (
-            probability_random_nonmerge_site
-        )
+        self.random_nonmerge_site_prob = random_nonmerge_site_prob
         self.subgraph_radius = subgraph_radius
 
         # Core data structures
         self.graph = self.load_fragments(sites_prefix)
-        self.img = img_util.TensorStoreImage(img_path)
-        self.set_giant_components()
-
         self.merge_sites = self.load_sites(
-            os.path.join(sites_prefix, "merge_sites/")
+            os.path.join(sites_prefix, "merge_sites")
         )
         self.nonmerge_sites = self.load_sites(
-            os.path.join(sites_prefix, "nonmerge_sites/")
+            os.path.join(sites_prefix, "nonmerge_sites")
         )
+
+        # Image loading
+        self.patch_loader = DetectionPatchLoader(
+            self.graph,
+            img_path,
+            brightness_clip=brightness_clip,
+            normalization_percentiles=normalization_percentiles,
+            patch_shape=patch_shape,
+            use_transform=use_transform,
+        )
+
+        # Store dataset info
+        self.set_giant_components()
         self.set_merge_site_info()
         self.set_valid_branching_nodes()
-
-        # Image augmentation for training
-        self.transform = ImageTransforms() if use_transform else None
 
     def load_fragments(self, sites_prefix):
         graph = SkeletonGraph(
@@ -189,31 +191,15 @@ class BrainDataset:
 
     # --- Site Retrieval ---
     def __getitem__(self, idx):
-        # Get example
         node, label = self.get_site(idx)
         subgraph = self.graph.rooted_subgraph(node, self.subgraph_radius)
-
-        # Get voxel coordinate
-        voxel = subgraph.node_voxel(0)
-        if self.transform:
-            voxel += np.random.randint(-6, 6 + 1, size=3)
-
-        # Extract subgraph and image patches centered at site
-        img_patch = self.get_img_patch(voxel)
-        segment_mask = self.get_segment_mask(voxel, subgraph)
-
-        # Stack image channels
-        try:
-            patches = np.stack([img_patch, segment_mask], axis=0)
-        except ValueError:
-            img_patch = img_util.pad_to_shape(img_patch, self.patch_shape)
-            patches = np.stack([img_patch, segment_mask], axis=0)
+        patches = self.patch_loader(node)
         return patches, subgraph, label
 
     def get_site(self, idx):
         if idx > 0:
             return self.merge_sites["node"][idx], 1
-        elif np.random.random() < self.probability_random_nonmerge_site:
+        elif np.random.random() < self.random_nonmerge_site_prob:
             return self.get_random_nonmerge_site()
         elif abs(idx) < len(self.nonmerge_sites):
             return self.nonmerge_sites["node"][abs(idx)], 0
@@ -227,48 +213,6 @@ class BrainDataset:
         else:
             node = util.sample_once(self.graph.nodes)
         return node, 0
-
-    # --- Image / Mask Extraction ---
-    def get_img_patch(self, center):
-        """
-        Extracts, clips, and normalises a 3D image patch centred at center.
-
-        Parameters
-        ----------
-        center : numpy.ndarray
-            Voxel coordinates of the patch centre.
-
-        Returns
-        -------
-        numpy.ndarray
-        """
-        patch = self.img.read(center, self.patch_shape)
-        patch = np.minimum(patch, self.brightness_clip)
-        return img_util.normalize(patch)
-
-    def get_segment_mask(self, center, subgraph):
-        """
-        Builds the segment mask for subgraph.
-
-        Parameters
-        ----------
-        center : numpy.ndarray
-            Voxel coordinates of the patch centre.
-        subgraph : SkeletonGraph
-
-        Returns
-        -------
-        numpy.ndarray
-        """
-        mask = np.zeros(self.patch_shape)
-        offset = img_util.get_offset(center, self.patch_shape)
-        for node1, node2 in subgraph.edges:
-            v1 = subgraph.node_local_voxel(node1, offset)
-            v2 = subgraph.node_local_voxel(node2, offset)
-            img_util.annotate_voxels(
-                mask, geometry_util.make_digital_line(v1, v2)
-            )
-        return mask
 
     # --- Helpers ---
     def add_nonmerge_sites(self, num_sites):
@@ -646,7 +590,7 @@ def create_dataset_collection(
     subgraph_radius=100,
     node_spacing=5,
     patch_shape=(128, 128, 128),
-    probability_random_nonmerge_site=0.5,
+    random_nonmerge_site_prob=0.5,
     use_transform=False,
 ):
     # Load image prefixes
@@ -672,7 +616,7 @@ def create_dataset_collection(
             subgraph_radius=subgraph_radius,
             node_spacing=node_spacing,
             patch_shape=patch_shape,
-            probability_random_nonmerge_site=probability_random_nonmerge_site,
+            random_nonmerge_site_prob=random_nonmerge_site_prob,
             use_transform=use_transform,
         )
         datasets.append(dataset)

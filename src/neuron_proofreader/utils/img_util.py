@@ -20,77 +20,6 @@ import tensorstore as ts
 from neuron_proofreader.utils import util
 
 
-class TensorStoreImage:
-    """
-    Class that reads images with the TensorStore library.
-    """
-
-    def __init__(self, img_path):
-        """
-        Instantiates a TensorStoreImage object.
-
-        Parameters
-        ----------
-        img_path : str
-            Path to image.
-        """
-        # Load image
-        bucket_name, inner_path = util.parse_cloud_path(img_path)
-        self.img = ts.open(
-            {
-                "driver": get_driver(img_path),
-                "kvstore": {
-                    "driver": get_storage_driver(img_path),
-                    "bucket": bucket_name,
-                    "path": inner_path,
-                },
-                "context": {
-                    "cache_pool": {"total_bytes_limit": 1000000000},
-                    "cache_pool#remote": {"total_bytes_limit": 1000000000},
-                    "data_copy_concurrency": {"limit": 8},
-                },
-                "recheck_cached_data": "open",
-            }
-        ).result()
-
-        # Check for Google segmentation
-        if "from_google" in img_path:
-            self.img = self.img[ts.d[:].transpose[3, 2, 1, 0]]
-
-        # Check dimensions
-        while self.img.ndim < 5:
-            self.img = self.img[ts.newaxis, ...]
-
-    def read(self, voxel, shape):
-        """
-        Reads a patch from an image given a voxel coordinate and patch shape.
-
-        Parameters
-        ----------
-        voxel : Tuple[int]
-            Center of image patch to be read.
-        shape : Tuple[int]
-            Shape of image patch to be read.
-
-        Returns
-        -------
-        numpy.ndarray
-            Image patch.
-        """
-        return self.img[(0, 0, *get_slices(voxel, shape))].read().result()
-
-    def shape(self):
-        """
-        Gets the shape of image.
-
-        Returns
-        -------
-        Tuple[int]
-            Shape of image.
-        """
-        return self.img.shape
-
-
 # --- Visualization ---
 def make_segmentation_colormap(mask, seed=42):
     """
@@ -218,7 +147,7 @@ def plot_segmentation_mips(segmentation):
 
 
 # --- Helpers ---
-def annotate_voxels(img, voxels, kernel_size=3, val=1):
+def annotate_voxels(img, voxels, kernel_size=3, fill_val=1):
     """
     Annotates voxel coordinates in a 3D image by filling a patch around each
     voxel with a given value.
@@ -231,7 +160,7 @@ def annotate_voxels(img, voxels, kernel_size=3, val=1):
         Voxel coordinates to annotate.
     kernel_size : int, optional
         Size of kernel used to fill around each voxel. Default is 3.
-    val : int, optional
+    fill_val : int, optional
         Fill value. Default is 1.
     """
     buffer = (kernel_size - 1) // 2
@@ -239,7 +168,7 @@ def annotate_voxels(img, voxels, kernel_size=3, val=1):
     for voxel in voxels:
         if is_contained(voxel, img.shape, buffer=buffer):
             s = get_slices(voxel, shape)
-            img[s] = val
+            img[s] = fill_val
 
 
 def compute_iou3d(c1, c2, s1, s2):
@@ -344,44 +273,6 @@ def get_driver(img_path):
     elif is_precomputed(img_path):
         return "neuroglancer_precomputed"
     raise Exception(f"Invalid image path at {img_path}")
-
-
-def get_neighbors(voxel, shape):
-    """
-    Gets the neighbors of a given voxel coordinate.
-
-    Parameters
-    ----------
-    voxel : Tuple[int]
-        Voxel coordinate in a 3D image.
-    shape : Tuple[int]
-        Shape of the 3D image that voxel is contained within.
-
-    Returns
-    -------
-    neighbors : List[Tuple[int]]
-         Voxel coordinates of the 26 neighbors of the given voxel.
-    """
-    # Initializations
-    x, y, z = voxel
-    depth, height, width = shape
-
-    # Iterate over the possible offsets for x, y, and z
-    neighbors = []
-    for dx in [-1, 0, 1]:
-        for dy in [-1, 0, 1]:
-            for dz in [-1, 0, 1]:
-                # Skip the (0, 0, 0) offset
-                if dx == 0 and dy == 0 and dz == 0:
-                    continue
-
-                # Calculate the neighbor's coordinates
-                nx, ny, nz = x + dx, y + dy, z + dz
-
-                # Check if the neighbor is within the bounds of the 3D image
-                if 0 <= nx < depth and 0 <= ny < height and 0 <= nz < width:
-                    neighbors.append((nx, ny, nz))
-    return neighbors
 
 
 def get_offset(center, shape):
@@ -580,31 +471,6 @@ def pad_to_shape(img, target_shape, pad_value=0):
     for s, t in zip(img.shape, target_shape):
         pads.append(((t - s) // 2, (t - s + 1) // 2))
     return np.pad(img, pads, mode="constant", constant_values=pad_value)
-
-
-def remove_small_segments(segmentation, min_size):
-    """
-    Removes small segments from a segmentation.
-
-    Parameters
-    ----------
-    segmentation : numpy.ndarray
-        Integer array representing a segmentation mask. Each unique
-        nonzero value corresponds to a distinct segment.
-    min_size : int
-        Minimum size (in voxels) for a segment to be kept.
-
-    Returns
-    -------
-    segmentation : numpy.ndarray
-        New segmentation of the same shape as the input, with only the
-        retained segments renumbered contiguously.
-    """
-    ids, cnts = unique(segmentation, return_counts=True)
-    ids = [i for i, cnt in zip(ids, cnts) if cnt > min_size and i != 0]
-    ids = mask_except(segmentation, ids)
-    segmentation, _ = renumber(ids, preserve_zero=True, in_place=True)
-    return segmentation
 
 
 def resize(img, new_shape):
