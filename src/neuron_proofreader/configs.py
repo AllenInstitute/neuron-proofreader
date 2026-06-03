@@ -101,6 +101,9 @@ class ImageConfig:
     patch_shape: Tuple[int, int, int] = (128, 128, 128)
     transform: bool = False
 
+    def set_train_mode(self):
+        self.transform = True
+
 
 @dataclass
 class ProposalsConfig:

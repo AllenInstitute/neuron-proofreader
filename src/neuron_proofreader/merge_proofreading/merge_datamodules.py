@@ -28,13 +28,13 @@ ThreadedDataLoader
 from scipy.spatial import KDTree
 from concurrent.futures import as_completed, ThreadPoolExecutor
 from torch.utils.data import Dataset, DataLoader
+from tqdm import tqdm
 
 import networkx as nx
 import numpy as np
 import os
 import pandas as pd
 import queue
-import random
 import threading
 import torch
 
@@ -58,21 +58,14 @@ class BrainDataset:
 
     Parameters
     ----------
-    anisotropy : Tuple[float]
-        Voxel-to-physical scaling factors.
     brain_id : str
         Unique identifier for this brain.
-    brightness_clip : int
-        Maximum raw image intensity before normalisation.
-    node_spacing : float
-        Spacing (in microns) between neighbouring graph nodes.
-    patch_shape : Tuple[int]
-        Shape of the 3D image patches to extract.
     subgraph_depth : float
         Radius (in microns) used when extracting rooted subgraphs.
     """
 
-    giant_component_cable_length = 3 * 10**4
+    giant_component_cable_length = 30000
+    random_branching_site_probability = 0.7
 
     def __init__(
         self,
@@ -80,6 +73,7 @@ class BrainDataset:
         img_path,
         sites_prefix,
         swcs_path,
+        class_ratios=(0.5, 0.5),
         graph_config=None,
         img_config=None,
         random_nonmerge_site_prob=0.5,
@@ -88,9 +82,10 @@ class BrainDataset:
     ):
         # Instance attributes
         self.brain_id = brain_id
-        self.rebalance_classes = rebalance_classes
+        self.class_ratios = class_ratios
         self.ignore_fragments = set()
         self.random_nonmerge_site_prob = random_nonmerge_site_prob
+        self.rebalance_classes = rebalance_classes
         self.subgraph_depth = subgraph_depth
 
         # Core data structures
@@ -194,8 +189,7 @@ class BrainDataset:
             return self.get_random_nonmerge_site()
 
     def get_random_nonmerge_site(self):
-        use_branching = self.valid_branching_nodes and random.random() < 0.5
-        if use_branching:
+        if self.use_branching():
             node = util.sample_once(self.valid_branching_nodes)
         else:
             node = util.sample_once(self.graph.nodes)
@@ -223,6 +217,10 @@ class BrainDataset:
         else:
             self.nonmerge_sites = pd.DataFrame(new_sites)
 
+    def use_branching(self):
+        outcome = np.random.random() < self.random_branching_site_probability
+        return outcome and self.valid_branching_nodes
+
     def _has_nearby_branching(self, root, max_depth=60):
         queue = [(root, 0)]
         visited = {root}
@@ -241,21 +239,26 @@ class BrainDataset:
         return False
 
     def _list_indices(self):
-        # Set idxs
-        pos_idxs = np.arange(len(self.merge_sites))
-        neg_idxs = -np.arange(len(self.nonmerge_sites))
+        # Compute target class counts
+        n_pos = len(self.merge_sites)
+        n_neg = len(self.nonmerge_sites) or n_pos
+        pos_ratio, neg_ratio = self.class_ratios
+        n_target_neg = min(int(n_pos * neg_ratio / pos_ratio), n_neg)
 
-        # Check for class imbalance
-        if self.rebalance_classes:
-            if len(neg_idxs) < len(pos_idxs):
-                neg_idxs = -pos_idxs
-            else:
-                neg_idxs = np.random.choice(
-                    neg_idxs, size=len(pos_idxs), replace=False
-                )
-        return np.concatenate((pos_idxs, neg_idxs))
+        # Check whether to rebalance negative examples
+        size = n_target_neg if self.rebalance_classes else n_neg
+        neg_idxs = np.random.choice(n_neg, size=size, replace=False)
+        return np.concatenate((-neg_idxs, np.arange(n_pos)))
 
     def __len__(self):
+        """
+        Counts the number of examples in the dataset.
+
+        Returns
+        -------
+        int
+            Number of examples in the dataset.
+        """
         return len(self._list_indices())
 
     def __repr__(self):
@@ -279,15 +282,12 @@ class BrainDatasetCollection(Dataset):
 
     Parameters
     ----------
-    brain_datasets : List[BrainDataset]
+    datasets : List[BrainDataset]
         One BrainDataset per brain.
-    augmentation : callable or None
-        Applied to (2, D, H, W) patch arrays in-place during __getitem__.
-        Pass None when augmentation is not needed (e.g. validation).
     """
 
-    def __init__(self, brain_datasets):
-        self.brain_datasets = brain_datasets
+    def __init__(self, datasets):
+        self.datasets = datasets
         self._index_table = self._build_index_table()
 
     def _build_index_table(self):
@@ -297,21 +297,21 @@ class BrainDatasetCollection(Dataset):
 
         Returns
         -------
-        List[Tuple[int, int]]
+        table : List[Tuple[int, int]]
         """
         table = []
-        for b_idx, bd in enumerate(self.brain_datasets):
+        for b_idx, bd in enumerate(self.datasets):
             for local_idx in bd._list_indices():
                 table.append((b_idx, int(local_idx)))
         return table
 
-    # --- Dataset interface ---
+    # --- Dataset Interface ---
     def __len__(self):
         return len(self._index_table)
 
     def __getitem__(self, idx):
         """
-        Returns one example: (patches, subgraph, label).
+        Gets one example: (patches, subgraph, label).
 
         Parameters
         ----------
@@ -320,12 +320,17 @@ class BrainDatasetCollection(Dataset):
 
         Returns
         -------
-        patches : numpy.ndarray  shape (2, D, H, W)
-        subgraph : SkeletonGraph
-        label : int
+        ...
         """
         b_idx, local_idx = self._index_table[idx]
-        return self.brain_datasets[b_idx][local_idx]
+        return self.datasets[b_idx][local_idx]
+
+    def __repr__(self):
+        return (
+            f"BrainDatasetCollection("
+            f"n_brains={len(self.datasets)}, "
+            f"n_examples={len(self)})"
+        )
 
     def get_idxs(self):
         """
@@ -337,30 +342,6 @@ class BrainDatasetCollection(Dataset):
             Indices over the full index table.
         """
         return np.arange(len(self._index_table))
-
-    # --- Helpers ---
-    def brain_ids(self):
-        """Returns the list of brain IDs in this collection."""
-        return [bd.brain_id for bd in self.brain_datasets]
-
-    def n_merge_sites(self):
-        """Returns the total number of merge sites across all brains."""
-        return sum(len(bd.merge_sites) for bd in self.brain_datasets)
-
-    def count_fragments(self):
-        """Returns the total number of fragments across all brains."""
-        return sum(
-            nx.number_connected_components(bd.graph)
-            for bd in self.brain_datasets
-            if bd.graph is not None
-        )
-
-    def __repr__(self):
-        return (
-            f"BrainDatasetCollection("
-            f"n_brains={len(self.brain_datasets)}, "
-            f"n_examples={len(self)})"
-        )
 
 
 # --- Dataloader ---
@@ -393,9 +374,7 @@ class ThreadedDataLoader(DataLoader):
         self.modality = modality
         self.use_shuffle = use_shuffle
         self.prefetch_batches = prefetch_batches
-        self.patches_shape = (2,) + dataset.brain_datasets[
-            0
-        ].patch_loader.patch_shape
+        self.img_shape = (2,) + dataset.datasets[0].patch_loader.patch_shape
 
         # Set batch loader
         if self.is_multimodal and self.modality == "graph":
@@ -468,7 +447,7 @@ class ThreadedDataLoader(DataLoader):
                 pending[thread] = i
 
             # Store results
-            patches = np.zeros((len(batch_idxs),) + self.patches_shape)
+            patches = np.zeros((len(batch_idxs),) + self.img_shape)
             targets = np.zeros((len(batch_idxs), 1))
             for thread in as_completed(pending.keys()):
                 i = pending.pop(thread)
@@ -499,7 +478,7 @@ class ThreadedDataLoader(DataLoader):
                 pending[thread] = i
 
             # Store results
-            patches = np.zeros((len(batch_idxs),) + self.patches_shape)
+            patches = np.zeros((len(batch_idxs),) + self.shape)
             targets = np.zeros((len(batch_idxs), 1))
             point_clouds = np.zeros((len(batch_idxs), 3, 3600))
             for thread in as_completed(pending.keys()):
@@ -540,7 +519,7 @@ class ThreadedDataLoader(DataLoader):
 
             # Store results
             targets = np.zeros((len(idxs), 1))
-            patches = np.zeros((len(idxs),) + self.patches_shape)
+            patches = np.zeros((len(idxs),) + self.img_shape)
             h, x, edge_index, batches = list(), list(), list(), list()
             node_offset = 0
             for i, thread in enumerate(as_completed(threads)):
@@ -575,22 +554,32 @@ class ThreadedDataLoader(DataLoader):
 # --- Sites Loading ---
 def create_dataset_collection(
     brain_ids,
+    dataset_mode,
     img_prefixes_path,
     sites_root_path,
     swcs_root_path,
+    class_ratios=(0.5, 0.5),
     graph_config=None,
     img_config=None,
-    random_nonmerge_site_prob=0.5,
-    rebalance_classes=False,
     subgraph_depth=100,
 ):
+    # Set parameters based on mode
+    assert dataset_mode in ["Train", "Val"]
+    if dataset_mode == "Train":
+        img_config.set_train_mode()
+        random_nonmerge_site_prob = 0.5
+        rebalance_classes = True
+    else:
+        random_nonmerge_site_prob = 0
+        rebalance_classes = False
+
     # Load image prefixes
     bucket, root_prefix = util.parse_cloud_path(sites_root_path)
     img_prefixes = util.read_json(img_prefixes_path)
 
     # Iterate over brains
     datasets = list()
-    for brain_id in brain_ids:
+    for brain_id in tqdm(brain_ids, desc=f"Load {dataset_mode} Dataset"):
         # Extract dataset info
         img_path = os.path.join(img_prefixes[brain_id], "0")
         segmentation_id = get_segmentation_id(sites_root_path, brain_id)
@@ -605,12 +594,21 @@ def create_dataset_collection(
             img_path,
             sites_path,
             swcs_path,
+            class_ratios=class_ratios,
             graph_config=graph_config,
             img_config=img_config,
             subgraph_depth=subgraph_depth,
             random_nonmerge_site_prob=random_nonmerge_site_prob,
             rebalance_classes=rebalance_classes,
         )
+
+        # Check whether to generate examples for validation
+        if dataset_mode == "Val":
+            num_target_neg = 10 * len(dataset.merge_sites)
+            num_added_neg = num_target_neg - len(dataset.nonmerge_sites)
+            dataset.add_nonmerge_sites(num_added_neg)
+
+        # Add dataset to collection
         datasets.append(dataset)
     return BrainDatasetCollection(datasets)
 
