@@ -439,9 +439,7 @@ def check_gcs_prefix_exists(path):
     bucket_name, prefix = parse_cloud_path(path)
     prefix = prefix.rstrip("/") + "/"
     bucket = storage.Client().bucket(bucket_name)
-    exists = any(
-        bucket.list_blobs(prefix=prefix, max_results=1)
-    )
+    exists = any(bucket.list_blobs(prefix=prefix, max_results=1))
     return exists
 
 

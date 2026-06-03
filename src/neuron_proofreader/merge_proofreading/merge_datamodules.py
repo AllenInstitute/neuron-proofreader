@@ -20,7 +20,7 @@ BrainDatasetCollection
     the correct brain, exposes split() for train/val partitioning, and is
     the object handed to MergeSiteDataLoader.
 
-MergeSiteDataLoader
+ThreadedDataLoader
     Custom DataLoader that uses multithreading to fetch image patches from
     cloud storage and assemble batches.
 """
@@ -72,7 +72,7 @@ class BrainDataset:
         Radius (in microns) used when extracting rooted subgraphs.
     """
 
-    giant_component_cable_length = 10**4
+    giant_component_cable_length = 3 * 10**4
 
     def __init__(
         self,
@@ -80,20 +80,21 @@ class BrainDataset:
         img_path,
         sites_prefix,
         swcs_path,
-        anisotropy=(1.0, 1.0, 1.0),
+        graph_config=None,
         img_config=None,
-        node_spacing=5,
         random_nonmerge_site_prob=0.5,
+        rebalance_classes=True,
         subgraph_depth=100,
     ):
         # Instance attributes
         self.brain_id = brain_id
+        self.rebalance_classes = rebalance_classes
         self.ignore_fragments = set()
         self.random_nonmerge_site_prob = random_nonmerge_site_prob
         self.subgraph_depth = subgraph_depth
 
         # Core data structures
-        self.graph = self.load_fragments(anisotropy, node_spacing, swcs_path)
+        self.graph = self.load_fragments(graph_config, swcs_path)
         self.merge_sites = self.load_sites(
             os.path.join(sites_prefix, "merge_sites")
         )
@@ -107,12 +108,13 @@ class BrainDataset:
         self.set_merge_site_info()
         self.set_valid_branching_nodes()
 
-    def load_fragments(self, anisotropy, node_spacing, swcs_path):
+    def load_fragments(self, config, swcs_path):
         graph = SkeletonGraph(
-            anisotropy=anisotropy,
-            node_spacing=node_spacing,
-            use_anisotropy=False,
-            verbose=True,
+            anisotropy=config.anisotropy,
+            min_cable_length=config.min_cable_length,
+            node_spacing=config.node_spacing,
+            use_anisotropy=config.use_anisotropy,
+            verbose=config.verbose,
         )
         graph.load(swcs_path)
         return graph
@@ -208,7 +210,7 @@ class BrainDataset:
             site = {
                 "node": node,
                 "xyz": self.graph.node_xyz[node],
-                "filename": "random"
+                "filename": "random",
             }
             new_sites.append(site)
 
@@ -241,15 +243,16 @@ class BrainDataset:
     def _list_indices(self):
         # Set idxs
         pos_idxs = np.arange(len(self.merge_sites))
-        neg_idxs = np.arange(len(self.nonmerge_sites))
+        neg_idxs = -np.arange(len(self.nonmerge_sites))
 
         # Check for class imbalance
-        if len(neg_idxs) < len(pos_idxs):
-            neg_idxs = -pos_idxs
-        else:
-            neg_idxs = -np.random.choice(
-                neg_idxs, size=len(pos_idxs), replace=False
-            )
+        if self.rebalance_classes:
+            if len(neg_idxs) < len(pos_idxs):
+                neg_idxs = -pos_idxs
+            else:
+                neg_idxs = np.random.choice(
+                    neg_idxs, size=len(pos_idxs), replace=False
+                )
         return np.concatenate((pos_idxs, neg_idxs))
 
     def __len__(self):
@@ -331,6 +334,7 @@ class BrainDatasetCollection(Dataset):
         Returns
         -------
         numpy.ndarray
+            Indices over the full index table.
         """
         return np.arange(len(self._index_table))
 
@@ -389,7 +393,9 @@ class ThreadedDataLoader(DataLoader):
         self.modality = modality
         self.use_shuffle = use_shuffle
         self.prefetch_batches = prefetch_batches
-        self.patches_shape = (2,) + dataset.brain_datasets[0].patch_loader.patch_shape
+        self.patches_shape = (2,) + dataset.brain_datasets[
+            0
+        ].patch_loader.patch_shape
 
         # Set batch loader
         if self.is_multimodal and self.modality == "graph":
@@ -572,10 +578,10 @@ def create_dataset_collection(
     img_prefixes_path,
     sites_root_path,
     swcs_root_path,
-    anisotropy=(1.0, 1.0, 1.0),
+    graph_config=None,
     img_config=None,
-    node_spacing=5,
     random_nonmerge_site_prob=0.5,
+    rebalance_classes=False,
     subgraph_depth=100,
 ):
     # Load image prefixes
@@ -599,11 +605,11 @@ def create_dataset_collection(
             img_path,
             sites_path,
             swcs_path,
-            anisotropy=anisotropy,
+            graph_config=graph_config,
             img_config=img_config,
             subgraph_depth=subgraph_depth,
-            node_spacing=node_spacing,
             random_nonmerge_site_prob=random_nonmerge_site_prob,
+            rebalance_classes=rebalance_classes,
         )
         datasets.append(dataset)
     return BrainDatasetCollection(datasets)

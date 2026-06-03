@@ -13,8 +13,9 @@ from abc import ABC, abstractmethod
 import numpy as np
 import tensorstore as ts
 
+from neuron_proofreader.configs import ImageConfig
 from neuron_proofreader.machine_learning.image_augmentation import (
-    ImageTransforms
+    ImageTransforms,
 )
 from neuron_proofreader.utils import geometry_util, img_util, util
 
@@ -108,14 +109,15 @@ class PatchLoader(ABC):
         ----------
         graph : SkeletonGraph
             Graph used to compute patch voxel coordinates.
+        img_config : ImageConfig or None
+            Config object with image processing parameters.
         img_path : str
             Path to whole-brain image.
-
         """
-        self.config = img_config
+        self.config = img_config or ImageConfig()
         self.graph = graph
         self.img = TensorStoreImage(img_path)
-        self.transform = ImageTransforms() if img_config.transform else None
+        self.transform = ImageTransforms() if self.config.transform else None
 
     # --- Abstract Interface ---
     @abstractmethod
