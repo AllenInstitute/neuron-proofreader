@@ -17,8 +17,7 @@ BrainDataset
 
 BrainDatasetCollection
     Holds an ordered list of BrainDataset objects. Routes global indices to
-    the correct brain, exposes split() for train/val partitioning, and is
-    the object handed to MergeSiteDataLoader.
+    the correct brain and is the object handed to ThreadedDataLoader.
 
 ThreadedDataLoader
     Custom DataLoader that uses multithreading to fetch image patches from
@@ -28,7 +27,6 @@ ThreadedDataLoader
 from scipy.spatial import KDTree
 from concurrent.futures import as_completed, ThreadPoolExecutor
 from torch.utils.data import Dataset, DataLoader
-from tqdm import tqdm
 
 import networkx as nx
 import numpy as np
@@ -107,6 +105,7 @@ class BrainDataset:
         graph = SkeletonGraph(
             anisotropy=config.anisotropy,
             min_cable_length=config.min_cable_length,
+            min_swc_pts=config.min_swc_pts,
             node_spacing=config.node_spacing,
             use_anisotropy=config.use_anisotropy,
             verbose=config.verbose,
@@ -344,7 +343,7 @@ class BrainDatasetCollection(Dataset):
         return np.arange(len(self._index_table))
 
 
-# --- Dataloader ---
+# --- DataLoader ---
 class ThreadedDataLoader(DataLoader):
 
     _VALID_MODALITIES = {None, "graph", "pointcloud"}
@@ -564,6 +563,7 @@ def create_dataset_collection(
     subgraph_depth=100,
 ):
     # Set parameters based on mode
+    print(f"Load {dataset_mode} Dataset")
     assert dataset_mode in ["Train", "Val"]
     if dataset_mode == "Train":
         img_config.set_train_mode()
@@ -579,7 +579,7 @@ def create_dataset_collection(
 
     # Iterate over brains
     datasets = list()
-    for brain_id in tqdm(brain_ids, desc=f"Load {dataset_mode} Dataset"):
+    for i, brain_id in enumerate(brain_ids, start=1):
         # Extract dataset info
         img_path = os.path.join(img_prefixes[brain_id], "0")
         segmentation_id = get_segmentation_id(sites_root_path, brain_id)
@@ -589,6 +589,7 @@ def create_dataset_collection(
         )
 
         # Add dataset
+        print(f"   \nBrain ID [{i}/{len(brain_ids)}]: {brain_id}")
         dataset = BrainDataset(
             brain_id,
             img_path,

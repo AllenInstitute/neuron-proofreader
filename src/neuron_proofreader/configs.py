@@ -70,6 +70,7 @@ class GraphConfig:
 
     anisotropy: Tuple[float, float, float] = (1.0, 1.0, 1.0)
     min_cable_length: float = 0.0
+    min_swc_pts: int = 1
     name: str = "graph_config"
     node_spacing: float = 1.0
     prune_depth: float = 20.0

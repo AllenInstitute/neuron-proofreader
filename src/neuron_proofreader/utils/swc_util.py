@@ -26,7 +26,7 @@ from concurrent.futures import (
     ThreadPoolExecutor,
     as_completed,
 )
-from google.auth.exceptions import RefreshError, TransportError
+from google.auth.exceptions import TransportError
 from google.cloud import storage
 from io import BytesIO, StringIO
 from tqdm import tqdm
@@ -206,7 +206,7 @@ class Reader:
             for process in as_completed(futures):
                 try:
                     swc_dicts.extend(process.result())
-                except (TransportError, RefreshError):
+                except Exception:
                     pass
 
                 if self.verbose:
@@ -280,7 +280,7 @@ class Reader:
             Dictionaries whose keys and values are the attribute names and
             values from an SWC file.
         """
-        # Extact info
+        # Extract info
         assert util.is_s3_path(path) or util.is_gcs_path(path)
         use_s3 = util.is_s3_path(path)
 
@@ -313,13 +313,13 @@ class Reader:
             values from an SWC file.
         """
         # Initialize cloud reader
-        bucket_name, subpath = util.parse_cloud_path(path)
+        bucket_name, key = util.parse_cloud_path(path)
         bucket = storage.Client().bucket(bucket_name)
-        blob = bucket.blob(subpath)
+        blob = bucket.blob(key)
 
         # Parse swc contents
         content = blob.download_as_text().splitlines()
-        filename = os.path.basename(subpath)
+        filename = os.path.basename(key)
         return self.parse(content, filename)
 
     def read_gcs_zip(self, path):
@@ -338,33 +338,14 @@ class Reader:
             Dictionaries whose keys and values are the attribute names and
             values from an SWC file.
         """
-        # Download ZIP
-        bucket_name, path = util.parse_cloud_path(path)
+        bucket_name, key = util.parse_cloud_path(path)
         bucket = storage.Client().bucket(bucket_name)
         try:
-            zip_content = bucket.blob(path).download_as_bytes()
+            zip_content = bucket.blob(key).download_as_bytes()
         except TransportError:
             print(f"Failed to read {path}!")
             return deque()
-
-        # Parse ZIP
-        swc_dicts = deque()
-        zip_content = bucket.blob(path).download_as_bytes()
-        with ZipFile(BytesIO(zip_content), "r") as zf:
-            with ThreadPoolExecutor() as executor:
-                # Assign threads
-                threads = set()
-                for name in zf.namelist():
-                    threads.add(
-                        executor.submit(self.read_zipped_swc, zf, name)
-                    )
-
-                # Process results
-                for thread in as_completed(threads):
-                    result = thread.result()
-                    if result:
-                        swc_dicts.append(result)
-        return swc_dicts
+        return self._parse_zip_bytes(zip_content)
 
     def read_s3_zip(self, path):
         """
@@ -382,46 +363,24 @@ class Reader:
             Dictionaries whose keys and values are the attribute names and
             values from an SWC file.
         """
-        # Initialize cloud reader
         bucket, key = util.parse_cloud_path(path)
         s3 = boto3.client("s3", config=Config(signature_version=UNSIGNED))
         zip_content = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+        return self._parse_zip_bytes(zip_content)
 
-        # Parse ZIP
+    def _parse_zip_bytes(self, zip_content):
         with ZipFile(BytesIO(zip_content), "r") as zf:
+            names = [f for f in zf.namelist() if f.endswith(".swc")]
             with ThreadPoolExecutor() as executor:
-                # Assign threads
-                threads = set()
-                for name in zf.namelist():
-                    threads.add(
-                        executor.submit(self.read_zipped_swc, zf, name)
-                    )
-
-                # Store results
-                swc_dicts = deque()
-                for thread in as_completed(threads):
-                    result = thread.result()
-                    if result:
-                        swc_dicts.append(result)
-        return swc_dicts
+                threads = {
+                    executor.submit(self.read_zipped_swc, zf, name)
+                    for name in names
+                }
+                return deque(
+                    t.result() for t in as_completed(threads) if t.result()
+                )
 
     # -- Process Text ---
-    def iterator(self, iterator):
-        """
-        Gets an iterator that optionally displays a progress bar.
-
-        Parameters
-        ----------
-        iterator : iterable
-            Object to be iterated over.
-
-        Returns
-        -------
-        tqdm.tqdm
-            Iterator that is optionally wrapped in a progress bar.
-        """
-        return tqdm(iterator, desc="Read SWCs") if self.verbose else iterator
-
     def manual_progress_bar(self, total):
         """
         Gets progress bar that needs to be updated manually.
@@ -509,6 +468,7 @@ class Reader:
                 offset = self.read_coordinate(parts[2:5])
             if not line.startswith("#") and len(line.strip()) > 0:
                 return content[i:], offset
+        return [], offset
 
     def read_coordinate(self, xyz_str, offset=(0, 0, 0)):
         """
@@ -627,9 +587,7 @@ def get_swc_name(path):
     name : str
         Name of the SWC file, minus the extension.
     """
-    filename = os.path.basename(path)
-    name, ext = os.path.splitext(filename)
-    return name
+    return os.path.splitext(os.path.basename(path))[0]
 
 
 def to_graph(swc_dict):
