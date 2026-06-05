@@ -8,6 +8,8 @@ Code to train merge detection models.
 
 """
 
+import os
+
 from neuron_proofreader.configs import GraphConfig, ImageConfig
 from neuron_proofreader.machine_learning.vision_models import CNN3D, ViT3D
 from neuron_proofreader.machine_learning.train import Trainer
@@ -69,7 +71,7 @@ def init_trainer():
 
 if __name__ == "__main__":
     # Dataset
-    train_ids = ["653159", "715345", "730902", "789202", "794491", "802449"]
+    train_ids = ["730902", "653159", "715345", "789202", "794491", "802449"]
     val_ids = ["751473", "794495"]
 
     # Paths
@@ -84,6 +86,7 @@ if __name__ == "__main__":
     is_multimodal = False
     lr = 1e-4
     modality = None
+    model_name = "MergeDetectorCNN3D"
     prefetch = 8
     save_mistake_mips = True
 
@@ -105,13 +108,13 @@ if __name__ == "__main__":
     img_config.save(output_dir)
 
     # Model architecture
-    model_name = "MergeDetectorCNN3D"
-    model = CNN3D(
-        img_config.patch_shape,
-        n_conv_layers=6,
-        n_feat_channels=24,
-        use_double_conv=True
-    )
+    if "CNN3D" in model_name:
+        model = CNN3D(
+            img_config.patch_shape,
+            n_conv_layers=6,
+            n_feat_channels=24,
+            use_double_conv=True
+        )
 
     # Run code
     main()
