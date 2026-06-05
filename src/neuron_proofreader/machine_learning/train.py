@@ -16,6 +16,7 @@ from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data.distributed import DistributedSampler
+from tqdm import tqdm
 
 import numpy as np
 import os
@@ -69,6 +70,7 @@ class Trainer:
         max_epochs=200,
         min_recall=0,
         save_mistake_mips=False,
+        verbose=False,
     ):
         """
         Instantiates a Trainer object.
@@ -105,6 +107,7 @@ class Trainer:
         self.mistakes_dir = os.path.join(log_dir, "mistakes")
         self.model_name = model_name
         self.save_mistake_mips = save_mistake_mips
+        self.verbose = verbose
 
         self.criterion = nn.BCEWithLogitsLoss()
         self.model = model.to(device)
@@ -129,12 +132,13 @@ class Trainer:
         print("\nExperiment:", exp_name)
         for epoch in range(self.max_epochs):
             # Train-Validate
+            print("\nEpoch", epoch)
             train_stats = self.train_step(train_dataloader, epoch)
             val_stats = self.validate_step(val_dataloader, epoch)
             new_best = self.check_model_performance(val_stats, epoch)
 
             # Report reuslts
-            print(f"\nEpoch {epoch}: " + ("New Best!" if new_best else " "))
+            print(f"Results: " + ("New Best!" if new_best else " "))
             self.report_stats(train_stats, is_train=True)
             self.report_stats(val_stats, is_train=False)
 
@@ -157,6 +161,11 @@ class Trainer:
         stats : Dict[str, float]
             Dictionary of aggregated training metrics.
         """
+        # Create progress bar (if applicable)
+        if self.verbose:
+            pbar = tqdm(total=len(dataloader), desc="Train")
+
+        # Train for an epoch
         self.model.train()
         loss, y, hat_y = list(), list(), list()
         for x_i, y_i in dataloader:
@@ -177,6 +186,10 @@ class Trainer:
             y.extend(ml_util.to_cpu(y_i, True).flatten().tolist())
             hat_y.extend(ml_util.to_cpu(hat_y_i, True).flatten().tolist())
             loss.append(float(ml_util.to_cpu(loss_i)))
+
+            # Update progress bar
+            if self.verbose:
+                pbar.update(1)
 
         # Write stats to tensorboard
         stats = self.compute_stats(y, hat_y)
@@ -202,6 +215,10 @@ class Trainer:
         is_best : bool
             True if the current F1 score is the best so far.
         """
+        # Create progress bar (if applicable)
+        if self.verbose:
+            pbar = tqdm(total=len(dataloader), desc="Val")
+
         # Initializations
         idx_offset = 0
         loss_accum = 0

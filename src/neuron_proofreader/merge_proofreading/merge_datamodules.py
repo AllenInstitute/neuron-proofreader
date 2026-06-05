@@ -356,7 +356,7 @@ class ThreadedDataLoader(DataLoader):
         modality=None,
         sampler=None,
         use_shuffle=True,
-        prefetch_batches=8,
+        prefetch=8,
     ):
         # Check that modality is valid
         if modality not in self._VALID_MODALITIES:
@@ -372,7 +372,7 @@ class ThreadedDataLoader(DataLoader):
         self.is_multimodal = is_multimodal
         self.modality = modality
         self.use_shuffle = use_shuffle
-        self.prefetch_batches = prefetch_batches
+        self.prefetch = prefetch
         self.img_shape = (2,) + dataset.datasets[0].patch_loader.patch_shape
 
         # Set batch loader
@@ -398,7 +398,7 @@ class ThreadedDataLoader(DataLoader):
 
         # Sentinel signalling the prefetch thread is done
         _DONE = object()
-        buffer = queue.Queue(maxsize=self.prefetch_batches)
+        buffer = queue.Queue(maxsize=self.prefetch)
 
         def prefetch_worker():
             try:
@@ -563,7 +563,7 @@ def create_dataset_collection(
     subgraph_depth=100,
 ):
     # Set parameters based on mode
-    print(f"Load {dataset_mode} Dataset")
+    print(f"\nLoading {dataset_mode} Dataset...")
     assert dataset_mode in ["Train", "Val"]
     if dataset_mode == "Train":
         img_config.set_train_mode()
@@ -602,6 +602,7 @@ def create_dataset_collection(
             random_nonmerge_site_prob=random_nonmerge_site_prob,
             rebalance_classes=rebalance_classes,
         )
+        print(dataset)
 
         # Check whether to generate examples for validation
         if dataset_mode == "Val":

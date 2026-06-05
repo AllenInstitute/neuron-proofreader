@@ -47,7 +47,7 @@ class Config(ABC):
 
 
 @dataclass
-class GraphConfig:
+class GraphConfig(Config):
     """
     Configuration class for skeleton graph parameters.
 
@@ -80,7 +80,7 @@ class GraphConfig:
 
 
 @dataclass
-class ImageConfig:
+class ImageConfig(Config):
     """
     Configuration class for image processing parameters.
 
@@ -107,7 +107,7 @@ class ImageConfig:
 
 
 @dataclass
-class ProposalsConfig:
+class ProposalsConfig(Config):
     """
     Configuration class for skeleton graph parameters.
 

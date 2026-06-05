@@ -51,6 +51,8 @@ class GraphLoader:
         min_cable_length : float, optional
             Minimum cable length (in microns) of SWC files that are loaded.
             Default is 40.
+        min_swc_pts : int, optional
+            ...
         node_spacing : int, optional
             Spacing (in microns) between neighboring nodes. Default is 1.
         prefetch : int, optional
@@ -68,7 +70,7 @@ class GraphLoader:
         self.node_spacing = node_spacing
         self.prefetch = prefetch
         self.prune_depth = prune_depth
-        self.swc_reader = swc_util.Reader(anisotropy, verbose)
+        self.swc_reader = swc_util.Reader(anisotropy, min_swc_pts, verbose)
         self.verbose = verbose
 
     def __call__(self, swc_pointer):
@@ -165,25 +167,6 @@ class GraphLoader:
             Dictionary containing the irreducible components of a connected
             graph.
         """
-
-        def dist(i, j):
-            """
-            Computes distance between the given nodes.
-
-            Parameters
-            ----------
-            i : int
-                Node ID.
-            j : int
-                Node ID.
-
-            Returns
-            -------
-            float
-                Distance between nodes.
-            """
-            return np.linalg.norm(xyz[i] - xyz[j])
-
         # Initializations
         leaf = find_leaf(graph)
         irr_nodes = {leaf}
@@ -377,7 +360,8 @@ def find_leaf(graph):
 
 def prune_branches(graph, depth):
     """
-    Prunes branches with length less than "depth" microns.
+    Prunes paths between leaf and branching nodes with cable length less than
+    "depth" microns.
 
     Parameters
     ----------

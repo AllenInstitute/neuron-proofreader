@@ -47,19 +47,24 @@ class Reader:
     archive, and (3) local directory of ZIP archives.
     """
 
-    def __init__(self, anisotropy=(1.0, 1.0, 1.0), verbose=True):
+    def __init__(
+        self, anisotropy=(1.0, 1.0, 1.0), min_swc_pts=1, verbose=True
+    ):
         """
-        Initializes a Reader object that reads SWC files.
+        Instantiates a Reader object for reading SWC files.
 
         Parameters
         ----------
         anisotropy : Tuple[float], optional
             Image to physical coordinates scaling factors to account for the
             anisotropy of the microscope. Default is (1.0, 1.0, 1.0).
+        min_swc_pts : int, optional
+            ...
         verbose : bool, optional
             Indication of whether to display a progress bar. Default is True.
         """
         self.anisotropy = anisotropy
+        self.min_swc_pts = min_swc_pts
         self.verbose = verbose
 
     # --- Read Data ---
@@ -164,13 +169,11 @@ class Reader:
         """
         with ThreadPoolExecutor() as executor:
             # Assign threads
-            threads = set()
-            for path in swc_paths:
-                threads.add(executor.submit(self.read_swc, path))
+            threads = {executor.submit(self.read_swc, p) for p in swc_paths}
+            pbar = self.manual_progress_bar(len(threads))
 
             # Store results
             swc_dicts = deque()
-            pbar = self.manual_progress_bar(len(threads))
             for thread in as_completed(threads):
                 result = thread.result()
                 if result:
@@ -415,7 +418,7 @@ class Reader:
         # Initializations
         swc_name, _ = os.path.splitext(filename)
         content, offset = self.process_content(content)
-        if len(content) > 0:
+        if len(content) >= self.min_swc_pts:
             swc_dict = {
                 "id": np.zeros((len(content)), dtype=int),
                 "pid": np.zeros((len(content)), dtype=int),
