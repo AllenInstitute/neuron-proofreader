@@ -8,8 +8,6 @@ Helper routines for reading and processing images.
 
 """
 
-from abc import ABC, abstractmethod
-from fastremap import mask_except, renumber, unique
 from matplotlib.colors import ListedColormap
 from scipy.ndimage import zoom
 
@@ -19,194 +17,6 @@ import numpy as np
 import tensorstore as ts
 
 from neuron_proofreader.utils import util
-
-
-class ImageReader(ABC):
-    """
-    Abstract class to create image readers classes.
-    """
-
-    def __init__(self, img_path):
-        """
-        Instantiates an ImageReader object.
-
-        Parameters
-        ----------
-        img_path : str
-            Path to image.
-        is_segmentation : bool, optional
-            Indication of whether image is a segmentation.
-        """
-        self.img_path = img_path
-        self._load_image()
-
-    @abstractmethod
-    def _load_image(self):
-        """
-        Method to be implemented by subclasses to load the image.
-        """
-        pass
-
-    def read(self, center, shape):
-        """
-        Reads an image patch centered at the given voxel coordinate.
-
-        Parameters
-        ----------
-        center : Tuple[int]
-            Center of image patch to be read.
-        shape : Tuple[int]
-            Shape of image patch to be read.
-
-        Returns
-        -------
-        numpy.ndarray
-            Image patch.
-        """
-        s = get_slices(center, shape)
-        return self.img[s] if self.img.ndim == 3 else self.img[(0, 0, *s)]
-
-    def read_voxel(self, voxel, thread_id=None):
-        """
-        Reads the intensity value at a given voxel.
-
-        Parameters
-        ----------
-        voxel : Tuple[int]
-            Voxel to be read.
-        thread_id : Any
-            Identifier associated with output. Default is None.
-
-        Returns
-        -------
-        int
-            Intensity value at voxel.
-        """
-        return thread_id, self.img[voxel]
-
-    def shape(self):
-        """
-        Gets the shape of image.
-
-        Returns
-        -------
-        Tuple[int]
-            Shape of image.
-        """
-        return self.img.shape
-
-
-class TensorStoreReader(ImageReader):
-    """
-    Class that reads images with TensorStore library.
-    """
-
-    def __init__(self, img_path):
-        """
-        Instantiates a TensorStoreReader object.
-
-        Parameters
-        ----------
-        img_path : str
-            Path to image.
-        """
-        self.driver = self.get_driver(img_path)
-        super().__init__(img_path)
-
-    def get_driver(self, img_path):
-        """
-        Gets the storage driver needed to read the image.
-
-        Parameters
-        ----------
-        img_path : str
-            Path to image
-
-        Returns
-        -------
-        str
-            Storage driver needed to read the image.
-        """
-        if ".zarr" in img_path:
-            return "zarr"
-        elif ".n5" in img_path:
-            return "n5"
-        elif is_precomputed(img_path):
-            return "neuroglancer_precomputed"
-        else:
-            raise ValueError(f"Unsupported image format: {img_path}")
-
-    def _load_image(self):
-        """
-        Loads image with TensorStore library.
-        """
-        # Extract metadata
-        bucket_name, path = util.parse_cloud_path(self.img_path)
-        storage_driver = get_storage_driver(self.img_path)
-
-        # Load image
-        self.img = ts.open(
-            {
-                "driver": self.driver,
-                "kvstore": {
-                    "driver": storage_driver,
-                    "bucket": bucket_name,
-                    "path": path,
-                },
-                "context": {
-                    "cache_pool": {"total_bytes_limit": 1000000000},
-                    "cache_pool#remote": {"total_bytes_limit": 1000000000},
-                    "data_copy_concurrency": {"limit": 8},
-                },
-                "recheck_cached_data": "open",
-            }
-        ).result()
-
-        # Check whether to absorb channel
-        if bucket_name == "allen-nd-goog" and is_precomputed(self.img_path):
-            self.img = self.img[ts.d["channel"][0]]
-            self.img = self.img[ts.d[0].transpose[2]]
-            self.img = self.img[ts.d[0].transpose[1]]
-
-    def read(self, center, shape):
-        """
-        Reads an image patch centered at the given voxel.
-
-        Parameters
-        ----------
-        center : Tuple[int]
-            Center of image patch to be read.
-        shape : Tuple[int]
-            Shape of image patch to be read.
-
-        Returns
-        -------
-        numpy.ndarray
-            Image patch.
-        """
-        try:
-            return super().read(center, shape).read().result()
-        except Exception:
-            print(f"Unable to read image patch at {center} w/ shape {shape}!")
-            return np.zeros(shape)
-
-    def read_voxel(self, voxel, thread_id):
-        """
-        Reads the intensity value at a given voxel.
-
-        Parameters
-        ----------
-        voxel : Tuple[int]
-            Voxel to be read.
-        thread_id : Any
-            Identifier associated with output.
-
-        Returns
-        -------
-        int
-            Intensity value at voxel.
-        """
-        return thread_id, int(self.img[voxel].read().result())
 
 
 # --- Visualization ---
@@ -336,7 +146,7 @@ def plot_segmentation_mips(segmentation):
 
 
 # --- Helpers ---
-def annotate_voxels(img, voxels, kernel_size=3, val=1):
+def annotate_voxels(img, voxels, kernel_size=3, fill_val=1):
     """
     Annotates voxel coordinates in a 3D image by filling a patch around each
     voxel with a given value.
@@ -349,7 +159,7 @@ def annotate_voxels(img, voxels, kernel_size=3, val=1):
         Voxel coordinates to annotate.
     kernel_size : int, optional
         Size of kernel used to fill around each voxel. Default is 3.
-    val : int, optional
+    fill_val : int, optional
         Fill value. Default is 1.
     """
     buffer = (kernel_size - 1) // 2
@@ -357,7 +167,7 @@ def annotate_voxels(img, voxels, kernel_size=3, val=1):
     for voxel in voxels:
         if is_contained(voxel, img.shape, buffer=buffer):
             s = get_slices(voxel, shape)
-            img[s] = val
+            img[s] = fill_val
 
 
 def compute_iou3d(c1, c2, s1, s2):
@@ -443,42 +253,25 @@ def get_contained_voxels(voxels, shape, buffer=0):
     return [v for v in voxels if is_contained(v, shape, buffer)]
 
 
-def get_neighbors(voxel, shape):
+def get_driver(img_path):
     """
-    Gets the neighbors of a given voxel coordinate.
+    Gets the driver needed to read the image.
 
     Parameters
     ----------
-    voxel : Tuple[int]
-        Voxel coordinate in a 3D image.
-    shape : Tuple[int]
-        Shape of the 3D image that voxel is contained within.
+    img_path : str
+        Path to image.
 
     Returns
     -------
-    neighbors : List[Tuple[int]]
-         Voxel coordinates of the 26 neighbors of the given voxel.
+    str
+        Storage driver needed to read the image.
     """
-    # Initializations
-    x, y, z = voxel
-    depth, height, width = shape
-
-    # Iterate over the possible offsets for x, y, and z
-    neighbors = []
-    for dx in [-1, 0, 1]:
-        for dy in [-1, 0, 1]:
-            for dz in [-1, 0, 1]:
-                # Skip the (0, 0, 0) offset
-                if dx == 0 and dy == 0 and dz == 0:
-                    continue
-
-                # Calculate the neighbor's coordinates
-                nx, ny, nz = x + dx, y + dy, z + dz
-
-                # Check if the neighbor is within the bounds of the 3D image
-                if 0 <= nx < depth and 0 <= ny < height and 0 <= nz < width:
-                    neighbors.append((nx, ny, nz))
-    return neighbors
+    if ".zarr" in img_path:
+        return "zarr"
+    elif is_precomputed(img_path):
+        return "neuroglancer_precomputed"
+    raise Exception(f"Invalid image path at {img_path}")
 
 
 def get_offset(center, shape):
@@ -677,31 +470,6 @@ def pad_to_shape(img, target_shape, pad_value=0):
     for s, t in zip(img.shape, target_shape):
         pads.append(((t - s) // 2, (t - s + 1) // 2))
     return np.pad(img, pads, mode="constant", constant_values=pad_value)
-
-
-def remove_small_segments(segmentation, min_size):
-    """
-    Removes small segments from a segmentation.
-
-    Parameters
-    ----------
-    segmentation : numpy.ndarray
-        Integer array representing a segmentation mask. Each unique
-        nonzero value corresponds to a distinct segment.
-    min_size : int
-        Minimum size (in voxels) for a segment to be kept.
-
-    Returns
-    -------
-    segmentation : numpy.ndarray
-        New segmentation of the same shape as the input, with only the
-        retained segments renumbered contiguously.
-    """
-    ids, cnts = unique(segmentation, return_counts=True)
-    ids = [i for i, cnt in zip(ids, cnts) if cnt > min_size and i != 0]
-    ids = mask_except(segmentation, ids)
-    segmentation, _ = renumber(ids, preserve_zero=True, in_place=True)
-    return segmentation
 
 
 def resize(img, new_shape):

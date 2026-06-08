@@ -249,7 +249,7 @@ class ImageFeatureExtractor:
         self.padding = padding
 
         # Image reader
-        self.img = img_util.TensorStoreReader(img_path)
+        self.img = img_util.TensorStoreImage(img_path)
 
     def __call__(self, subgraph, features):
         """
@@ -326,7 +326,7 @@ class ImageFeatureExtractor:
                 if frozenset({i, j}) not in visited and j in nodes:
                     voxel_j = self.graph.node_local_voxel(j, offset)
                     voxels = geometry_util.make_digital_line(voxel_i, voxel_j)
-                    img_util.annotate_voxels(mask, voxels, val=0.25)
+                    img_util.annotate_voxels(mask, voxels, fill_val=0.25)
                     visited.add(frozenset({i, j}))
         return mask
 
@@ -503,14 +503,14 @@ class PatchFeatureExtractor:
         node : int
             Node ID used to get branch to be annotated.
         """
-        img_util.annotate_voxels(self.mask, self.voxels[node], val=0.5)
+        img_util.annotate_voxels(self.mask, self.voxels[node], fill_val=0.5)
 
     def annotate_proposal(self):
         """
         Annotates the proposal within the given mask.
         """
         voxels = self.get_profile_line()
-        img_util.annotate_voxels(self.mask, voxels, val=1)
+        img_util.annotate_voxels(self.mask, voxels, fill_val=1)
 
     def get_profile_line(self, n_pts=None):
         """

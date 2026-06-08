@@ -95,7 +95,7 @@ class FragmentsDataset(IterableDataset):
             Path to SWC files to be loaded.
         metadata_path : str, optional
             Patch to JSON file containing metadata on block that fragments
-            were extracted from. Default is None
+            were extracted from. Default is None.
         """
         # Build graph
         self.graph = ProposalGraph(

@@ -46,6 +46,7 @@ class SkeletonGraph(nx.Graph):
         self,
         anisotropy=(1.0, 1.0, 1.0),
         min_cable_length=0,
+        min_swc_pts=1,
         node_spacing=1,
         prune_depth=20,
         use_anisotropy=True,
@@ -90,6 +91,7 @@ class SkeletonGraph(nx.Graph):
         self.graph_loader = graph_util.GraphLoader(
             anisotropy=anisotropy,
             min_cable_length=min_cable_length,
+            min_swc_pts=min_swc_pts,
             node_spacing=node_spacing,
             prune_depth=prune_depth,
             verbose=verbose,

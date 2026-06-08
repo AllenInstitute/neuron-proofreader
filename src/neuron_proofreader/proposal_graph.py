@@ -41,7 +41,6 @@ class ProposalGraph(SkeletonGraph):
         min_cable_length=0,
         node_spacing=1,
         prune_depth=20.0,
-        remove_high_risk_merges=False,
         verbose=True,
     ):
         """
@@ -55,13 +54,10 @@ class ProposalGraph(SkeletonGraph):
         min_cable_length : float, optional
             Minimum cable length of fragments loaded into graph. Default is 0.
         node_spacing : float, optional
-            Distance between points in edges.
+            Distance (in microns) between nodes. Default is 1.
         prune_depth : float, optional
             Branches with length less than "prune_depth" microns are removed.
             Default is 20um.
-        remove_high_risk_merges : bool, optional
-            Indication of whether to remove high risk merge sites (i.e. close
-            branching points). Default is False.
         verbose : bool, optional
             Indication of whether to display a progress bar while building
             graph. Default is True.
