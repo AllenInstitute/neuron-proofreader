@@ -63,7 +63,7 @@ class BrainDataset:
     """
 
     giant_component_cable_length = 30000
-    random_branching_site_probability = 0.7
+    random_branching_site_probability = 0.5
 
     def __init__(
         self,
@@ -99,7 +99,6 @@ class BrainDataset:
         # Store dataset info
         self.set_giant_components()
         self.set_merge_site_info()
-        self.set_valid_branching_nodes()
 
     def load_fragments(self, config, swcs_path):
         graph = SkeletonGraph(
@@ -118,7 +117,7 @@ class BrainDataset:
         swc_reader = swc_util.Reader(verbose=False)
         for swc_dict in swc_reader(sites_prefix):
             xyz = swc_dict["xyz"][0]
-            dd, ii = self.graph.kdtree.query(xyz)
+            dd, ii = self.kdtree.query(xyz)
             sites.append(
                 {"xyz": xyz, "node": ii, "filename": swc_dict["swc_name"]}
             )
@@ -132,48 +131,25 @@ class BrainDataset:
 
             # Store fragment IDs corresponding to merge sites
             for xyz in self.merge_sites["xyz"]:
-                _, ii = self.graph.kdtree.query(xyz)
-                self.ignore_fragments.add(self.graph.node_component_id[ii])
+                _, ii = self.kdtree.query(xyz)
+                #self.ignore_fragments.add(self.node_component_id[ii])
 
     def set_giant_components(self):
         for nodes in map(list, nx.connected_components(self.graph)):
             # Compute cable length
             root = util.sample_once(nodes)
-            cable_length = self.graph.cable_length(
+            cable_length = self.cable_length(
                 max_depth=self.giant_component_cable_length, root=root
             )
 
             # Check if giant component
             if cable_length > self.giant_component_cable_length:
-                self.ignore_fragments.add(self.graph.node_component_id[root])
-
-    def set_valid_branching_nodes(self):
-        self.valid_branching_nodes = set()
-        for node in self.graph.branching_nodes():
-            # Reject if high-degree
-            if self.graph.degree(node) > 3:
-                continue
-
-            # Reject if node belongs to fragment with merge
-            # if self.graph.node_component_id[node] in self.ignore_fragments:
-            #    continue
-
-            # Reject if branching and near another branching node
-            if self._has_nearby_branching(node):
-                continue
-
-            # Reject if near merge site
-            dd, _ = self.merge_sites_kdtree.query(self.graph.node_xyz[node])
-            if dd < 50:
-                continue
-
-            # Node is valid
-            self.valid_branching_nodes.add(node)
+                self.ignore_fragments.add(self.node_component_id[root])
 
     # --- Site Retrieval ---
     def __getitem__(self, idx):
         node, label = self.get_site(idx)
-        subgraph = self.graph.rooted_subgraph(node, self.subgraph_depth)
+        subgraph = self.rooted_subgraph(node, self.subgraph_depth)
         patches = self.patch_loader(node)
         return patches, subgraph, label
 
@@ -188,11 +164,20 @@ class BrainDataset:
             return self.get_random_nonmerge_site()
 
     def get_random_nonmerge_site(self):
-        if self.use_branching():
-            node = util.sample_once(self.valid_branching_nodes)
-        else:
-            node = util.sample_once(self.graph.nodes)
-        return node, 0
+        use_br = np.random.random() < self.random_branching_site_probability
+        nodes = self.branching_nodes() if use_br else self.nodes
+        n_attempts = 0
+        while True:
+            # Sample node
+            node = util.sample_once(nodes)
+            if self.is_valid_nonmerge_site(node):
+                return node
+
+            # Try again
+            n_attempts += 1
+            if n_attempts > 100:
+                print(f"Failed to find valid random nonmerge site for {self.brain_id}!")
+                return util.sample_once(self.nodes)
 
     # --- Helpers ---
     def add_nonmerge_sites(self, num_sites):
@@ -202,7 +187,7 @@ class BrainDataset:
             node, _ = self.get_random_nonmerge_site()
             site = {
                 "node": node,
-                "xyz": self.graph.node_xyz[node],
+                "xyz": self.node_xyz[node],
                 "filename": "random",
             }
             new_sites.append(site)
@@ -216,22 +201,39 @@ class BrainDataset:
         else:
             self.nonmerge_sites = pd.DataFrame(new_sites)
 
-    def use_branching(self):
-        outcome = np.random.random() < self.random_branching_site_probability
-        return outcome and self.valid_branching_nodes
+    def is_valid_nonmerge_site(self, node):
+        # Reject if high-degree
+        if self.degree(node) > 3:
+            return False
 
-    def _has_nearby_branching(self, root, max_depth=60):
+        # Reject if node belongs to ignored fragment
+        if self.node_component_id[node] in self.ignore_fragments:
+            return False
+
+        # Reject if branching and near another branching node
+        if self._has_nearby_branching(node):
+            return False
+
+        # Reject if near merge site
+        dd, _ = self.merge_sites_kdtree.query(self.node_xyz[node])
+        if dd < 100:
+            return False
+
+        # Site is valid
+        return True
+
+    def _has_nearby_branching(self, root, max_depth=100):
         queue = [(root, 0)]
         visited = {root}
         while queue:
             # Visit node
             i, d_i = queue.pop()
-            if self.graph.degree[i] > 2 and d_i > 0:
+            if self.degree[i] > 2 and d_i > 0:
                 return True
 
             # Update queue
-            for j in self.graph.neighbors(i):
-                d_j = d_i + self.graph.dist(i, j)
+            for j in self.neighbors(i):
+                d_j = d_i + self.dist(i, j)
                 if j not in visited and d_j < max_depth:
                     queue.append((j, d_j))
                     visited.add(j)
@@ -248,6 +250,9 @@ class BrainDataset:
         size = n_target_neg if self.rebalance_classes else n_neg
         neg_idxs = np.random.choice(n_neg, size=size, replace=False)
         return np.concatenate((-neg_idxs, np.arange(n_pos)))
+
+    def __getattr__(self, name):
+        return getattr(self.graph, name)
 
     def __len__(self):
         """
@@ -304,8 +309,50 @@ class BrainDatasetCollection(Dataset):
                 table.append((b_idx, int(local_idx)))
         return table
 
+    def save_val_summary(self, output_dir):
+        """
+        Saves a summary of the validation dataset to a CSV file.
+
+        Parameters
+        ----------
+        output_dir : str
+            Directory to save the CSV file in.
+        """
+        rows = []
+        for brain_dataset in self.datasets:
+            brain_id = brain_dataset.brain_id
+
+            # Merge sites
+            for _, row in brain_dataset.merge_sites.iterrows():
+                rows.append({
+                    "brain_id": brain_id,
+                    "swc_name": row["filename"],
+                    "xyz": row["xyz"],
+                    "label": "merge",
+                })
+
+            # Nonmerge sites
+            for _, row in brain_dataset.nonmerge_sites.iterrows():
+                rows.append({
+                    "brain_id": brain_id,
+                    "swc_name": row["filename"],
+                    "xyz": row["xyz"],
+                    "label": "nonmerge",
+                })
+
+        df = pd.DataFrame(rows)
+        df.to_csv(os.path.join(output_dir, "val_summary.csv"), index=False)
+
     # --- Dataset Interface ---
     def __len__(self):
+        """
+        Gets the number of examples in the dataset.
+
+        Returns
+        -------
+        int
+            Number of examples in the dataset.
+        """
         return len(self._index_table)
 
     def __getitem__(self, idx):
@@ -355,8 +402,8 @@ class ThreadedDataLoader(DataLoader):
         is_multimodal=False,
         modality=None,
         sampler=None,
-        use_shuffle=True,
-        prefetch=8,
+        shuffle=True,
+        prefetch=32,
     ):
         # Check that modality is valid
         if modality not in self._VALID_MODALITIES:
@@ -371,7 +418,7 @@ class ThreadedDataLoader(DataLoader):
         # Instance attributes
         self.is_multimodal = is_multimodal
         self.modality = modality
-        self.use_shuffle = use_shuffle
+        self.shuffle = shuffle
         self.prefetch = prefetch
         self.img_shape = (2,) + dataset.datasets[0].patch_loader.patch_shape
 
@@ -387,7 +434,7 @@ class ThreadedDataLoader(DataLoader):
         # Extract indices
         self.dataset._index_table = self.dataset._build_index_table()
         idxs = self.dataset.get_idxs()
-        if self.use_shuffle:
+        if self.shuffle:
             np.random.shuffle(idxs)
 
         # Split into batches upfront
@@ -584,9 +631,10 @@ def create_dataset_collection(
         img_path = os.path.join(img_prefixes[brain_id], "0")
         segmentation_id = get_segmentation_id(sites_root_path, brain_id)
         sites_path = os.path.join(sites_root_path, brain_id, segmentation_id)
-        swcs_path = util.get_google_swcs_prefix(
-            swcs_root_path, brain_id, segmentation_id
-        )
+        swcs_path = os.path.join(swcs_root_path, brain_id, segmentation_id, "fragments")
+        #util.get_google_swcs_prefix(
+        #    swcs_root_path, brain_id, segmentation_id
+        #)
 
         # Add dataset
         print(f"   \nBrain ID [{i}/{len(brain_ids)}]: {brain_id}")
@@ -606,7 +654,7 @@ def create_dataset_collection(
 
         # Check whether to generate examples for validation
         if dataset_mode == "Val":
-            num_target_neg = 10 * len(dataset.merge_sites)
+            num_target_neg = 5 * len(dataset.merge_sites)
             num_added_neg = num_target_neg - len(dataset.nonmerge_sites)
             dataset.add_nonmerge_sites(num_added_neg)
 

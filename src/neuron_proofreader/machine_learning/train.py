@@ -129,6 +129,7 @@ class Trainer:
             Dataloader used for validation.
         """
         exp_name = os.path.basename(os.path.normpath(self.log_dir))
+        val_dataloader.dataset.save_val_summary(self.log_dir)
         print("\nExperiment:", exp_name)
         for epoch in range(self.max_epochs):
             # Train-Validate
@@ -138,7 +139,7 @@ class Trainer:
             new_best = self.check_model_performance(val_stats, epoch)
 
             # Report reuslts
-            print(f"Results: " + ("New Best!" if new_best else " "))
+            print("Results: " + ("New Best!" if new_best else " "))
             self.report_stats(train_stats, is_train=True)
             self.report_stats(val_stats, is_train=False)
 
@@ -246,6 +247,10 @@ class Trainer:
                 # Save MIPs of mistakes
                 self._save_mistake_mips(x, y, hat_y, idx_offset)
                 idx_offset += len(y)
+
+                # Update progress bar
+                if self.verbose:
+                    pbar.update(1)
 
         # Write stats to tensorboard
         stats = self.compute_stats(y_accum, hat_y_accum)
