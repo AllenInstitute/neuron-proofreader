@@ -853,6 +853,43 @@ class SkeletonGraph(nx.Graph):
         """
         return {i for i in map(int, self.nodes) if self.degree[i] != 2}
 
+    def irreducible_paths(self):
+        """
+        Extracts non-branching paths between irreducible nodes (degree 1 or >= 3).
+
+        Returns
+        -------
+        paths : List[numpy.ndarray]
+            Each entry is an ordered list of node IDs forming a path between two
+            irreducible nodes, inclusive of both endpoints.
+        """
+        # Initializations
+        irreducible = {n for n in self.nodes if self.degree(n) != 2}
+        paths = []
+        visited_edges = set()
+
+        # Search
+        for source in irreducible:
+            for nb in self.neighbors(source):
+                edge = frozenset((source, nb))
+                if edge in visited_edges:
+                    continue
+                visited_edges.add(edge)
+
+                # Walk along degree-2 chain until next irreducible node
+                path = [source, nb]
+                prev, curr = source, nb
+                while curr not in irreducible:
+                    nxt = next(n for n in self.neighbors(curr) if n != prev)
+                    edge = frozenset((curr, nxt))
+                    visited_edges.add(edge)
+                    path.append(nxt)
+                    prev, curr = curr, nxt
+
+                paths.append(np.array(path, dtype=int))
+
+        return paths
+
     def leaf_nodes(self):
         """
         Gets all leaf nodes in the graph.
@@ -1053,7 +1090,7 @@ class SkeletonGraph(nx.Graph):
         """
         if len(path) > 1:
             diffs = self.node_xyz[path[1:]] - self.node_xyz[path[:-1]]
-            return np.sqrt(np.sum(diffs**2))
+            return np.sum(np.sqrt(np.sum(diffs**2, axis=1)))
         else:
             return 0
 
