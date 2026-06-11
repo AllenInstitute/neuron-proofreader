@@ -56,7 +56,7 @@ class CurveEncoder(nn.Module):
 
         # Instance attributes
         self.segment_len = segment_len
-        self.start_token = nn.Parameter(torch.randn(1, 1, d_token))
+        self.start_token = nn.Linear(3, d_token)
         self.end_token_proj = nn.Linear(3, d_token)
         self.segment_proj = nn.Linear(segment_len * 3, d_token)
 
