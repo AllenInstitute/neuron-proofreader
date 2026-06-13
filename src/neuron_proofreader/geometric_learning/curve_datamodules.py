@@ -8,6 +8,7 @@ Created on Mon June 8 17:00:00 2026
 
 """
 
+from copy import deepcopy
 from torch.utils.data import Dataset, DataLoader, Sampler
 
 import networkx as nx
@@ -37,8 +38,7 @@ class PathsDataset(Dataset):
 
         # Core data structures
         self.graph = self.load_skeletons(graph_config, swcs_path)
-        self.paths = self.irreducible_paths()
-        
+        self.paths = self.get_valid_paths()
 
     def load_skeletons(self, config, swcs_path):
         graph = SkeletonGraph(
@@ -51,19 +51,17 @@ class PathsDataset(Dataset):
         graph.load(swcs_path)
         return graph
 
+    def get_valid_paths(self):
+        paths = list()
+        for p in self.irreducible_paths():
+            if self.path_length(p) < max_length:
+                paths.append(p)
+        return paths
+
     # --- Get Examples ---
     def __getitem__(self, i):
         # Get path
-        path = self.paths[i].copy()
-
-        # Check whether to subsample
-        if self.path_length(path) > self.max_length:
-            root = util.sample_once(path)
-            new_length = np.random.random() * self.max_length
-            path = self.path_thru_node(root, max_depth=new_length)
-
-        # Check whether to transform
-        curve = self.node_xyz[path]
+        curve = deepcopy(self.node_xyz[self.paths[i]])
         if self.transform:
             curve = self.transform(curve)
 

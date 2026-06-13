@@ -7,24 +7,19 @@ Created on Fri November 03 15:30:00 2023
 Code that executes the full split correction pipeline.
 
     Inference Pipeline:
-        1. Graph Construction
-            Build graph from neuron fragments.
-
-        2. Proposal Generation
+        1. Proposal Generation
             Generate proposals for potential connections between fragments.
 
-        3. Proposal Classification
+        2. Proposal Classification
             a. Feature Generation
                 Extract features from proposals and graph for a machine
                 learning model.
             b. Predict with Graph Neural Network (GNN)
                 Run a GNN to classify proposals as accept/reject
                 based on the learned features.
-            c. Merge Accepted Proposals
-                Add accepted proposals to the graph as edges.
 
-Note: Steps 2 and 3 of the inference pipeline can be iterated in a loop that
-      repeats multiple times by calling the pipeline in a loop
+        3. Merge Accepted Proposals
+            Add accepted proposals to the graph as edges.
 
 """
 
@@ -58,7 +53,9 @@ class InferencePipeline:
         img_path,
         output_dir,
         model,
-        config,
+        graph_config,
+        ml_config,
+        proposals_config,
         log_preamble="",
         soma_centroids=list(),
     ):
@@ -74,9 +71,7 @@ class InferencePipeline:
             Path to whole-brain image corresponding to the given fragments.
         output_dir : str
             Directory where the results of the inference will be saved.
-        config : Config
-            Configuration object containing parameters and settings required
-            for the inference pipeline.
+            ...
         log_preamble : str, optional
             String to be added to the beginning of log. Default is an empty
             string.
@@ -93,7 +88,7 @@ class InferencePipeline:
 
         # Logger
         util.mkdir(self.output_dir)
-        log_path = os.path.join(self.output_dir, "runtimes.txt")
+        log_path = os.path.join(self.output_dir, "summary.txt")
         self.log_handle = open(log_path, "a")
         self.log(log_preamble)
 
@@ -406,19 +401,6 @@ class InferencePipeline:
         hat_y = ml_util.tensor_to_list(hat_y)
         return {idx_to_id[i]: y_i for i, y_i in enumerate(hat_y)}
 
-    def save_graph(self, dirname):
-        # Set paths
-        temp_dir = os.path.join(self.output_dir, "temp")
-        output_zip_path = os.path.join(self.output_dir, dirname, "swcs.zip")
-        util.mkdir(temp_dir)
-        util.mkdir(os.path.join(self.output_dir, dirname))
-
-        # Save swcs
-        self.dataset.to_zipped_swcs_multithreaded(temp_dir)
-        zip_paths = util.list_paths(temp_dir, extension=".zip")
-        util.combine_zips(zip_paths, output_zip_path)
-        util.rmdir(temp_dir)
-
     def save_proposal_results(self, preds_dict, suffix=""):
         summary = list()
         for proposal, pred in preds_dict.items():
@@ -468,3 +450,21 @@ class InferencePipeline:
         path = f"{self.output_dir}/segment_ids.txt"
         segment_ids = list(self.dataset.component_id_to_swc_id.values())
         util.write_list(path, segment_ids)
+
+
+# --- Helpers ---
+def create_dataset():
+    pass
+
+
+def save_graph(self, dataset, output_dir, dirname):
+    # Save graph across set of ZIPs
+    temp_dir = os.path.join(output_dir, "temp")
+    dataset.to_zipped_swcs_multithreaded(temp_dir)
+
+    # Combine ZIPs into single ZIP
+    zip_paths = util.list_paths(temp_dir, extension=".zip")
+    final_zip_path = os.path.join(output_dir, dirname, "swcs.zip")
+    util.mkdir(os.path.join(output_dir, dirname))
+    util.combine_zips(zip_paths, final_zip_path)
+    util.rmdir(temp_dir)
