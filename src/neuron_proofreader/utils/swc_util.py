@@ -169,9 +169,7 @@ class Reader:
         """
         with ThreadPoolExecutor() as executor:
             # Assign threads
-            threads = {
-                executor.submit(self.read_swc, p) for p in swc_paths[0:1]
-            }
+            threads = {executor.submit(self.read_swc, p) for p in swc_paths}
             pbar = self.manual_progress_bar(len(threads))
 
             # Store results
