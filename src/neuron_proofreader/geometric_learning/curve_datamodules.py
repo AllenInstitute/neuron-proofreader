@@ -90,8 +90,8 @@ class PathsDataset(Dataset):
             f"\n   brain_id={self.brain_id}, "
             f"\n   num_neurons={num_neurons}, "
             f"\n   num_paths={len(self)}, "
-            f"\n   min_path_length={np.min(lengths):.2f}, "
-            f"\n   mean_path_length={np.mean(lengths):.2f}, "
+            f"\n   min_length={np.min(lengths):.2f}, "
+            f"\n   mean_length={np.mean(lengths):.2f}, "
             f"\n   max_length={np.max(lengths):.2f},"
             f"\n)"
         )
@@ -193,7 +193,7 @@ class PathSampler(Sampler):
 
     def __iter__(self):
         idxs = self.dataset.examples_df.sample(
-            self.examples_per_epoch, weights="length"
+            self.examples_per_epoch, replace=True, weights="length"
         ).index
         return iter(np.array(idxs))
 
