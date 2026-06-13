@@ -234,7 +234,7 @@ class DetectionPatchLoader(PatchLoader):
 
         # Annotate mask
         mask = np.zeros(shape)
-        #self.annotate_foreground(mask, nodes, offset, fill_val=0.5)  TEMP
+        # self.annotate_foreground(mask, nodes, offset, fill_val=0.5)  TEMP
         self.annotate_fragment(mask, subgraph, offset, fill_val=1)
         return mask
 

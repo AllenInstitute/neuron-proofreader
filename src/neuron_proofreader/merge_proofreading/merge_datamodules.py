@@ -132,7 +132,7 @@ class BrainDataset:
             # Store fragment IDs corresponding to merge sites
             for xyz in self.merge_sites["xyz"]:
                 _, ii = self.kdtree.query(xyz)
-                #self.ignore_fragments.add(self.node_component_id[ii])
+                # self.ignore_fragments.add(self.node_component_id[ii])
 
     def set_giant_components(self):
         for nodes in map(list, nx.connected_components(self.graph)):
@@ -176,7 +176,9 @@ class BrainDataset:
             # Try again
             n_attempts += 1
             if n_attempts > 100:
-                print(f"Failed to find valid random nonmerge site for {self.brain_id}!")
+                print(
+                    f"Failed to find valid random nonmerge site for {self.brain_id}!"
+                )
                 return util.sample_once(self.nodes)
 
     # --- Helpers ---
@@ -324,21 +326,25 @@ class BrainDatasetCollection(Dataset):
 
             # Merge sites
             for _, row in brain_dataset.merge_sites.iterrows():
-                rows.append({
-                    "brain_id": brain_id,
-                    "swc_name": row["filename"],
-                    "xyz": row["xyz"],
-                    "label": "merge",
-                })
+                rows.append(
+                    {
+                        "brain_id": brain_id,
+                        "swc_name": row["filename"],
+                        "xyz": row["xyz"],
+                        "label": "merge",
+                    }
+                )
 
             # Nonmerge sites
             for _, row in brain_dataset.nonmerge_sites.iterrows():
-                rows.append({
-                    "brain_id": brain_id,
-                    "swc_name": row["filename"],
-                    "xyz": row["xyz"],
-                    "label": "nonmerge",
-                })
+                rows.append(
+                    {
+                        "brain_id": brain_id,
+                        "swc_name": row["filename"],
+                        "xyz": row["xyz"],
+                        "label": "nonmerge",
+                    }
+                )
 
         df = pd.DataFrame(rows)
         df.to_csv(os.path.join(output_dir, "val_summary.csv"), index=False)
@@ -439,7 +445,7 @@ class ThreadedDataLoader(DataLoader):
 
         # Split into batches upfront
         batch_idx_groups = [
-            idxs[start: min(start + self.batch_size, len(idxs))]
+            idxs[start : min(start + self.batch_size, len(idxs))]
             for start in range(0, len(idxs), self.batch_size)
         ]
 
@@ -631,10 +637,12 @@ def create_dataset_collection(
         img_path = os.path.join(img_prefixes[brain_id], "0")
         segmentation_id = get_segmentation_id(sites_root_path, brain_id)
         sites_path = os.path.join(sites_root_path, brain_id, segmentation_id)
-        swcs_path = os.path.join(swcs_root_path, brain_id, segmentation_id, "fragments")
-        #util.get_google_swcs_prefix(
+        swcs_path = os.path.join(
+            swcs_root_path, brain_id, segmentation_id, "fragments"
+        )
+        # util.get_google_swcs_prefix(
         #    swcs_root_path, brain_id, segmentation_id
-        #)
+        # )
 
         # Add dataset
         print(f"   \nBrain ID [{i}/{len(brain_ids)}]: {brain_id}")

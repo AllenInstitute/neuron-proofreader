@@ -12,6 +12,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from neuron_proofreader.utils import util
+
 
 class CurveEncoder(nn.Module):
     """
@@ -56,7 +58,7 @@ class CurveEncoder(nn.Module):
 
         # Instance attributes
         self.segment_len = segment_len
-        self.start_token = nn.Linear(3, d_token)
+        self.start_token = nn.Parameter(torch.randn(1, 1, d_token))
         self.end_token_proj = nn.Linear(3, d_token)
         self.segment_proj = nn.Linear(segment_len * 3, d_token)
 
@@ -76,13 +78,13 @@ class CurveEncoder(nn.Module):
             nn.Linear(d_token, latent_dim),
         )
 
-    def forward(self, curve, token_mask=None):
+    def forward(self, offsets, mask=None):
         """
         Parameters
         ----------
-        curve : torch.Tensor
+        offsets : torch.Tensor
             Shape (B, N, 3), normalized to the unit sphere, with
-            curve[:, 0] == [0, 0, 0]. N can vary across calls.
+            offsets[:, 0] == [0, 0, 0]. N can vary across calls.
         mask : torch.Tensor, optional
             Shape (B, N), True where padding (to be ignored). Default is None.
 
@@ -93,36 +95,47 @@ class CurveEncoder(nn.Module):
         tokens : torch.Tensor
             Per-token encodings of shape (B, n_segments + 2, d_token).
         """
-        B, N, _ = curve.shape
+        B, N, _ = offsets.shape
         n_segments = N // self.segment_len
 
         # Start and end tokens
         start_tok = self.start_token.expand(B, -1, -1)  # (B, 1, d_token)
-        end_tok = self.end_token_proj(curve[:, -1, :]).unsqueeze(1)  # (B, 1, d_token)
+        end_tok = self.end_token_proj(offsets[:, -1, :]).unsqueeze(
+            1
+        )  # (B, 1, d_token)
 
         # Segment tokens
-        segments = curve[:, :n_segments * self.segment_len, :]
+        segments = offsets[:, : n_segments * self.segment_len, :]
         segments = segments.reshape(B, n_segments, self.segment_len * 3)
         seg_tokens = self.segment_proj(segments)  # (B, n_seg, d_token)
 
         # Concatenate: [start | segments | end]
-        tokens = torch.cat([start_tok, seg_tokens, end_tok], dim=1)  # (B, n_seg+2, d_token)
-
-        # Sinusoidal positional encoding over arc position
-        pe = sinusoidal_encoding(tokens.shape[1], tokens.shape[2], tokens.device)
-        if token_mask is not None:
-            pe = pe * (~token_mask).unsqueeze(-1).float()  # Zero out pe for padding
-        tokens = tokens + pe
+        tokens = torch.cat(
+            [start_tok, seg_tokens, end_tok], dim=1
+        )  # (B, n_seg+2, d_token)
 
         # Convert point-level mask to token-level mask
         token_mask = None
+        if mask is not None:
+            seg_mask = mask[:, :: self.segment_len][
+                :, :n_segments
+            ]  # (B, n_seg)
+            token_mask = torch.cat(
+                [
+                    torch.zeros(B, 1, dtype=torch.bool, device=mask.device),
+                    seg_mask,
+                    torch.zeros(B, 1, dtype=torch.bool, device=mask.device),
+                ],
+                dim=1,
+            )  # (B, n_seg+2)
+
+        # Sinusoidal positional encoding, zeroed out for padding tokens
+        pe = sinusoidal_encoding(
+            tokens.shape[1], tokens.shape[2], tokens.device
+        )
         if token_mask is not None:
-            seg_mask = token_mask[:, ::self.segment_len][:, :n_segments]  # (B, n_seg)
-            token_mask = torch.cat([
-                torch.zeros(B, 1, dtype=torch.bool, device=token_mask.device),
-                seg_mask,
-                torch.zeros(B, 1, dtype=torch.bool, device=token_mask.device),
-            ], dim=1)  # (B, n_seg+2)
+            pe = pe * (~token_mask).unsqueeze(-1).float()
+        tokens = tokens + pe
 
         tokens = self.transformer(tokens, src_key_padding_mask=token_mask)
 
@@ -132,6 +145,7 @@ class CurveEncoder(nn.Module):
             z = self.to_latent((tokens * valid).sum(dim=1) / valid.sum(dim=1))
         else:
             z = self.to_latent(tokens.mean(dim=1))
+
         return z, tokens
 
 
@@ -143,15 +157,16 @@ class CurveDecoder(nn.Module):
     The output resolution can differ from the encoder input, allowing
     decoding at arbitrary granularity.
     """
+
     def __init__(
         self,
         n_points=100,
         segment_len=10,
-        d_token=128,
+        d_token=64,
         n_heads=4,
         n_layers=4,
-        d_ff=512,
-        latent_dim=64,
+        d_ff=64,
+        latent_dim=32,
         dropout=0.1,
     ):
         """
@@ -188,7 +203,9 @@ class CurveDecoder(nn.Module):
             dropout=dropout,
             batch_first=True,
         )
-        self.transformer = nn.TransformerDecoder(decoder_layer, num_layers=n_layers)
+        self.transformer = nn.TransformerDecoder(
+            decoder_layer, num_layers=n_layers
+        )
 
         self.to_points = nn.Sequential(
             nn.LayerNorm(d_token),
@@ -231,31 +248,39 @@ class CurveDecoder(nn.Module):
         )  # (B, n_seg, d_token)
 
         segments = self.to_points(out)  # (B, n_seg, seg_len*3)
-        curve = segments.reshape(B, n_segments * self.segment_len, 3)
-        return curve
+        offsets = segments.reshape(B, n_segments * self.segment_len, 3)
+        return offsets
 
 
 class CurveAutoencoder(nn.Module):
-    """
-    ARBOR: Autoencoder for Representing Branching and Ordered curves in 3D.
 
-    Encodes a uniformly sampled, ordered 3D curve normalized to the unit
-    sphere to a latent vector, and decodes it back to a curve of the same
-    length. Robust to varying input lengths via dynamic sinusoidal positional
-    encoding over the normalized arc position.
-    """
     def __init__(
         self,
         n_points=100,
         segment_len=10,
-        d_token=128,
+        d_token=64,
         n_heads=4,
         n_layers=4,
-        d_ff=512,
-        latent_dim=64,
+        d_ff=64,
+        latent_dim=32,
         dropout=0.1,
     ):
+        # Call parent class
         super().__init__()
+
+        # Config
+        self.config = {
+            "n_points": n_points,
+            "segment_len": segment_len,
+            "d_token": d_token,
+            "n_heads": n_heads,
+            "n_layers": n_layers,
+            "d_ff": d_ff,
+            "latent_dim": latent_dim,
+            "dropout": dropout,
+        }
+
+        # Architecture
         self.encoder = CurveEncoder(
             segment_len=segment_len,
             d_token=d_token,
@@ -276,12 +301,12 @@ class CurveAutoencoder(nn.Module):
             dropout=dropout,
         )
 
-    def forward(self, curve):
+    def forward(self, offsets, token_mask):
         """
         Parameters
         ----------
-        curve : torch.Tensor
-            Shape (B, N, 3), normalized to the unit sphere, curve[:, 0] == 0.
+        offsets : torch.Tensor
+            Shape (B, N, 3), normalized to the unit sphere, offsets[:, 0] == 0.
 
         Returns
         -------
@@ -290,14 +315,25 @@ class CurveAutoencoder(nn.Module):
         z : torch.Tensor
             Latent vector of shape (B, latent_dim).
         """
-        z, encoder_tokens = self.encoder(curve)
-        n_segments = (curve.shape[1] // self.decoder.segment_len)
+        z, encoder_tokens = self.encoder(offsets, token_mask)
+        n_segments = offsets.shape[1] // self.decoder.segment_len
         reconstruction = self.decoder(z, encoder_tokens, n_segments=n_segments)
         return reconstruction, z
 
-    def encode(self, curve):
-        z, _ = self.encoder(curve)
+    def encode(self, offsets):
+        z, _ = self.encoder(offsets)
         return z
+
+    # --- Helpers ---
+    def save_config(self, path):
+        util.write_json(path, self.config)
+
+    @classmethod
+    def load(cls, path):
+        checkpoint = torch.load(path)
+        model = cls(**checkpoint["config"])
+        model.load_state_dict(checkpoint["model_state_dict"])
+        return model
 
 
 # --- Helpers ---
@@ -321,7 +357,8 @@ def sinusoidal_encoding(n_tokens, d_token, device):
     """
     position = torch.linspace(0, 1, n_tokens, device=device).unsqueeze(1)
     div_term = torch.exp(
-        torch.arange(0, d_token, 2, device=device) * (-np.log(10000.0) / d_token)
+        torch.arange(0, d_token, 2, device=device)
+        * (-np.log(10000.0) / d_token)
     )
     pe = torch.zeros(n_tokens, d_token, device=device)
     pe[:, 0::2] = torch.sin(position * div_term)

@@ -16,13 +16,16 @@ class CurveTransforms:
     """
     Class that applies a sequence of transforms to a 3D space curve.
     """
+
     def __init__(self):
         """
         Initializes a CurveTransforms instance that applies augmentation to
         a 3D space curve.
         """
         self.transforms = [
-            RandomRotation3D(),  RandomMirror3D(), RandomJitter3D(),
+            RandomRotation3D(),
+            RandomMirror3D(),
+            RandomJitter3D(),
         ]
 
     def __call__(self, curve):
@@ -49,7 +52,8 @@ class RandomJitter3D:
     """
     Randomly adds Gaussian noise to each point in a 3D curve.
     """
-    def __init__(self, sigma=1, p=0.5):
+
+    def __init__(self, sigma=0.1, p=0.5):
         """
         Initializes a RandomJitter3D transformer.
 
@@ -88,6 +92,7 @@ class RandomRotation3D:
     """
     Applies a random 3D rotation to a curve about a random axis.
     """
+
     def __init__(self, max_angle=np.pi, p=0.5):
         """
         Initializes a RandomRotation3D transformer.
@@ -120,11 +125,25 @@ class RandomRotation3D:
         """
         c, s = np.cos(angle), np.sin(angle)
         x, y, z = axis
-        return np.array([
-            [c + x*x*(1-c),   x*y*(1-c) - z*s, x*z*(1-c) + y*s],
-            [y*x*(1-c) + z*s, c + y*y*(1-c),   y*z*(1-c) - x*s],
-            [z*x*(1-c) - y*s, z*y*(1-c) + x*s, c + z*z*(1-c)],
-        ])
+        return np.array(
+            [
+                [
+                    c + x * x * (1 - c),
+                    x * y * (1 - c) - z * s,
+                    x * z * (1 - c) + y * s,
+                ],
+                [
+                    y * x * (1 - c) + z * s,
+                    c + y * y * (1 - c),
+                    y * z * (1 - c) - x * s,
+                ],
+                [
+                    z * x * (1 - c) - y * s,
+                    z * y * (1 - c) + x * s,
+                    c + z * z * (1 - c),
+                ],
+            ]
+        )
 
     def __call__(self, curve):
         """
@@ -154,6 +173,7 @@ class RandomMirror3D:
     """
     Randomly mirrors a 3D curve along one or more axes about its centroid.
     """
+
     def __init__(self, axes=(0, 1, 2), p=0.5):
         """
         Initializes a RandomMirror3D transformer.
