@@ -1,5 +1,5 @@
 """
-Created on Frid Sept 15 16:00:00 2024
+Created on Fri Sept 15 16:00:00 2024
 
 @author: Anna Grim
 @email: anna.grim@alleninstitute.org

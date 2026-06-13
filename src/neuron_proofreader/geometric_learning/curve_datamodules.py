@@ -54,7 +54,7 @@ class PathsDataset(Dataset):
     def get_valid_paths(self):
         paths = list()
         for p in self.irreducible_paths():
-            if self.path_length(p) < max_length:
+            if self.path_length(p) < self.max_length:
                 paths.append(p)
         return paths
 

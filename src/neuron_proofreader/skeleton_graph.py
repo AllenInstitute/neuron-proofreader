@@ -1219,38 +1219,19 @@ class SkeletonGraph(nx.Graph):
                 soma_nodes.append(i)
         return soma_nodes
 
-    def summary(self, prefix=""):
-        """
-        Generate a human-readable summary of the graph.
-
-        Parameters
-        ----------
-        prefix : str, optional
-            Optional string to prepend to the summary title.
-
-        Returns
-        -------
-        summary : str
-            Formatted multi-line string containing:
-            - Graph Name
-            - Number of connected components
-            - Number of nodes
-            - Number of edges
-            - Memory consumption (in GBs)
-        """
-        # Compute values
+    def __repr__(self):
         n_components = format(nx.number_connected_components(self), ",")
         n_nodes = format(self.number_of_nodes(), ",")
         n_edges = format(self.number_of_edges(), ",")
         memory = util.get_memory_usage()
-
-        # Compile results
-        summary = [f"{prefix} Graph"]
-        summary.append(f"# Connected Components: {n_components}")
-        summary.append(f"# Nodes: {n_nodes}")
-        summary.append(f"# Edges: {n_edges}")
-        summary.append(f"Memory Consumption: {memory:.2f} GBs")
-        return "\n".join(summary)
+        return (
+            f"SkeletonGraph("
+            f"\n   n_components={n_components},"
+            f"\n   n_nodes={n_nodes},"
+            f"\n   n_edges={n_edges},"
+            f"\n   memory={memory:.2f} GBs"
+            f"\n)"
+        )
 
     def swc_ids(self):
         """

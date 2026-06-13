@@ -37,7 +37,6 @@ class ProposalGraph(SkeletonGraph):
         self,
         anisotropy=(1.0, 1.0, 1.0),
         gt_path=None,
-        max_proposals_per_leaf=3,
         min_cable_length=0,
         node_spacing=1,
         prune_depth=20.0,
@@ -135,6 +134,7 @@ class ProposalGraph(SkeletonGraph):
         self,
         search_radius,
         allow_nonleaf_proposals=False,
+        max_proposals_per_leaf=3,
         min_size_with_proposals=0,
     ):
         """

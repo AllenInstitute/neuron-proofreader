@@ -450,21 +450,3 @@ class InferencePipeline:
         path = f"{self.output_dir}/segment_ids.txt"
         segment_ids = list(self.dataset.component_id_to_swc_id.values())
         util.write_list(path, segment_ids)
-
-
-# --- Helpers ---
-def create_dataset():
-    pass
-
-
-def save_graph(self, dataset, output_dir, dirname):
-    # Save graph across set of ZIPs
-    temp_dir = os.path.join(output_dir, "temp")
-    dataset.to_zipped_swcs_multithreaded(temp_dir)
-
-    # Combine ZIPs into single ZIP
-    zip_paths = util.list_paths(temp_dir, extension=".zip")
-    final_zip_path = os.path.join(output_dir, dirname, "swcs.zip")
-    util.mkdir(os.path.join(output_dir, dirname))
-    util.combine_zips(zip_paths, final_zip_path)
-    util.rmdir(temp_dir)
