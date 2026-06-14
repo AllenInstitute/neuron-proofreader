@@ -39,7 +39,7 @@ class VisionHGAT(torch.nn.Module):
         self,
         patch_shape,
         disable_msg_passing=False,
-        heads=2,
+        heads=4,
         hidden_dim=128,
         n_layers=2,
     ):

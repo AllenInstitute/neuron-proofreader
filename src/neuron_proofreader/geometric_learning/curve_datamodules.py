@@ -17,7 +17,6 @@ import pandas as pd
 import torch
 
 from neuron_proofreader.skeleton_graph import SkeletonGraph
-from neuron_proofreader.utils import util
 
 
 # --- Dataset Classes ---

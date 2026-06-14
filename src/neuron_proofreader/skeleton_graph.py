@@ -85,6 +85,7 @@ class SkeletonGraph(nx.Graph):
         self.node_spacing = node_spacing
         self.soma_centroids = list()
         self.soma_component_ids = list()
+        self.verbose = verbose
 
         # Graph Loader
         anisotropy = anisotropy if use_anisotropy else (1.0, 1.0, 1.0)
@@ -901,6 +902,9 @@ class SkeletonGraph(nx.Graph):
         """
         return [i for i in self.nodes if self.degree[i] == 1]
 
+    def midpoint(self, i, j):
+        return geometry_util.midpoint(self.node_xyz[i], self.node_xyz[j])
+
     def node_local_voxel(self, node, offset):
         """
         Computes the local voxel coordinate of the given node within the image
@@ -1124,8 +1128,8 @@ class SkeletonGraph(nx.Graph):
             somas_kdtree = KDTree(self.node_xyz[soma_nodes])
 
         # Iterate over branching nodes
-        cnt = 0
         rm_nodes = set()
+        merge_sites = list()
         while branching_nodes:
             # Set root of search
             root = branching_nodes.pop()
@@ -1145,6 +1149,7 @@ class SkeletonGraph(nx.Graph):
                 i, dist_i = queue.pop()
                 if self.degree[i] > 2 and i != root:
                     hit_branching_nodes.add(i)
+                    merge_sites.append(self.midpoint(root, i))
 
                 # Update queue
                 for j in self.neighbors(i):
@@ -1157,9 +1162,10 @@ class SkeletonGraph(nx.Graph):
             if hit_branching_nodes or self.degree(root) > 3:
                 rm_nodes = rm_nodes.union(visited)
                 branching_nodes -= hit_branching_nodes
-                cnt += 1
+
+        # Update graph
         self.remove_nodes(rm_nodes)
-        return f"# High Risk Merges: {cnt}"
+        return merge_sites
 
     def rooted_subgraph(self, root, radius):
         """
@@ -1225,12 +1231,12 @@ class SkeletonGraph(nx.Graph):
         n_edges = format(self.number_of_edges(), ",")
         memory = util.get_memory_usage()
         return (
-            f"SkeletonGraph("
-            f"\n   n_components={n_components},"
-            f"\n   n_nodes={n_nodes},"
-            f"\n   n_edges={n_edges},"
-            f"\n   memory={memory:.2f} GBs"
-            f"\n)"
+            f"   SkeletonGraph(\n"
+            f"      num_connected_components={n_components},\n"
+            f"      num_nodes={n_nodes},\n"
+            f"      num_edges={n_edges},\n"
+            f"      memory={memory:.2f} GBs,\n"
+            f"   )"
         )
 
     def swc_ids(self):

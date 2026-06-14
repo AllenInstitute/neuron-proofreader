@@ -22,7 +22,7 @@ from neuron_proofreader.split_proofreading.proposal_generation import (
     ProposalGenerator,
     trim_proposal_endpoints,
 )
-from neuron_proofreader.utils import geometry_util, graph_util
+from neuron_proofreader.utils import geometry_util
 
 
 class ProposalGraph(SkeletonGraph):
@@ -62,36 +62,22 @@ class ProposalGraph(SkeletonGraph):
             graph. Default is True.
         """
         # Call parent class
-        super().__init__()
-
-        # Instance attributes - Graph
-        self.anisotropy = anisotropy
-        self.component_id_to_swc_id = dict()
-        self.gt_path = gt_path
-        self.soma_component_ids = set()
-        self.verbose = verbose
-
-        # Instance attributes - Proposals
-        self.accepts = set()
-        self.gt_accepts = set()
-        self.merged_ids = set()
-        self.n_merges_blocked = 0
-        self.n_proposals_blocked = 0
-
-        self.reset_proposals()
-        self.proposal_generator = ProposalGenerator(
-            self,
-            max_proposals_per_leaf=max_proposals_per_leaf,
-        )
-
-        # Graph Loader
-        self.graph_loader = graph_util.GraphLoader(
+        super().__init__(
             anisotropy=anisotropy,
             min_cable_length=min_cable_length,
             node_spacing=node_spacing,
             prune_depth=prune_depth,
             verbose=verbose,
         )
+
+        # Instance attributes - Proposals
+        self.accepts = set()
+        self.gt_accepts = set()
+        self.gt_path = gt_path
+        self.merged_ids = set()
+        self.n_merges_blocked = 0
+        self.n_proposals_blocked = 0
+        self.reset_proposals()
 
     # --- Update Structure ---
     def relabel_nodes(self):
@@ -153,11 +139,13 @@ class ProposalGraph(SkeletonGraph):
         """
         # Proposal generation
         assert len(self.kdtree.data) == self.number_of_nodes()
-        proposals = self.proposal_generator(
-            search_radius,
+        proposal_generator = ProposalGenerator(
+            self,
             allow_nonleaf_proposals=allow_nonleaf_proposals,
+            max_proposals_per_leaf=max_proposals_per_leaf,
             min_size_with_proposals=min_size_with_proposals,
         )
+        proposals = proposal_generator(search_radius)
 
         self.search_radius = search_radius
         self.store_proposals(proposals)
@@ -328,7 +316,7 @@ class ProposalGraph(SkeletonGraph):
         return self.dist(*tuple(proposal))
 
     def proposal_midpoint(self, proposal):
-        return geometry_util.midpoint(*self.proposal_xyz(proposal))
+        return self.midpoint(*proposal)
 
     def proposal_radius(self, proposal):
         i, j = proposal
