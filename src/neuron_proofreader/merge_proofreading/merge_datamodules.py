@@ -63,7 +63,7 @@ class BrainDataset:
     """
 
     giant_component_cable_length = 30000
-    random_branching_site_probability = 0.5
+    random_branching_site_probability = 0.25
 
     def __init__(
         self,
@@ -171,13 +171,13 @@ class BrainDataset:
             # Sample node
             node = util.sample_once(nodes)
             if self.is_valid_nonmerge_site(node):
-                return node
+                return node, 0
 
             # Try again
             n_attempts += 1
             if n_attempts > 100:
                 print(f"Failed to find valid random nonmerge site for {self.brain_id}!")
-                return util.sample_once(self.nodes)
+                return util.sample_once(self.nodes), 0
 
     # --- Helpers ---
     def add_nonmerge_sites(self, num_sites):
@@ -228,7 +228,7 @@ class BrainDataset:
         while queue:
             # Visit node
             i, d_i = queue.pop()
-            if self.degree[i] > 2 and d_i > 0:
+            if self.degree[i] >= 3 and i != root:
                 return True
 
             # Update queue
@@ -608,6 +608,7 @@ def create_dataset_collection(
     graph_config=None,
     img_config=None,
     subgraph_depth=100,
+    val_neg_multiplier=5,
 ):
     # Set parameters based on mode
     print(f"\nLoading {dataset_mode} Dataset...")
@@ -654,7 +655,7 @@ def create_dataset_collection(
 
         # Check whether to generate examples for validation
         if dataset_mode == "Val":
-            num_target_neg = 5 * len(dataset.merge_sites)
+            num_target_neg = val_neg_multiplier * len(dataset.merge_sites)
             num_added_neg = num_target_neg - len(dataset.nonmerge_sites)
             dataset.add_nonmerge_sites(num_added_neg)
 
