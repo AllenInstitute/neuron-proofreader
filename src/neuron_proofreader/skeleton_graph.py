@@ -317,6 +317,7 @@ class SkeletonGraph(nx.Graph):
             component_id_to_soma_nodes[self.node_component_id[i]].add(i)
 
         # Check for connected components with multiple soma nodes
+        merge_sites = list()
         n_soma_merges = 0
         for component_id, soma_nodes in component_id_to_soma_nodes.items():
             if len(soma_nodes) > 1 and len(soma_nodes) < 20:
@@ -326,16 +327,14 @@ class SkeletonGraph(nx.Graph):
                     dist, _ = somas_kdtree.query(self.node_xyz[i])
                     if self.degree[i] > 2 and dist > 25:
                         rm_nodes.add(i)
+                        merge_sites.append(self.node_xyz[i])
                 self.remove_nearby_nodes(rm_nodes)
 
         # Finish
         self.remove_small_components(relabel_nodes=False)
         self.relabel_nodes()
-        results = [
-            f"# Soma Fragments: {len(self.soma_centroids)}",
-            f"# Soma Merges: {n_soma_merges}",
-        ]
-        return "\n".join(results)
+        summary = f"# Soma Merges: {n_soma_merges}"
+        return merge_sites, summary
 
     def remove_nearby_nodes(self, roots, max_dist=5.0):
         """
@@ -1165,7 +1164,8 @@ class SkeletonGraph(nx.Graph):
 
         # Update graph
         self.remove_nodes(rm_nodes)
-        return merge_sites
+        summary = f"# High Risk Merges: {len(merge_sites)}"
+        return merge_sites, summary
 
     def rooted_subgraph(self, root, radius):
         """

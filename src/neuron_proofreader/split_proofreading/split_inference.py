@@ -155,7 +155,7 @@ class SplitProofreader:
         """
         # Main
         t0 = time()
-        self.log("\nGenerate Proposals...")
+        self.log("Generate Proposals...")
         self.dataset.generate_proposals(
             proposals_config.search_radius,
             allow_nonleaf_proposals=proposals_config.allow_nonleaf_proposals,

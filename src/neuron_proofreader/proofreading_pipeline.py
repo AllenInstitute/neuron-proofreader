@@ -144,6 +144,12 @@ class ProofreadPipeline:
             self.reconfigure_node_radius()
             self.save_graph("corrected_swcs")
 
+    def connect_soma_fragments(self, max_dist=25):
+        self.step_cnt += 1
+        self.log(f"\nStep {self.step_cnt}: Connect Soma Fragments with dist={max_dist}")
+        summary = self.graph.connect_soma_fragments(max_dist=max_dist)
+        self.log(summary)
+
     # --- Merge Proofreading ---
     def merge_proofreading(self, mode):
         # Report step
@@ -154,13 +160,12 @@ class ProofreadPipeline:
 
         # Detect merges
         if mode == "heuristic":
-            merge_sites = self.graph.remove_high_risk_merges()
+            merge_sites, summary = self.graph.remove_high_risk_merges()
         elif mode == "connected_somas":
-            results = self.graph.remove_soma_merges()
-            self.log(results)
+            merge_sites, summary = self.graph.remove_soma_merges()
 
         # Report results
-        self.log(f"# Merges Detected: {len(merge_sites)}")
+        self.log(summary)
 
         # Save sites
         color = "# COLOR 1.0 0.0 0.0"
