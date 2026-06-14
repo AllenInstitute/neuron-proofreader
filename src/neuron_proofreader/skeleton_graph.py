@@ -296,15 +296,7 @@ class SkeletonGraph(nx.Graph):
 
     def remove_soma_merges(self):
         """
-        Breaks a fragment that intersects with multiple somas so that nodes
-        closest to soma locations are disconnected.
-
-        Parameters
-        ----------
-        swc_dict : dict
-            Contents of an SWC file.
-        somas_xyz : List[Tuple[float]]
-            Physical coordinates representing soma locations.
+        Removes branching points along paths that connect multiple somas.
         """
         # Check whether to exit
         if len(self.soma_centroids) == 0:
