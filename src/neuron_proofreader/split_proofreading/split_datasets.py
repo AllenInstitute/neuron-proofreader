@@ -17,8 +17,6 @@ from tqdm import tqdm
 import os
 import pandas as pd
 
-from neuron_proofreader.proposal_graph import ProposalGraph
-from neuron_proofreader.machine_learning.augmentation import ImageTransforms
 from neuron_proofreader.machine_learning.subgraph_sampler import (
     SubgraphSampler,
 )
@@ -26,10 +24,10 @@ from neuron_proofreader.split_proofreading.split_feature_extraction import (
     FeaturePipeline,
     HeteroGraphData,
 )
-from neuron_proofreader.utils import geometry_util, util
+from neuron_proofreader.utils import util
 
 
-# --- Single Brain Dataset ---
+# --- Datasets ---
 class FragmentsDataset(IterableDataset):
     """
     A dataset object that contains a graph built from fragments corresponding
@@ -39,13 +37,11 @@ class FragmentsDataset(IterableDataset):
 
     def __init__(
         self,
-        fragments_path,
-        img_path,
-        config,
+        fragments_graph,
+        img_config,
+        batch_size=32,
         gt_path=None,
-        metadata_path=None,
         prefetch=4,
-        soma_centroids=set(),
     ):
         """
         Instantiates a FragmentsDataset object.
@@ -56,64 +52,25 @@ class FragmentsDataset(IterableDataset):
             Path to predicted SWC files to be loaded.
         img_path : str
             Path to the raw image associated with the fragments.
-        config : Config
-            Configuration object containing parameters and settings.
+        graph_config : GraphConfig
+            ...
         gt_path : str, optional
             Path to ground-truth SWC files to be loaded. Default is None.
-        metadata_path : str, optional
-            Patch to JSON file containing metadata on block that fragments
-            were extracted from. Default is None.
-        soma_centroids : List[Tuple[int]], optional
-            Phyiscal coordinates of soma centroids. Default is an empty list.
         """
         # Instance attributes
-        self.config = config
+        self.batch_size = batch_size
+        self.graph = fragments_graph
         self.gt_path = gt_path
         self.prefetch = prefetch
-        self.transform = ImageTransforms() if config.ml.transform else False
-
-        # Build graph
-        self._load_graph(fragments_path, metadata_path)
-        self.graph.load_somas(soma_centroids)
+        self.transform = img_config.transform
 
         # Feature extractor
         self.feature_extractor = FeaturePipeline(
             self.graph,
-            img_path,
-            brightness_clip=self.config.ml.brightness_clip,
-            patch_shape=self.config.ml.patch_shape,
+            img_config.img_path,
+            brightness_clip=img_config.brightness_clip,
+            patch_shape=img_config.patch_shape,
         )
-
-    def _load_graph(self, fragments_path, metadata_path=None):
-        """
-        Loads a graph by reading and processing SWC files specified by the
-        given path.
-
-        Parameters
-        ----------
-        fragments_path : str
-            Path to SWC files to be loaded.
-        metadata_path : str, optional
-            Patch to JSON file containing metadata on block that fragments
-            were extracted from. Default is None.
-        """
-        # Build graph
-        self.graph = ProposalGraph(
-            anisotropy=self.config.graph.anisotropy,
-            gt_path=self.gt_path,
-            min_cable_length=self.config.graph.min_cable_length,
-            node_spacing=self.config.graph.node_spacing,
-            prune_depth=self.config.graph.prune_depth,
-            verbose=self.config.graph.verbose,
-        )
-        self.graph.load(fragments_path)
-
-        # Post process fragments
-        if metadata_path:
-            self.graph.clip_to_bbox(metadata_path)
-
-        if self.config.graph.remove_doubles:
-            geometry_util.remove_doubles(self.graph, 200)
 
     # --- Get Data ---
     def __iter__(self):
@@ -137,18 +94,17 @@ class FragmentsDataset(IterableDataset):
 
     def get_sampler(self):
         """
-        Gets a subgraph sampler that is used to iterate over dataset.
+        Gets a subgraph sampler used to iterate over dataset.
 
         Returns
         -------
         sampler : SubgraphSampler
             Subgraph sampler that is used to iterate over dataset.
         """
-        batch_size = self.config.ml.batch_size
-        return iter(SubgraphSampler(self.graph, max_proposals=batch_size))
+        sampler = SubgraphSampler(self.graph, max_proposals=self.batch_size)
+        return iter(sampler)
 
 
-# --- Multi-Brain Dataset ---
 class FragmentsDatasetCollection(IterableDataset):
     """
     A dataset class for storing a set of FragmentDataset objects corresponding

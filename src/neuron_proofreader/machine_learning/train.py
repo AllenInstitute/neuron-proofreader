@@ -66,6 +66,7 @@ class Trainer:
         model_name,
         output_dir,
         device="cuda",
+        exp_name=None,
         lr=1e-3,
         max_epochs=200,
         min_recall=0,
@@ -94,7 +95,8 @@ class Trainer:
             Indication of whether to save MIPs of mistakes. Default is False.
         """
         # Set experiment name
-        exp_name = "session-" + datetime.today().strftime("%Y%m%d_%H%M")
+        if exp_name is None:
+            exp_name = "session-" + datetime.today().strftime("%Y%m%d_%H%M")
         log_dir = os.path.join(output_dir, exp_name)
         util.mkdir(log_dir)
 

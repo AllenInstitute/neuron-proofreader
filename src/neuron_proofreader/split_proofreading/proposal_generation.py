@@ -24,8 +24,10 @@ class ProposalGenerator:
     def __init__(
         self,
         graph,
+        allow_nonleaf_proposals=False,
         max_attempts=2,
         max_proposals_per_leaf=3,
+        min_size_with_proposals=0,
         search_scaling_factor=1.5,
     ):
         """
@@ -35,29 +37,31 @@ class ProposalGenerator:
         ----------
         graph : ProposalGraph
             Graph that proposals will be generated for.
+        allow_nonleaf_proposals : bool, optional
+            Indication of whether to generate proposals between leaf and nodes
+            with degree 2. Default is False.
         max_attempts : int, optional
             Number of attempts made to generate proposals from a node with
             increasing search radii. Default is 2.
         max_proposals_per_leaf : bool, optional
             Maximum number of proposals generated at each leaf. Default is 3.
+        min_size_with_proposals : float, optional
+            Minimum cable path length required for fragments that proposals
+            are generated from. Default is 0.
         search_scaling_factor : 1.5, optional
             Scaling actor used to enlarge search radius for each search.
             Default is 2.
         """
         # Instance attributes
-        self.allow_nonleaf_proposals = None
+        self.allow_nonleaf_proposals = allow_nonleaf_proposals
         self.graph = graph
         self.kdtree = None
         self.max_attempts = max_attempts
         self.max_proposals_per_leaf = max_proposals_per_leaf
+        self.min_size_with_proposals = min_size_with_proposals
         self.search_scaling_factor = search_scaling_factor
 
-    def __call__(
-        self,
-        initial_radius,
-        allow_nonleaf_proposals=False,
-        min_size_with_proposals=0,
-    ):
+    def __call__(self, initial_radius):
         """
         Generates edge proposals between fragments within the given search
         radius.
@@ -67,15 +71,8 @@ class ProposalGenerator:
         initial_radius : float
             Initial search radius used to generate proposals between endpoints
             of proposal.
-        allow_nonleaf_proposals : bool, optional
-            Indication of whether to generate proposals between leaf and nodes
-            with degree 2. Default is False.
-        min_size_with_proposals : float, optional
-            Minimum cable path length required for fragments that proposals
-            are generated from. Default is 0.
         """
         # Initializations
-        self.allow_nonleaf_proposals = allow_nonleaf_proposals
         self.set_kdtree()
         iterator = self.graph.leaf_nodes()
         if self.graph.verbose:
@@ -87,9 +84,9 @@ class ProposalGenerator:
         for leaf in iterator:
             # Check if fragment satisfies size requirement
             length = self.graph.cable_length(
-                max_depth=min_size_with_proposals, root=leaf
+                max_depth=self.min_size_with_proposals, root=leaf
             )
-            if length < min_size_with_proposals:
+            if length < self.min_size_with_proposals:
                 continue
 
             # Generate proposals

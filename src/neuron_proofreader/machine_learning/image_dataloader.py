@@ -14,7 +14,7 @@ import numpy as np
 import tensorstore as ts
 
 from neuron_proofreader.configs import ImageConfig
-from neuron_proofreader.machine_learning.image_augmentation import (
+from neuron_proofreader.machine_learning.augmentation import (
     ImageTransforms,
 )
 from neuron_proofreader.utils import geometry_util, img_util, util
@@ -234,7 +234,7 @@ class DetectionPatchLoader(PatchLoader):
 
         # Annotate mask
         mask = np.zeros(shape)
-        #self.annotate_foreground(mask, nodes, offset, fill_val=0.5)  TEMP
+        # self.annotate_foreground(mask, nodes, offset, fill_val=0.5)  TEMP
         self.annotate_fragment(mask, subgraph, offset, fill_val=1)
         return mask
 
