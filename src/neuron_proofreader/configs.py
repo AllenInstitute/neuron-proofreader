@@ -97,6 +97,7 @@ class ImageConfig(Config):
     """
 
     brightness_clip: int = 400
+    img_path: str = None
     name: str = "image_config"
     percentiles: Tuple[float, float] = (1, 99.5)
     patch_shape: Tuple[int, int, int] = (128, 128, 128)

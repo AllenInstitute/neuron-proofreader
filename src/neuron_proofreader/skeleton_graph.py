@@ -539,11 +539,10 @@ class SkeletonGraph(nx.Graph):
             ZipFile object that will store the generated SWC file.
         root : int
             Root node of connected component to be written to an SWC file.
-        ususe_radius : bool, optional
+        use_radius : bool, optional
             Indication of whether to preserve radii of nodes or use default
             radius of 2μm. Default is False.
         """
-
         # Subroutines
         def write_entry(node, parent):
             """
