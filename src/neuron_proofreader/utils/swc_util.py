@@ -159,7 +159,7 @@ class Reader:
         Parameters
         ----------
         swc_paths : List[str]
-            List of paths to SWC files to be read.
+            Paths to SWC files to be read.
 
         Returns
         -------
@@ -448,14 +448,13 @@ class Reader:
 
     def process_content(self, content):
         """
-        Processes lines of text from an SWC file, extracting an offset
-        value and returning the remaining content starting from the line
-        immediately after the last commented line.
+        Extracts an offset and returns the remaining content starting from the
+        line after the last commented line.
 
         Parameters
         ----------
         content : List[str]
-            List of strings such that each is a line from an SWC file.
+            Lines from an SWC file.
 
         Returns
         -------
@@ -475,7 +474,7 @@ class Reader:
 
     def read_coordinate(self, xyz_str, offset=(0, 0, 0)):
         """
-        Reads a coordinate from a string and converts it to voxel coordinates.
+        Reads coordinate from a string and converts it to voxel coordinates.
 
         Parameters
         ----------
@@ -498,7 +497,7 @@ def write_points(
     zip_path, points, color=None, prefix="", radius=10, write_mode="w"
 ):
     """
-    Writes a list of 3D points to individual SWC files in the specified
+    Writes list of 3D points to individual SWC files in the specified
     directory.
 
     Parameters
@@ -524,15 +523,14 @@ def write_points(
 
 def to_zipped_point(zf, filename, xyz, color=None, radius=5):
     """
-    Writes a point to an SWC file format, which is then stored in a ZIP
-    archive.
+    Writes point to an SWC file in a ZIP archive.
 
     Parameters
     ----------
     zf : zipfile.ZipFile
         ZipFile used to write the generated SWC file.
     filename : str
-        Filename of SWC file.
+        SWC filename.
     xyz : ArrayLike
         Point to be written to SWC file.
     color : str, optional
@@ -557,7 +555,7 @@ def to_zipped_point(zf, filename, xyz, color=None, radius=5):
 # --- Helpers ---
 def get_segment_id(swc_name):
     """
-    Extract the segment ID from an SWC filename.
+    Extracts the segment ID from an SWC filename.
 
     Parameters
     ----------
@@ -578,7 +576,7 @@ def get_segment_id(swc_name):
 
 def get_swc_name(path):
     """
-    Gets name of the SWC file at the given path, minus the extension.
+    Gets SWC filename at the given path, minus the extension.
 
     Parameters
     ----------
@@ -588,7 +586,7 @@ def get_swc_name(path):
     Returns
     -------
     name : str
-        Name of the SWC file, minus the extension.
+        SWC filename minus the extension.
     """
     return os.path.splitext(os.path.basename(path))[0]
 
