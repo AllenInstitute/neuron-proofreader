@@ -1,5 +1,5 @@
 """
-Created on Frid Sept 15 16:00:00 2024
+Created on Fri Sept 15 16:00:00 2024
 
 @author: Anna Grim
 @email: anna.grim@alleninstitute.org
@@ -15,6 +15,7 @@ from typing import Tuple
 
 import os
 
+from neuron_proofreader.machine_learning.augmentation import ImageTransforms
 from neuron_proofreader.utils import util
 
 
@@ -101,10 +102,10 @@ class ImageConfig(Config):
     name: str = "image_config"
     percentiles: Tuple[float, float] = (1, 99.5)
     patch_shape: Tuple[int, int, int] = (128, 128, 128)
-    transform: bool = False
+    transform = None
 
     def set_train_mode(self):
-        self.transform = True
+        self.transform = ImageTransforms()
 
 
 @dataclass
@@ -125,5 +126,8 @@ class ProposalsConfig(Config):
     """
 
     allow_nonleaf_proposals: bool = False
-    proposals_per_leaf: int = 3
+    max_proposals_per_leaf: int = 3
+    min_size_with_proposals: float = 0
     trim_endpoints_bool: bool = True
+    search_radius: float = 25
+    search_scaling_factor: float = 1.5

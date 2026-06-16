@@ -120,7 +120,9 @@ class GraphLoader:
 
                     # Continue submitting processes
                     if swc_dicts:
-                        pending.add(executor.submit(self.load, swc_dicts.pop()))
+                        pending.add(
+                            executor.submit(self.load, swc_dicts.pop())
+                        )
         return irreducibles
 
     def load(self, swc_dict):

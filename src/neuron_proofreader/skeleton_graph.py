@@ -85,6 +85,7 @@ class SkeletonGraph(nx.Graph):
         self.node_spacing = node_spacing
         self.soma_centroids = list()
         self.soma_component_ids = list()
+        self.verbose = verbose
 
         # Graph Loader
         anisotropy = anisotropy if use_anisotropy else (1.0, 1.0, 1.0)
@@ -295,15 +296,7 @@ class SkeletonGraph(nx.Graph):
 
     def remove_soma_merges(self):
         """
-        Breaks a fragment that intersects with multiple somas so that nodes
-        closest to soma locations are disconnected.
-
-        Parameters
-        ----------
-        swc_dict : dict
-            Contents of an SWC file.
-        somas_xyz : List[Tuple[float]]
-            Physical coordinates representing soma locations.
+        Removes branching points along paths that connect multiple somas.
         """
         # Check whether to exit
         if len(self.soma_centroids) == 0:
@@ -316,6 +309,7 @@ class SkeletonGraph(nx.Graph):
             component_id_to_soma_nodes[self.node_component_id[i]].add(i)
 
         # Check for connected components with multiple soma nodes
+        merge_sites = list()
         n_soma_merges = 0
         for component_id, soma_nodes in component_id_to_soma_nodes.items():
             if len(soma_nodes) > 1 and len(soma_nodes) < 20:
@@ -325,16 +319,14 @@ class SkeletonGraph(nx.Graph):
                     dist, _ = somas_kdtree.query(self.node_xyz[i])
                     if self.degree[i] > 2 and dist > 25:
                         rm_nodes.add(i)
+                        merge_sites.append(self.node_xyz[i])
                 self.remove_nearby_nodes(rm_nodes)
 
         # Finish
         self.remove_small_components(relabel_nodes=False)
         self.relabel_nodes()
-        results = [
-            f"# Soma Fragments: {len(self.soma_centroids)}",
-            f"# Soma Merges: {n_soma_merges}",
-        ]
-        return "\n".join(results)
+        summary = f"# Soma Merges: {n_soma_merges}"
+        return merge_sites, summary
 
     def remove_nearby_nodes(self, roots, max_dist=5.0):
         """
@@ -852,6 +844,43 @@ class SkeletonGraph(nx.Graph):
         """
         return {i for i in map(int, self.nodes) if self.degree[i] != 2}
 
+    def irreducible_paths(self):
+        """
+        Extracts non-branching paths between irreducible nodes (degree 1 or >= 3).
+
+        Returns
+        -------
+        paths : List[numpy.ndarray]
+            Each entry is an ordered list of node IDs forming a path between two
+            irreducible nodes, inclusive of both endpoints.
+        """
+        # Initializations
+        irreducible = {n for n in self.nodes if self.degree(n) != 2}
+        paths = []
+        visited_edges = set()
+
+        # Search
+        for source in irreducible:
+            for nb in self.neighbors(source):
+                edge = frozenset((source, nb))
+                if edge in visited_edges:
+                    continue
+                visited_edges.add(edge)
+
+                # Walk along degree-2 chain until next irreducible node
+                path = [source, nb]
+                prev, curr = source, nb
+                while curr not in irreducible:
+                    nxt = next(n for n in self.neighbors(curr) if n != prev)
+                    edge = frozenset((curr, nxt))
+                    visited_edges.add(edge)
+                    path.append(nxt)
+                    prev, curr = curr, nxt
+
+                paths.append(np.array(path, dtype=int))
+
+        return paths
+
     def leaf_nodes(self):
         """
         Gets all leaf nodes in the graph.
@@ -862,6 +891,9 @@ class SkeletonGraph(nx.Graph):
             Leaf nodes in the graph.
         """
         return [i for i in self.nodes if self.degree[i] == 1]
+
+    def midpoint(self, i, j):
+        return geometry_util.midpoint(self.node_xyz[i], self.node_xyz[j])
 
     def node_local_voxel(self, node, offset):
         """
@@ -1052,9 +1084,7 @@ class SkeletonGraph(nx.Graph):
         """
         if len(path) > 1:
             diffs = self.node_xyz[path[1:]] - self.node_xyz[path[:-1]]
-            return np.sqrt(np.sum(diffs**2))
-        else:
-            return 0
+            return np.linalg.norm(diffs**2, axis=1).sum()
 
     def path_thru_node(self, i, max_depth=np.inf):
         if self.degree[i] == 0:
@@ -1088,8 +1118,8 @@ class SkeletonGraph(nx.Graph):
             somas_kdtree = KDTree(self.node_xyz[soma_nodes])
 
         # Iterate over branching nodes
-        cnt = 0
         rm_nodes = set()
+        merge_sites = list()
         while branching_nodes:
             # Set root of search
             root = branching_nodes.pop()
@@ -1109,6 +1139,7 @@ class SkeletonGraph(nx.Graph):
                 i, dist_i = queue.pop()
                 if self.degree[i] > 2 and i != root:
                     hit_branching_nodes.add(i)
+                    merge_sites.append(self.midpoint(root, i))
 
                 # Update queue
                 for j in self.neighbors(i):
@@ -1121,9 +1152,11 @@ class SkeletonGraph(nx.Graph):
             if hit_branching_nodes or self.degree(root) > 3:
                 rm_nodes = rm_nodes.union(visited)
                 branching_nodes -= hit_branching_nodes
-                cnt += 1
+
+        # Update graph
         self.remove_nodes(rm_nodes)
-        return f"# High Risk Merges: {cnt}"
+        summary = f"# High Risk Merges: {len(merge_sites)}"
+        return merge_sites, summary
 
     def rooted_subgraph(self, root, radius):
         """
@@ -1183,38 +1216,19 @@ class SkeletonGraph(nx.Graph):
                 soma_nodes.append(i)
         return soma_nodes
 
-    def summary(self, prefix=""):
-        """
-        Generate a human-readable summary of the graph.
-
-        Parameters
-        ----------
-        prefix : str, optional
-            Optional string to prepend to the summary title.
-
-        Returns
-        -------
-        summary : str
-            Formatted multi-line string containing:
-            - Graph Name
-            - Number of connected components
-            - Number of nodes
-            - Number of edges
-            - Memory consumption (in GBs)
-        """
-        # Compute values
+    def __repr__(self):
         n_components = format(nx.number_connected_components(self), ",")
         n_nodes = format(self.number_of_nodes(), ",")
         n_edges = format(self.number_of_edges(), ",")
         memory = util.get_memory_usage()
-
-        # Compile results
-        summary = [f"{prefix} Graph"]
-        summary.append(f"# Connected Components: {n_components}")
-        summary.append(f"# Nodes: {n_nodes}")
-        summary.append(f"# Edges: {n_edges}")
-        summary.append(f"Memory Consumption: {memory:.2f} GBs")
-        return "\n".join(summary)
+        return (
+            f"   SkeletonGraph(\n"
+            f"      num_connected_components={n_components},\n"
+            f"      num_nodes={n_nodes},\n"
+            f"      num_edges={n_edges},\n"
+            f"      memory={memory:.2f} GBs,\n"
+            f"   )"
+        )
 
     def swc_ids(self):
         """

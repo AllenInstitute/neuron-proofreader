@@ -14,7 +14,7 @@ import numpy as np
 import tensorstore as ts
 
 from neuron_proofreader.configs import ImageConfig
-from neuron_proofreader.machine_learning.image_augmentation import (
+from neuron_proofreader.machine_learning.augmentation import (
     ImageTransforms,
 )
 from neuron_proofreader.utils import geometry_util, img_util, util

@@ -14,6 +14,7 @@ import numpy as np
 import random
 
 
+# --- Image Augmentation ---
 class ImageTransforms:
     """
     Class that applies a sequence of transforms to a 3D image and segmentation
@@ -42,7 +43,7 @@ class ImageTransforms:
         ----------
         patches : numpy.ndarray
             Image with the shape (2, H, W, D), where the first channel is the
-            input image and second is the segmentation.
+            raw image and second is a mask.
         """
         for transform in self.transforms:
             patches = transform(patches)
@@ -73,8 +74,8 @@ class RandomFlip3D:
         Parameters
         ----------
         patches : numpy.ndarray
-            Image with the shape (2, H, W, D), where "patches[0, ...]" is from
-            the input image and "patches[1, ...]" is from the segmentation.
+            Image with the shape (2, H, W, D), where the first channel is the
+            raw image and second is a mask.
         """
         for axis in self.axes:
             if random.random() > 0.5:
@@ -95,7 +96,7 @@ class RandomRotation3D:
         Parameters
         ----------
         angles : Tuple[int], optional
-            Maximum angle of rotation. Default is (-45, 45).
+            Maximum angle of rotation. Default is (-90, 90).
         axis : Tuple[Tuple[int]], optional
             Axes to apply rotation. Default is ((0, 1), (0, 2), (1, 2))
         """
@@ -109,8 +110,8 @@ class RandomRotation3D:
         Parameters
         ----------
         patches : numpy.ndarray
-            Image with the shape (2, H, W, D), where "patches[0, ...]" is from
-            the input image and "patches[1, ...]" is from the segmentation.
+            Image with the shape (2, H, W, D), where the first channel is the
+            raw image and second is a mask.
         """
         for axes in self.axes:
             if random.random() < 0.5:
@@ -120,7 +121,7 @@ class RandomRotation3D:
         return patches
 
     @staticmethod
-    def rotate3d(img_patch, angle, axes, is_segmentation=False):
+    def rotate3d(img_patch, angle, axes, is_mask=False):
         """
         Rotates a 3D image patch around the specified axes by a given angle.
 
@@ -132,13 +133,12 @@ class RandomRotation3D:
             Angle (in degrees) by which to rotate the image patch around the
             specified axes.
         axes : Tuple[int]
-            Tuple representing the two axes of rotation.
-        is_segmentation : bool, optional
-            Indication of whether the image is a segmentation. Default is
-            False.
+            Two axes of rotation.
+        is_mask : bool, optional
+            True if the image is a mask.
         """
-        order = 0 if is_segmentation else 3
-        multipler = 4 if is_segmentation else 1
+        order = 0 if is_mask else 3
+        multipler = 4 if is_mask else 1
         img_patch = rotate(
             multipler * img_patch,
             angle,
@@ -174,8 +174,8 @@ class RandomScale3D:
         Parameters
         ----------
         patches : numpy.ndarray
-            Image with the shape (2, H, W, D), where "patches[0, ...]" is from
-            the input image and "patches[1, ...]" is from the segmentation.
+            Image with the shape (2, H, W, D), where the first channel is the
+            raw image and second is a mask.
 
         Returns
         -------
@@ -226,8 +226,8 @@ class RandomContrast3D:
         Parameters
         ----------
         patches : numpy.ndarray
-            Image with the shape (2, H, W, D), where the zeroth channel is
-            from the raw image and first channel is from the segmentation.
+            Image with the shape (2, H, W, D), where the first channel is the
+            raw image and second is a mask.
         """
         lo = np.percentile(patches[0], np.random.uniform(*self.p_low))
         hi = np.percentile(patches[0], np.random.uniform(*self.p_high))
@@ -260,10 +260,13 @@ class RandomNoise3D:
         Parameters
         ----------
         patches : numpy.ndarray
-            Image with the shape (2, H, W, D), where "patches[0, ...]" is from
-            the input image and "patches[1, ...]" is from the segmentation.
+            Image with the shape (2, H, W, D), where the first channel is the
+            raw image and second is a mask.
         """
         std = self.max_std * random.random()
         patches[0] += np.random.uniform(-std, std, patches[0].shape)
         patches[0] = np.clip(patches[0], 0, 1)
         return patches
+
+
+# --- 3D Space Curve Augmentation ---
