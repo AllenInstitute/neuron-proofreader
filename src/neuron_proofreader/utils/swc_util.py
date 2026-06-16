@@ -109,7 +109,7 @@ class Reader:
                 return self.read_zips(swc_pointer, self.read_zip)
 
             # Local SWC files
-            paths = util.read_paths(swc_pointer, extension=".swc")
+            paths = util.list_paths(swc_pointer, extension=".swc")
             if len(paths) > 0:
                 return self.read_swcs(paths)
 
@@ -202,7 +202,7 @@ class Reader:
         pbar = self.manual_progress_bar(len(zip_paths))
         with ProcessPoolExecutor() as executor:
             # Assign processes
-            futures = {executor.submit(read_fn, path) for path in zip_paths}
+            futures = {executor.submit(read_fn, path) for path in zip_paths[0:500]}  # TEMP
 
             # Store results
             swc_dicts = deque()
