@@ -66,13 +66,9 @@ class MergeDetector:
     def search_graph(self):
         # Iterate over dataset
         t0 = time()
-        dataloader = DataLoader(
-            self.dataset,
-            batch_size=self.batch_size,
-            num_workers=0,
-        )
+        dataloader = DataLoader(self.dataset, batch_size=self.batch_size)
         pbar = tqdm(total=self.dataset.estimate_iterations())
-        for nodes, x_nodes in dataloader: #self.dataset:
+        for nodes, x_nodes in dataloader:
             self.node_preds[np.array(nodes)] = self.predict(x_nodes)
             pbar.update(len(nodes))
 
