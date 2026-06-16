@@ -369,7 +369,7 @@ class DenseDataset(GraphDataset):
         is_multimodal=False,
         min_search_size=0,
         prefetch=64,
-        step_size=10,
+        step_size=40,
         subgraph_radius=100,
     ):
         # Call parent class
@@ -538,7 +538,7 @@ class SparseDataset(GraphDataset):
                 patch_centers.append(self.graph.node_voxel(i))
 
             # Check whether to yield batch
-            if self.graph.dist(root, j) > 256:
+            if self.graph.dist(root, j) > self.max_batch_span:
                 # Yield batch metadata
                 patch_centers = np.array(patch_centers, dtype=int)
                 nodes = np.array(nodes, dtype=int)

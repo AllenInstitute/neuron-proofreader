@@ -18,6 +18,9 @@ from torch_geometric.data import HeteroData
 import numpy as np
 import torch
 
+from neuron_proofreader.machine_learning.image_dataloader import (
+    TensorStoreImage,
+)
 from neuron_proofreader.utils import geometry_util, graph_util, img_util, util
 from neuron_proofreader.utils.ml_util import TensorDict
 
@@ -242,14 +245,11 @@ class ImageFeatureExtractor:
             Number of voxels to be added in each dimension from start and end
             point of proposal for image patch extraction. Default is 40.
         """
-        # Instance attributes
         self.brightness_clip = brightness_clip
         self.graph = graph
+        self.img = TensorStoreImage(img_path)
         self.patch_shape = patch_shape
         self.padding = padding
-
-        # Image reader
-        self.img = img_util.TensorStoreImage(img_path)
 
     def __call__(self, subgraph, features):
         """
