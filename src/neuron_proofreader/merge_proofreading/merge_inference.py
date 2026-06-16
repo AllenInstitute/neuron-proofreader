@@ -12,7 +12,7 @@ image segmentation.
 from abc import ABC, abstractmethod
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from torch.nn.functional import sigmoid
-from torch.utils.data import IterableDataset
+from torch.utils.data import IterableDataset, DataLoader
 from time import time
 from tqdm import tqdm
 
@@ -44,11 +44,13 @@ class MergeDetector:
         dataset,
         model,
         model_path,
+        batch_size=16,
         device="cuda",
         remove_detected_sites=False,
         threshold=0.4,
     ):
         # Instance attributes
+        self.batch_size = batch_size
         self.dataset = dataset
         self.device = device
         self.node_preds = np.zeros((len(dataset.node_xyz)))
@@ -64,8 +66,13 @@ class MergeDetector:
     def search_graph(self):
         # Iterate over dataset
         t0 = time()
+        dataloader = DataLoader(
+            self.dataset,
+            batch_size=self.batch_size,
+            num_workers=0,
+        )
         pbar = tqdm(total=self.dataset.estimate_iterations())
-        for nodes, x_nodes in self.dataset:
+        for nodes, x_nodes in dataloader: #self.dataset:
             self.node_preds[np.array(nodes)] = self.predict(x_nodes)
             pbar.update(len(nodes))
 
@@ -249,7 +256,6 @@ class GraphDataset(IterableDataset, ABC):
         self,
         graph,
         img_config,
-        batch_size=16,
         is_multimodal=False,
         min_search_size=0,
         prefetch=64,
@@ -259,7 +265,6 @@ class GraphDataset(IterableDataset, ABC):
         super().__init__()
 
         # Instance attributes
-        self.batch_size = batch_size
         self.distance_traversed = 0
         self.graph = graph
         self.is_multimodal = is_multimodal
@@ -270,9 +275,9 @@ class GraphDataset(IterableDataset, ABC):
 
         # Batch getter
         if is_multimodal:
-            self.get_batch = self._get_multimodal_batch
+            self.generate_inputs = None
         else:
-            self.get_batch = self._get_batch
+            self.generate_inputs = self.generate_patches
 
     # --- Core routines ---
     def __iter__(self):
@@ -365,7 +370,6 @@ class DenseDataset(GraphDataset):
         self,
         graph,
         img_config,
-        batch_size=16,
         is_multimodal=False,
         min_search_size=0,
         prefetch=64,
@@ -376,7 +380,6 @@ class DenseDataset(GraphDataset):
         super().__init__(
             graph,
             img_config,
-            batch_size=batch_size,
             is_multimodal=is_multimodal,
             min_search_size=min_search_size,
             prefetch=prefetch,
@@ -414,7 +417,7 @@ class DenseDataset(GraphDataset):
                         # Process completed thread
                         nodes = pending.pop(thread)
                         img, offset = thread.result()
-                        yield self.get_batch(nodes, img, offset)
+                        yield from self.generate_inputs(nodes, img, offset)
 
                         # Continue submitting threads
                         submit_thread()
@@ -445,9 +448,7 @@ class DenseDataset(GraphDataset):
                     continue
 
             # Check whether to yield batch
-            is_node_far = self.dist(root, j) > self.max_batch_span
-            is_batch_full = len(nodes) == self.batch_size
-            if is_node_far or is_batch_full:
+            if self.dist(root, j) > self.max_batch_span:
                 # Yield nodes in batch
                 yield np.array(nodes, dtype=int)
 
@@ -467,13 +468,12 @@ class DenseDataset(GraphDataset):
         if nodes:
             yield np.array(nodes, dtype=int)
 
-    def _get_batch(self, nodes, img, offset):
-        batch = np.empty((len(nodes), 2,) + self.patch_shape)
+    def generate_patches(self, nodes, img, offset):
         voxels = np.array([self.node_voxel(i) for i in nodes], dtype=int)
-        for i, center in enumerate(voxels - offset):
+        for node, center in zip(nodes, voxels - offset):
             s = img_util.get_slices(center, self.patch_shape)
-            batch[i] = img[(slice(0, 2), *s)]
-        return nodes, torch.tensor(batch, dtype=torch.float)
+            patch = torch.from_numpy(img[(slice(0, 2), *s)]).float()
+            yield node, patch
 
     def _get_multimodal_batch(self, nodes, img, offset):
         # Initializations
@@ -542,9 +542,7 @@ class SparseDataset(GraphDataset):
                 patch_centers.append(self.graph.node_voxel(i))
 
             # Check whether to yield batch
-            is_node_far = self.graph.dist(root, j) > 256
-            is_batch_full = len(patch_centers) == self.batch_size
-            if is_node_far or is_batch_full:
+            if self.graph.dist(root, j) > 256:
                 # Yield batch metadata
                 patch_centers = np.array(patch_centers, dtype=int)
                 nodes = np.array(nodes, dtype=int)
@@ -580,10 +578,9 @@ class BranchingDataset(GraphDataset):
         self,
         graph,
         img_config,
-        batch_size=16,
         is_multimodal=False,
         min_search_size=0,
-        prefetch=128,
+        prefetch=64,
         step_size=10,
         subgraph_radius=100,
     ):
@@ -591,7 +588,6 @@ class BranchingDataset(GraphDataset):
         super().__init__(
             graph,
             img_config,
-            batch_size=batch_size,
             is_multimodal=is_multimodal,
             min_search_size=min_search_size,
             prefetch=prefetch,
@@ -601,4 +597,3 @@ class BranchingDataset(GraphDataset):
         # Instance attributes
         self.patch_loader = DetectionPatchLoader(self.graph, img_config)
         self.search_mode = "branching_nodes"
-
