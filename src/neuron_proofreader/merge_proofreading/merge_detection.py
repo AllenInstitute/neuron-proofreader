@@ -32,7 +32,7 @@ class MergeDetector:
         batch_size=16,
         device="cuda",
         remove_detected_sites=False,
-        threshold=0.4,
+        threshold=0.5,
     ):
         # Instance attributes
         self.batch_size = batch_size
