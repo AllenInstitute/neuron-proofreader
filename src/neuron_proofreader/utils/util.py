@@ -401,7 +401,7 @@ def parse_cloud_path(path):
     """
     # Remove s3:// or gs:// if present
     if path.startswith("s3://") or path.startswith("gs://"):
-        path = path[len("s3://") :]
+        path = path[len("s3://"):]
 
     # Split path
     parts = path.split("/", 1)

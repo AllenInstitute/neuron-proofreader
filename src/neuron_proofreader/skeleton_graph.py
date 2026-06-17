@@ -535,6 +535,7 @@ class SkeletonGraph(nx.Graph):
             Indication of whether to preserve radii of nodes or use default
             radius of 2μm. Default is False.
         """
+
         # Subroutines
         def write_entry(node, parent):
             """

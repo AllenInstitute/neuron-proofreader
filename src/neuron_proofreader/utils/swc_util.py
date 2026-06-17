@@ -202,7 +202,9 @@ class Reader:
         pbar = self.manual_progress_bar(len(zip_paths))
         with ProcessPoolExecutor() as executor:
             # Assign processes
-            futures = {executor.submit(read_fn, path) for path in zip_paths[0:500]}  # TEMP
+            futures = {
+                executor.submit(read_fn, path) for path in zip_paths[0:500]
+            }  # TEMP
 
             # Store results
             swc_dicts = deque()

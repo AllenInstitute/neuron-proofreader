@@ -176,7 +176,9 @@ class MergeDetector:
     ):
         self.save_sites(output_dir)
         if save_fragments:
-            self.dataset.graph.node_radius = 10 * np.maximum(self.node_preds, 0.1)
+            self.dataset.graph.node_radius = 10 * np.maximum(
+                self.node_preds, 0.1
+            )
             fragments_path = os.path.join(output_dir, "fragments.zip")
             self.dataset.to_zipped_swcs(fragments_path, use_radius=True)
 

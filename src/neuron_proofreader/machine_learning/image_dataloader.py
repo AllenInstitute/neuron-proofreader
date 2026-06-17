@@ -19,10 +19,10 @@ from neuron_proofreader.machine_learning.augmentation import (
 )
 from neuron_proofreader.utils import geometry_util, img_util, util
 
-
 # ----------------------------------------------------------------------------
 #  Image Class
 # ----------------------------------------------------------------------------
+
 
 class TensorStoreImage:
     """
@@ -100,6 +100,7 @@ class TensorStoreImage:
 #  PatchLoader Class
 # ----------------------------------------------------------------------------
 
+
 class PatchLoader(ABC):
     """
     A class for reading image patches and generating segment masks.
@@ -176,7 +177,7 @@ class PatchLoader(ABC):
 
         # Annotate mask
         mask = np.zeros(shape, dtype=np.float32)
-        #self.annotate_foreground(mask, nodes, offset, fill_val=0.5)  TEMP
+        # self.annotate_foreground(mask, nodes, offset, fill_val=0.5)  TEMP
         self.annotate_fragment(mask, subgraph, offset, fill_val=1)
         return mask
 
@@ -230,6 +231,7 @@ class PatchLoader(ABC):
 # ----------------------------------------------------------------------------
 #  PatchLoader Subclasses
 # ----------------------------------------------------------------------------
+
 
 class DetectionPatchLoader(PatchLoader):
 
