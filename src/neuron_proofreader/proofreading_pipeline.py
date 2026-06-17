@@ -146,7 +146,9 @@ class ProofreadPipeline:
 
     def connect_soma_fragments(self, max_dist=25):
         self.step_cnt += 1
-        self.log(f"\nStep {self.step_cnt}: Connect Soma Fragments with dist={max_dist}")
+        self.log(
+            f"\nStep {self.step_cnt}: Connect Soma Fragments with dist={max_dist}"
+        )
         summary = self.graph.connect_soma_fragments(max_dist=max_dist)
         self.log(summary)
 
@@ -173,7 +175,7 @@ class ProofreadPipeline:
         swc_util.write_points(
             zip_path, merge_sites, color=color, prefix="merge_site", radius=10
         )
-        
+
     # --- Helpers ---
     def log(self, txt):
         """

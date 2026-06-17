@@ -15,14 +15,10 @@ from queue import Queue
 from threading import Thread
 from torch.utils.data import IterableDataset
 
-import itertools
 import networkx as nx
 import numpy as np
 import torch
 
-from neuron_proofreader.machine_learning.point_cloud_models import (
-    subgraph_to_point_cloud,
-)
 from neuron_proofreader.machine_learning.image_dataloader import (
     DetectionBatchLoader,
     DetectionPatchLoader,
@@ -64,31 +60,33 @@ class SearchDataset(IterableDataset, ABC):
     def __iter__(self):
         patch_queue = Queue(maxsize=self.prefetch)
         sentinel = object()
-    
+
         def producer():
             sites = self._all_sites()
             with ThreadPoolExecutor(max_workers=self.prefetch) as executor:
                 futures = {}
-    
+
                 def fill():
                     while len(futures) < self.prefetch:
                         try:
                             site = next(sites)
-                            futures[executor.submit(self.patch_loader, site)] = site
+                            futures[
+                                executor.submit(self.patch_loader, site)
+                            ] = site
                         except StopIteration:
                             break
-    
+
                 fill()
                 while futures:
                     done, _ = wait(futures, return_when=FIRST_COMPLETED)
                     for f in done:
                         patch_queue.put((futures.pop(f), f.result()))
                     fill()
-    
+
             patch_queue.put(sentinel)
-    
+
         Thread(target=producer, daemon=True).start()
-    
+
         while True:
             item = patch_queue.get()
             if item is sentinel:
