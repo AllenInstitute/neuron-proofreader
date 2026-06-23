@@ -23,7 +23,7 @@ from neuron_proofreader.machine_learning.image_dataloader import (
     DetectionBatchLoader,
     DetectionPatchLoader,
 )
-from neuron_proofreader.utils import img_util, ml_util, util
+from neuron_proofreader.utils import img_util, util
 
 
 # --- Datasets ---

@@ -271,7 +271,7 @@ class INRDecoder(nn.Module):
 
         if self.mlp_type == "siren":
             # Raw scalar t concatenated with z — SIREN encodes frequency internally
-            t_exp = (t.unsqueeze(-1).unsqueeze(0).expand(B, -1, -1))
+            t_exp = t.unsqueeze(-1).unsqueeze(0).expand(B, -1, -1)
             z_exp = z.unsqueeze(1).expand(-1, n_segments, -1)
             x = torch.cat([z_exp, t_exp], dim=-1)
             out = self.mlp(x)
@@ -486,7 +486,9 @@ class CurveAutoencoder(nn.Module):
         z, encoder_tokens = self.encoder(diffs, mask)
         if mask is not None:
             valid_lengths = (~mask).sum(dim=1)  # (B,)
-            n_segments = (valid_lengths.min() // self.decoder.segment_len).item()
+            n_segments = (
+                valid_lengths.min() // self.decoder.segment_len
+            ).item()
         else:
             n_segments = diffs.shape[1] // self.decoder.segment_len
         reconstruction = self.decoder(z, n_segments=n_segments)
