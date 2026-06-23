@@ -245,14 +245,14 @@ def remove_doubles(graph, max_cable_length):
 def is_double(graph, nodes):
     """
     Determines if the connected component corresponding to "nodes" is a double
-    another connected component.
+    of another connected component.
 
     Paramters
     ---------
     graph : SkeletonGraph
         Graph to be searched.
     nodes : List[int]
-        Nodes that correspond to a single connected component.
+        Nodes corresponding to a single connected component.
 
     Returns
     -------
