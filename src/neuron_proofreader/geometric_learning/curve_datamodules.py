@@ -28,11 +28,13 @@ class PathsDataset(Dataset):
         swcs_path,
         graph_config=None,
         max_length=np.inf,
+        segment_len=10,
         transform=None,
     ):
         # Instance attributes
         self.brain_id = brain_id
         self.max_length = max_length
+        self.segment_len = segment_len
         self.transform = transform
 
         # Core data structures
@@ -53,7 +55,8 @@ class PathsDataset(Dataset):
     def get_valid_paths(self):
         paths = list()
         for p in self.irreducible_paths():
-            if self.path_length(p) < self.max_length:
+            length = self.path_length(p)
+            if length < self.max_length and len(p) > self.segment_len:
                 paths.append(p)
         return paths
 

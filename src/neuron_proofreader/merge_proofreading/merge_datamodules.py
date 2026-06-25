@@ -442,7 +442,7 @@ class ThreadedDataLoader(DataLoader):
 
         # Split into batches upfront
         batch_idx_groups = [
-            idxs[start: min(start + self.batch_size, len(idxs))]
+            idxs[start : min(start + self.batch_size, len(idxs))]
             for start in range(0, len(idxs), self.batch_size)
         ]
 

@@ -271,13 +271,9 @@ class INRDecoder(nn.Module):
 
         if self.mlp_type == "siren":
             # Raw scalar t concatenated with z — SIREN encodes frequency internally
-            t_exp = (
-                t.unsqueeze(-1).unsqueeze(0).expand(B, -1, -1)
-            )  # (B, n_seg, 1)
-            z_exp = z.unsqueeze(1).expand(
-                -1, n_segments, -1
-            )  # (B, n_seg, latent_dim)
-            x = torch.cat([z_exp, t_exp], dim=-1)  # (B, n_seg, latent_dim+1)
+            t_exp = t.unsqueeze(-1).unsqueeze(0).expand(B, -1, -1)
+            z_exp = z.unsqueeze(1).expand(-1, n_segments, -1)
+            x = torch.cat([z_exp, t_exp], dim=-1)
             out = self.mlp(x)
 
         elif self.mlp_type == "residual":
@@ -414,19 +410,19 @@ class AutoregressiveINRDecoder(nn.Module):
         outputs = []
         T_prev = torch.zeros(B, d_seg, device=z.device)  # T_{-1}: start token
         for s in range(n_segments):
-            pe_s = pe[s].unsqueeze(0).expand(B, -1)  # (B, 2*n_freq)
+            # Create GRU input
+            pe_s = pe[s].unsqueeze(0).expand(B, -1)
+            x_s = torch.cat([T_prev, pe_s, z], dim=-1).unsqueeze(1)
 
-            # Concatenate T_{i-1}, pe(t_i), and z at every step
-            x_s = torch.cat([T_prev, pe_s, z], dim=-1).unsqueeze(
-                1
-            )  # (B, 1, d_input)
-            out, h = self.gru(x_s, h)  # (B, 1, d_hidden)
-            T_i = self.output_proj(out.squeeze(1))  # (B, d_seg)
+            # Predict next token and update hidden state
+            out, h = self.gru(x_s, h)
+            T_i = self.output_proj(out.squeeze(1))
 
+            # Update previous token
             outputs.append(T_i)
             T_prev = T_i
 
-        out = torch.stack(outputs, dim=1)  # (B, n_segments, d_seg)
+        out = torch.stack(outputs, dim=1)
         return out.reshape(B, n_segments * self.segment_len, 3)
 
 
@@ -473,12 +469,12 @@ class CurveAutoencoder(nn.Module):
         )
         self.decoder = decoder
 
-    def forward(self, offsets, token_mask):
+    def forward(self, diffs, mask=None):
         """
         Parameters
         ----------
-        offsets : torch.Tensor
-            Shape (B, N, 3), normalized to the unit sphere, offsets[:, 0] == 0.
+        diffs : torch.Tensor
+            Shape (B, N, 3), normalized to the unit sphere, diffs[:, 0] == 0.
 
         Returns
         -------
@@ -487,13 +483,19 @@ class CurveAutoencoder(nn.Module):
         z : torch.Tensor
             Latent vector of shape (B, latent_dim).
         """
-        z, encoder_tokens = self.encoder(offsets, token_mask)
-        n_segments = offsets.shape[1] // self.decoder.segment_len
+        z, encoder_tokens = self.encoder(diffs, mask)
+        if mask is not None:
+            valid_lengths = (~mask).sum(dim=1)  # (B,)
+            n_segments = (
+                valid_lengths.min() // self.decoder.segment_len
+            ).item()
+        else:
+            n_segments = diffs.shape[1] // self.decoder.segment_len
         reconstruction = self.decoder(z, n_segments=n_segments)
         return reconstruction, z
 
-    def encode(self, offsets):
-        z, _ = self.encoder(offsets)
+    def encode(self, diffs):
+        z, _ = self.encoder(diffs)
         return z
 
     # --- Helpers ---

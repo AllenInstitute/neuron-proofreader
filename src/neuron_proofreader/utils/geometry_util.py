@@ -16,9 +16,28 @@ from tqdm import tqdm
 
 import networkx as nx
 import numpy as np
+import torch
 
 
 # --- Curve Utils ---
+def compute_length(curve):
+    """
+    Computes the Euclidean length of the given curve.
+
+    Parameters
+    ----------
+    curve : numpy.ndarray
+        Array of points that form an n-d curve.
+
+    Returns
+    -------
+    float
+        Euclidean length of the given curve.
+    """
+    diffs = curve[1:] - curve[:-1]
+    return np.linalg.norm(diffs**2, axis=1).sum()
+
+
 def fit_spline_1d(pts, k=3, s=None):
     """
     Fits a spline to 1D curve.
@@ -142,6 +161,42 @@ def resample_curve_3d(pts, n_pts=None, s=None):
     return pts
 
 
+def reconstruct_diffs(diffs):
+    """
+    Reconstructs a curve from a sequence of offset vectors.
+
+    Parameters
+    ----------
+    diffs : numpy.ndarray or torch.Tensor
+        Array representing the differences between consecutive points.
+
+    Returns
+    -------
+    numpy.ndarray
+        Reconstructed curve.
+    """
+    if isinstance(diffs, torch.Tensor):
+        start = torch.zeros(1, 3, device=diffs.device, dtype=diffs.dtype)
+        return torch.cat([start, start + torch.cumsum(diffs, dim=0)], dim=0)
+    else:
+        start = np.zeros((1, 3))
+        return np.concatenate(
+            [start, start + np.cumsum(diffs, axis=0)], axis=0
+        )
+
+
+def rmse(curve1, curve2):
+    """
+    Computes Root Mean Squared Error (RMSE) between two curves.
+
+    Parameters
+    ----------
+    curve1 : numpy.ndarray
+
+    """
+    return np.sqrt(np.mean(np.sum((curve1 - curve2) ** 2, axis=1)))
+
+
 # --- Fragment Filtering ---
 def remove_doubles(graph, max_cable_length):
     """
@@ -190,14 +245,14 @@ def remove_doubles(graph, max_cable_length):
 def is_double(graph, nodes):
     """
     Determines if the connected component corresponding to "nodes" is a double
-    another connected component.
+    of another connected component.
 
     Paramters
     ---------
     graph : SkeletonGraph
         Graph to be searched.
     nodes : List[int]
-        Nodes that correspond to a single connected component.
+        Nodes corresponding to a single connected component.
 
     Returns
     -------
