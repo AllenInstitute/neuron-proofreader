@@ -111,8 +111,11 @@ def plot_latents_by_pca(curves, latents, output_path=None):
     lengths = np.array([geometry_util.compute_length(c) for c in curves])
 
     # Visualize results
-    _plot_latents_by_direction(curves, latents_2d, pca, output_path)
-    _plot_latents_by_length(lengths, latents_2d, pca, output_path)
+    dir_output_path = output_path.replace("pca", "pca_direction")
+    _plot_latents_by_direction(curves, latents_2d, pca, dir_output_path)
+
+    len_output_path = output_path.replace("pca", "pca_length")
+    _plot_latents_by_length(lengths, latents_2d, pca, len_output_path)
 
 
 def _plot_latents_by_direction(curves, latents_2d, pca, output_path=None):
