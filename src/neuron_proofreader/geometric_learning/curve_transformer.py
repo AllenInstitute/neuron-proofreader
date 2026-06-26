@@ -15,6 +15,74 @@ import torch.nn as nn
 from neuron_proofreader.utils import util
 
 
+class NewCurveEncoder(nn.Module):
+    def __init__(
+        self,
+        segment_len=10,
+        d_token=64,
+        n_heads=4,
+        n_layers=4,
+        d_ff=64,
+        latent_dim=32,
+        dropout=0.1,
+    ):
+        super().__init__()
+
+        self.segment_len = segment_len
+        self.cls_token = nn.Parameter(torch.randn(1, 1, d_token))
+        self.end_token_proj = nn.Linear(3, d_token)
+        self.segment_proj = nn.Linear(segment_len * 3, d_token)
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_token,
+            nhead=n_heads,
+            dim_feedforward=d_ff,
+            dropout=dropout,
+            batch_first=True,
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
+        self.to_latent = nn.Sequential(
+            nn.LayerNorm(d_token),
+            nn.Linear(d_token, latent_dim),
+        )
+
+    def forward(self, offsets, mask=None):
+        B, N, _ = offsets.shape
+        n_segments = N // self.segment_len
+
+        # CLS, end, and segment tokens
+        cls_tok = self.cls_token.expand(B, -1, -1) # (B, 1, d_token)
+        end_tok = self.end_token_proj(offsets[:, -1, :]).unsqueeze(1) # (B, 1, d_token)
+        segments = offsets[:, :n_segments * self.segment_len, :]
+        seg_tokens = self.segment_proj(segments.reshape(B, n_segments, self.segment_len * 3))
+
+        # Concatenate: [CLS | segments | end]
+        tokens = torch.cat([cls_tok, seg_tokens, end_tok], dim=1) # (B, n_seg+2, d_token)
+
+        # Token-level mask — CLS is always unmasked
+        token_mask = None
+        if mask is not None:
+            seg_mask = mask[:, ::self.segment_len][:, :n_segments] # (B, n_seg)
+            token_mask = torch.cat([
+                torch.zeros(B, 1, dtype=torch.bool, device=mask.device), # CLS
+                seg_mask,
+                torch.zeros(B, 1, dtype=torch.bool, device=mask.device), # end
+            ], dim=1)
+
+        # Sinusoidal positional encoding — skip CLS (position 0 reserved)
+        pe = sinusoidal_encoding(tokens.shape[1], tokens.shape[2], tokens.device)
+        pe[:, 0, :] = 0.0
+        if token_mask is not None:
+            pe = pe * (~token_mask).unsqueeze(-1).float()
+        tokens = tokens + pe
+
+        tokens = self.transformer(tokens, src_key_padding_mask=token_mask)
+
+        # Aggregate via CLS token only
+        z = self.to_latent(tokens[:, 0, :])
+        return z, tokens
+
+
 class CurveEncoder(nn.Module):
     """
     Transformer encoder that maps a 3D space curve, normalized to the unit
@@ -342,9 +410,6 @@ class AutoregressiveINRDecoder(nn.Module):
         self.latent_proj = nn.Linear(latent_dim, d_hidden)
 
         # Input at each step: [T_{i-1} | pe(t_i) | z]
-        # Including z directly at every step (alongside the hidden state) lets
-        # the model re-attend to the global code at each position, rather than
-        # relying purely on it surviving through the hidden state
         d_input = d_seg + 2 * n_frequencies + latent_dim
         self.gru = nn.GRU(
             input_size=d_input,
@@ -458,7 +523,7 @@ class CurveAutoencoder(nn.Module):
         }
 
         # Architecture
-        self.encoder = CurveEncoder(
+        self.encoder = NewCurveEncoder(
             segment_len=segment_len,
             d_token=d_token,
             n_heads=n_heads,
