@@ -160,7 +160,7 @@ class CurveEncoder(nn.Module):
         z : torch.Tensor
             Latent vector of shape (B, latent_dim).
         tokens : torch.Tensor
-            Per-token encodings of shape (B, n_segments + 2, d_token).
+            Per-token encodings of shape (B, n_segments + 1, d_token).
         """
         B, N, _ = offsets.shape
         n_segments = N // self.segment_len
