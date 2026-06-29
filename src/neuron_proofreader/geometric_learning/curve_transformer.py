@@ -16,13 +16,14 @@ from neuron_proofreader.utils import util
 
 
 class NewCurveEncoder(nn.Module):
+
     def __init__(
         self,
         segment_len=10,
-        d_token=64,
+        d_token=128,
         n_heads=4,
         n_layers=4,
-        d_ff=64,
+        d_ff=256,
         latent_dim=32,
         dropout=0.1,
     ):
@@ -30,7 +31,6 @@ class NewCurveEncoder(nn.Module):
 
         self.segment_len = segment_len
         self.cls_token = nn.Parameter(torch.randn(1, 1, d_token))
-        self.end_token_proj = nn.Linear(3, d_token)
         self.segment_proj = nn.Linear(segment_len * 3, d_token)
 
         encoder_layer = nn.TransformerEncoderLayer(
@@ -50,23 +50,23 @@ class NewCurveEncoder(nn.Module):
         B, N, _ = offsets.shape
         n_segments = N // self.segment_len
 
-        # CLS, end, and segment tokens
-        cls_tok = self.cls_token.expand(B, -1, -1) # (B, 1, d_token)
-        end_tok = self.end_token_proj(offsets[:, -1, :]).unsqueeze(1) # (B, 1, d_token)
+        # CLS and segment tokens
+        cls_token = self.cls_token.expand(B, -1, -1)
         segments = offsets[:, :n_segments * self.segment_len, :]
-        seg_tokens = self.segment_proj(segments.reshape(B, n_segments, self.segment_len * 3))
+        seg_tokens = self.segment_proj(
+            segments.reshape(B, n_segments, self.segment_len * 3)
+        )
 
         # Concatenate: [CLS | segments | end]
-        tokens = torch.cat([cls_tok, seg_tokens, end_tok], dim=1) # (B, n_seg+2, d_token)
+        tokens = torch.cat([cls_token, seg_tokens], dim=1)
 
         # Token-level mask — CLS is always unmasked
         token_mask = None
         if mask is not None:
-            seg_mask = mask[:, ::self.segment_len][:, :n_segments] # (B, n_seg)
+            seg_mask = mask[:, ::self.segment_len][:, :n_segments]
             token_mask = torch.cat([
-                torch.zeros(B, 1, dtype=torch.bool, device=mask.device), # CLS
+                torch.zeros(B, 1, dtype=torch.bool, device=mask.device),
                 seg_mask,
-                torch.zeros(B, 1, dtype=torch.bool, device=mask.device), # end
             ], dim=1)
 
         # Sinusoidal positional encoding — skip CLS (position 0 reserved)
@@ -85,21 +85,20 @@ class NewCurveEncoder(nn.Module):
 
 class CurveEncoder(nn.Module):
     """
-    Transformer encoder that maps a 3D space curve, normalized to the unit
-    sphere, to a fixed-size latent vector. The curve is tokenized into fixed-
-    length segments with a fixed learned token for the start point at the
-    origin and a projected token for the end point. Positional encodings are
-    sinusoidal over the normalized arc position [0, 1], making the encoder
-    robust to varying numbers of points and path lengths.
+    Transformer encoder that maps a 3D first order finite differences, to a
+    fixed-size latent vector. The curve is tokenized into fixed-length
+    segments with a class token. Positional encodings are sinusoidal over the
+    normalized arc position [0, 1], making the encoder robust to varying
+    numbers of points and path lengths.
     """
 
     def __init__(
         self,
         segment_len=10,
-        d_token=64,
+        d_token=128,
         n_heads=4,
         n_layers=4,
-        d_ff=64,
+        d_ff=256,
         latent_dim=32,
         dropout=0.1,
     ):
@@ -109,7 +108,7 @@ class CurveEncoder(nn.Module):
         segment_len : int
             Number of points per segment token.
         d_token : int
-            Dimension of each token.
+            Token dimension.
         n_heads : int
             Number of attention heads.
         n_layers : int
@@ -161,14 +160,14 @@ class CurveEncoder(nn.Module):
         z : torch.Tensor
             Latent vector of shape (B, latent_dim).
         tokens : torch.Tensor
-            Per-token encodings of shape (B, n_segments + 2, d_token).
+            Per-token encodings of shape (B, n_segments + 1, d_token).
         """
         B, N, _ = offsets.shape
         n_segments = N // self.segment_len
 
         # Start and end tokens
         start_tok = self.start_token.expand(B, -1, -1)  # (B, 1, d_token)
-        end_tok = self.end_token_proj(offsets[:, -1, :]).unsqueeze(
+        end_token = self.end_token_proj(offsets[:, -1, :]).unsqueeze(
             1
         )  # (B, 1, d_token)
 
@@ -179,7 +178,7 @@ class CurveEncoder(nn.Module):
 
         # Concatenate: [start | segments | end]
         tokens = torch.cat(
-            [start_tok, seg_tokens, end_tok], dim=1
+            [start_tok, seg_tokens, end_token], dim=1
         )  # (B, n_seg+2, d_token)
 
         # Convert point-level mask to token-level mask
@@ -195,7 +194,7 @@ class CurveEncoder(nn.Module):
                     torch.zeros(B, 1, dtype=torch.bool, device=mask.device),
                 ],
                 dim=1,
-            )  # (B, n_seg+2)
+            )
 
         # Sinusoidal positional encoding, zeroed out for padding tokens
         pe = sinusoidal_encoding(
@@ -237,6 +236,7 @@ class AutoregressiveINRDecoder(nn.Module):
         n_layers=4,
         n_frequencies=16,
         dropout=0.1,
+        use_fourier=False
     ):
         """
         Parameters
@@ -254,16 +254,21 @@ class AutoregressiveINRDecoder(nn.Module):
         dropout : float
             Dropout probability.
         """
+        # Call parent class
         super().__init__()
+
+        # Instance attributes
         self.segment_len = segment_len
         self.n_frequencies = n_frequencies
+        self.use_fourier = use_fourier
         d_seg = segment_len * 3
 
         # Seed the GRU hidden state from z
         self.latent_proj = nn.Linear(latent_dim, d_hidden)
 
         # Input at each step: [T_{i-1} | pe(t_i) | z]
-        d_input = d_seg + 2 * n_frequencies + latent_dim
+        d_pe = 1 if not use_fourier else 2 * n_frequencies
+        d_input = d_seg + d_pe + latent_dim
         self.gru = nn.GRU(
             input_size=d_input,
             hidden_size=d_hidden,
@@ -278,18 +283,22 @@ class AutoregressiveINRDecoder(nn.Module):
 
     def positional_encoding(self, t):
         """
-        Fourier positional encoding for scalar arc positions.
-
+        Encodes scalar arc positions as either raw arc length or Fourier features.
+    
         Parameters
         ----------
         t : torch.Tensor
             Arc positions of shape (n_segments,) in [0, 1].
-
+    
         Returns
         -------
         torch.Tensor
-            Shape (n_segments, 2 * n_frequencies).
+            Shape (n_segments, 1) if use_fourier=False,
+            else (n_segments, 2 * n_frequencies).
         """
+        if not self.use_fourier:
+            return t.unsqueeze(-1)
+
         freqs = 2 ** torch.arange(self.n_frequencies, device=t.device).float()
         x = t.unsqueeze(-1) * freqs * torch.pi
         return torch.cat([torch.sin(x), torch.cos(x)], dim=-1)
@@ -306,7 +315,7 @@ class AutoregressiveINRDecoder(nn.Module):
         Returns
         -------
         torch.Tensor
-            Reconstructed offset sequence of shape (B, n_segments * segment_len, 3).
+            Reconstructed differences sequence.
         """
         B = z.shape[0]
         n_segments = n_segments or 10
@@ -326,7 +335,7 @@ class AutoregressiveINRDecoder(nn.Module):
 
         # Autoregressive loop
         outputs = []
-        T_prev = torch.zeros(B, d_seg, device=z.device)  # T_{-1}: start token
+        T_prev = torch.zeros(B, d_seg, device=z.device)
         for s in range(n_segments):
             # Create GRU input
             pe_s = pe[s].unsqueeze(0).expand(B, -1)
@@ -348,14 +357,11 @@ class CurveAutoencoder(nn.Module):
 
     def __init__(
         self,
-        decoder,
-        decoder_name=None,
-        n_points=100,
         segment_len=10,
-        d_token=64,
+        d_token=128,
         n_heads=4,
         n_layers=4,
-        d_ff=64,
+        d_ff=256,
         latent_dim=32,
         dropout=0.1,
     ):
@@ -364,8 +370,6 @@ class CurveAutoencoder(nn.Module):
 
         # Config
         self.config = {
-            "decoder_name": decoder_name,
-            "n_points": n_points,
             "segment_len": segment_len,
             "d_token": d_token,
             "n_heads": n_heads,
@@ -385,7 +389,14 @@ class CurveAutoencoder(nn.Module):
             latent_dim=latent_dim,
             dropout=dropout,
         )
-        self.decoder = decoder
+        self.decoder = AutoregressiveINRDecoder(
+            segment_len=segment_len,
+            latent_dim=latent_dim,
+            d_hidden=256,
+            n_layers=4,
+            n_frequencies=16,
+            dropout=dropout,
+        )
 
     def forward(self, diffs, mask=None):
         """
@@ -402,15 +413,9 @@ class CurveAutoencoder(nn.Module):
             Latent vector of shape (B, latent_dim).
         """
         z, encoder_tokens = self.encoder(diffs, mask)
-        if mask is not None:
-            valid_lengths = (~mask).sum(dim=1)  # (B,)
-            n_segments = (
-                valid_lengths.min() // self.decoder.segment_len
-            ).item()
-        else:
-            n_segments = diffs.shape[1] // self.decoder.segment_len
-        reconstruction = self.decoder(z, n_segments=n_segments)
-        return reconstruction, z
+        n_segments = diffs.shape[1] // self.decoder.segment_len
+        recon = self.decoder(z, n_segments=n_segments)
+        return recon, z
 
     def encode(self, diffs):
         z, _ = self.encoder(diffs)
@@ -436,9 +441,9 @@ def sinusoidal_encoding(n_tokens, d_token, device):
     Parameters
     ----------
     n_tokens : int
-        Number of tokens (segments + 2 endpoint tokens).
+        Number of tokens.
     d_token : int
-        Model dimension.
+        Token dimension.
     device : torch.device
         Device to create the encoding on.
 
