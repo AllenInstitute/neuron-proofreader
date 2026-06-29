@@ -15,7 +15,14 @@ import torch.nn as nn
 from neuron_proofreader.utils import util
 
 
-class NewCurveEncoder(nn.Module):
+class CurveEncoder(nn.Module):
+    """
+    Transformer encoder that maps a 3D first order finite differences, to a
+    latent vector. The curve is tokenized into fixed-length segments with a
+    class token. Positional encodings are sinusoidal over the normalized arc
+    position [0, 1], making the encoder robust to varying numbers of points
+    and path lengths.
+    """
 
     def __init__(
         self,
@@ -24,15 +31,38 @@ class NewCurveEncoder(nn.Module):
         n_heads=4,
         n_layers=4,
         d_ff=256,
-        latent_dim=32,
+        latent_dim=64,
         dropout=0.1,
     ):
+        """
+        Instantiates a CurveEncoder object.
+
+        Parameters
+        ----------
+        segment_len : int, optional
+            Number of points per segment token. Default is 10.
+        d_token : int, optional
+            Token dimension. Default is 128.
+        n_heads : int, optional
+            Number of attention heads. Default is 4.
+        n_layers : int, optional
+            Number of transformer encoder layers. Default is 4.
+        d_ff : int, optional
+            Feed-forward hidden dimension. Default is 256.
+        latent_dim : int, optional
+            Dimension of the output latent vector. Default is 64.
+        dropout : float, optional
+            Dropout probability. Default is 0.1.
+        """
+        # Call parent class
         super().__init__()
 
+        # Instance attributes
         self.segment_len = segment_len
         self.cls_token = nn.Parameter(torch.randn(1, 1, d_token))
         self.segment_proj = nn.Linear(segment_len * 3, d_token)
 
+        # Architecture
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_token,
             nhead=n_heads,
@@ -40,19 +70,37 @@ class NewCurveEncoder(nn.Module):
             dropout=dropout,
             batch_first=True,
         )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
+        self.transformer = nn.TransformerEncoder(
+            encoder_layer, num_layers=n_layers
+        )
         self.to_latent = nn.Sequential(
             nn.LayerNorm(d_token),
             nn.Linear(d_token, latent_dim),
         )
 
-    def forward(self, offsets, mask=None):
-        B, N, _ = offsets.shape
+    def forward(self, diffs, mask=None):
+        """
+        Parameters
+        ----------
+        diffs : torch.Tensor
+            Shape (B, N, 3), normalized to the unit sphere, with
+            diffs[:, 0] == [0, 0, 0]. N can vary across calls.
+        mask : torch.Tensor, optional
+            True where padding (to be ignored). Default is None.
+
+        Returns
+        -------
+        z : torch.Tensor
+            Latent vector of shape (B, latent_dim).
+        tokens : torch.Tensor
+            Per-token encodings of shape (B, n_segments + 1, d_token).
+        """
+        B, N, _ = diffs.shape
         n_segments = N // self.segment_len
 
         # CLS and segment tokens
         cls_token = self.cls_token.expand(B, -1, -1)
-        segments = offsets[:, :n_segments * self.segment_len, :]
+        segments = diffs[:, :n_segments * self.segment_len, :]
         seg_tokens = self.segment_proj(
             segments.reshape(B, n_segments, self.segment_len * 3)
         )
@@ -83,144 +131,11 @@ class NewCurveEncoder(nn.Module):
         return z, tokens
 
 
-class CurveEncoder(nn.Module):
-    """
-    Transformer encoder that maps a 3D first order finite differences, to a
-    fixed-size latent vector. The curve is tokenized into fixed-length
-    segments with a class token. Positional encodings are sinusoidal over the
-    normalized arc position [0, 1], making the encoder robust to varying
-    numbers of points and path lengths.
-    """
-
-    def __init__(
-        self,
-        segment_len=10,
-        d_token=128,
-        n_heads=4,
-        n_layers=4,
-        d_ff=256,
-        latent_dim=32,
-        dropout=0.1,
-    ):
-        """
-        Parameters
-        ----------
-        segment_len : int
-            Number of points per segment token.
-        d_token : int
-            Token dimension.
-        n_heads : int
-            Number of attention heads.
-        n_layers : int
-            Number of transformer encoder layers.
-        d_ff : int
-            Feed-forward hidden dimension.
-        latent_dim : int
-            Dimension of the output latent vector.
-        dropout : float
-            Dropout probability.
-        """
-        # Call parent class
-        super().__init__()
-
-        # Instance attributes
-        self.segment_len = segment_len
-        self.start_token = nn.Parameter(torch.randn(1, 1, d_token))
-        self.end_token_proj = nn.Linear(3, d_token)
-        self.segment_proj = nn.Linear(segment_len * 3, d_token)
-
-        # Archictecture
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=d_token,
-            nhead=n_heads,
-            dim_feedforward=d_ff,
-            dropout=dropout,
-            batch_first=True,
-        )
-        self.transformer = nn.TransformerEncoder(
-            encoder_layer, num_layers=n_layers
-        )
-        self.to_latent = nn.Sequential(
-            nn.LayerNorm(d_token),
-            nn.Linear(d_token, latent_dim),
-        )
-
-    def forward(self, offsets, mask=None):
-        """
-        Parameters
-        ----------
-        offsets : torch.Tensor
-            Shape (B, N, 3), normalized to the unit sphere, with
-            offsets[:, 0] == [0, 0, 0]. N can vary across calls.
-        mask : torch.Tensor, optional
-            Shape (B, N), True where padding (to be ignored). Default is None.
-
-        Returns
-        -------
-        z : torch.Tensor
-            Latent vector of shape (B, latent_dim).
-        tokens : torch.Tensor
-            Per-token encodings of shape (B, n_segments + 1, d_token).
-        """
-        B, N, _ = offsets.shape
-        n_segments = N // self.segment_len
-
-        # Start and end tokens
-        start_tok = self.start_token.expand(B, -1, -1)  # (B, 1, d_token)
-        end_token = self.end_token_proj(offsets[:, -1, :]).unsqueeze(
-            1
-        )  # (B, 1, d_token)
-
-        # Segment tokens
-        segments = offsets[:, : n_segments * self.segment_len, :]
-        segments = segments.reshape(B, n_segments, self.segment_len * 3)
-        seg_tokens = self.segment_proj(segments)  # (B, n_seg, d_token)
-
-        # Concatenate: [start | segments | end]
-        tokens = torch.cat(
-            [start_tok, seg_tokens, end_token], dim=1
-        )  # (B, n_seg+2, d_token)
-
-        # Convert point-level mask to token-level mask
-        token_mask = None
-        if mask is not None:
-            seg_mask = mask[:, :: self.segment_len][
-                :, :n_segments
-            ]  # (B, n_seg)
-            token_mask = torch.cat(
-                [
-                    torch.zeros(B, 1, dtype=torch.bool, device=mask.device),
-                    seg_mask,
-                    torch.zeros(B, 1, dtype=torch.bool, device=mask.device),
-                ],
-                dim=1,
-            )
-
-        # Sinusoidal positional encoding, zeroed out for padding tokens
-        pe = sinusoidal_encoding(
-            tokens.shape[1], tokens.shape[2], tokens.device
-        )
-        if token_mask is not None:
-            pe = pe * (~token_mask).unsqueeze(-1).float()
-        tokens = tokens + pe
-
-        tokens = self.transformer(tokens, src_key_padding_mask=token_mask)
-
-        # Mean pool over non-padding tokens only
-        if token_mask is not None:
-            valid = (~token_mask).unsqueeze(-1).float()
-            z = self.to_latent((tokens * valid).sum(dim=1) / valid.sum(dim=1))
-        else:
-            z = self.to_latent(tokens.mean(dim=1))
-
-        return z, tokens
-
-
 class AutoregressiveINRDecoder(nn.Module):
     """
     Autoregressive implicit neural representation decoder. At each step,
-    predicts the i-th segment's offsets conditioned on the global latent z,
-    the arc position t_i, and the previous segment's predicted offsets T_{i-1}.
+    predicts the i-th segment's differences conditioned on the global latent
+    z, arc position t_i, and previous segment's predicted diffs T_{i-1}.
 
         T_i = F(z, t_i | T_{i-1})
 
@@ -236,7 +151,6 @@ class AutoregressiveINRDecoder(nn.Module):
         n_layers=4,
         n_frequencies=16,
         dropout=0.1,
-        use_fourier=False
     ):
         """
         Parameters
@@ -260,15 +174,13 @@ class AutoregressiveINRDecoder(nn.Module):
         # Instance attributes
         self.segment_len = segment_len
         self.n_frequencies = n_frequencies
-        self.use_fourier = use_fourier
         d_seg = segment_len * 3
 
         # Seed the GRU hidden state from z
         self.latent_proj = nn.Linear(latent_dim, d_hidden)
 
         # Input at each step: [T_{i-1} | pe(t_i) | z]
-        d_pe = 1 if not use_fourier else 2 * n_frequencies
-        d_input = d_seg + d_pe + latent_dim
+        d_input = d_seg + 1 + latent_dim
         self.gru = nn.GRU(
             input_size=d_input,
             hidden_size=d_hidden,
@@ -280,28 +192,6 @@ class AutoregressiveINRDecoder(nn.Module):
             nn.LayerNorm(d_hidden),
             nn.Linear(d_hidden, d_seg),
         )
-
-    def positional_encoding(self, t):
-        """
-        Encodes scalar arc positions as either raw arc length or Fourier features.
-    
-        Parameters
-        ----------
-        t : torch.Tensor
-            Arc positions of shape (n_segments,) in [0, 1].
-    
-        Returns
-        -------
-        torch.Tensor
-            Shape (n_segments, 1) if use_fourier=False,
-            else (n_segments, 2 * n_frequencies).
-        """
-        if not self.use_fourier:
-            return t.unsqueeze(-1)
-
-        freqs = 2 ** torch.arange(self.n_frequencies, device=t.device).float()
-        x = t.unsqueeze(-1) * freqs * torch.pi
-        return torch.cat([torch.sin(x), torch.cos(x)], dim=-1)
 
     def forward(self, z, n_segments=None):
         """
@@ -315,7 +205,7 @@ class AutoregressiveINRDecoder(nn.Module):
         Returns
         -------
         torch.Tensor
-            Reconstructed differences sequence.
+            Predicted finite differences.
         """
         B = z.shape[0]
         n_segments = n_segments or 10
@@ -331,7 +221,7 @@ class AutoregressiveINRDecoder(nn.Module):
 
         # Arc positions and Fourier encodings: (n_segments, 2 * n_freq)
         t = torch.linspace(0, 1, n_segments, device=z.device)
-        pe = self.positional_encoding(t)
+        pe = t.unsqueeze(-1)
 
         # Autoregressive loop
         outputs = []
@@ -380,7 +270,7 @@ class CurveAutoencoder(nn.Module):
         }
 
         # Architecture
-        self.encoder = NewCurveEncoder(
+        self.encoder = CurveEncoder(
             segment_len=segment_len,
             d_token=d_token,
             n_heads=n_heads,
