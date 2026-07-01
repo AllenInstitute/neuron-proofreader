@@ -299,8 +299,9 @@ class SkeletonGraph(nx.Graph):
         Removes branching points along paths that connect multiple somas.
         """
         # Check whether to exit
+        merge_sites = list()
         if len(self.soma_centroids) == 0:
-            return ""
+            return merge_sites, ""
 
         # Extract soma info
         component_id_to_soma_nodes = defaultdict(set)
@@ -309,7 +310,6 @@ class SkeletonGraph(nx.Graph):
             component_id_to_soma_nodes[self.node_component_id[i]].add(i)
 
         # Check for connected components with multiple soma nodes
-        merge_sites = list()
         n_soma_merges = 0
         for component_id, soma_nodes in component_id_to_soma_nodes.items():
             if len(soma_nodes) > 1 and len(soma_nodes) < 20:
