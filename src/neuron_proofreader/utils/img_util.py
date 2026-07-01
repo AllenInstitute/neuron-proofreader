@@ -94,7 +94,7 @@ def plot_image_and_segmentation_mips(img, segmentation, output_path=None):
     plt.close(fig)
 
 
-def plot_mips(img, vmax=None):
+def plot_mips(img, vmax=None, output_path=None):
     """
     Plots the Maximum Intensity Projections (MIPs) of a 3D image along the XY,
     XZ, and YZ axes.
@@ -107,6 +107,7 @@ def plot_mips(img, vmax=None):
         Brightness intensity used as upper limit of the colormap. Default is
         None.
     """
+    # Generate plot
     vmax = vmax or np.percentile(img, 99.9)
     fig, axs = plt.subplots(1, 3, figsize=(10, 4))
     axs_names = ["XY", "XZ", "YZ"]
@@ -116,8 +117,13 @@ def plot_mips(img, vmax=None):
         axs[i].set_title(axs_names[i], fontsize=16)
         axs[i].set_xticks([])
         axs[i].set_yticks([])
+
+    # Display result
     plt.tight_layout()
-    plt.show()
+    if output_path:
+        plt.savefig(output_path, dpi=300, bbox_inches="tight")
+    else:
+        plt.show()
 
 
 def plot_segmentation_mips(segmentation):

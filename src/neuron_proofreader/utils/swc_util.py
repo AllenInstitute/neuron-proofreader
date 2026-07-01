@@ -203,8 +203,8 @@ class Reader:
         with ProcessPoolExecutor() as executor:
             # Assign processes
             futures = {
-                executor.submit(read_fn, path) for path in zip_paths[0:500]
-            }  # TEMP
+                executor.submit(read_fn, path) for path in zip_paths
+            }
 
             # Store results
             swc_dicts = deque()

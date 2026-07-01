@@ -1221,13 +1221,11 @@ class SkeletonGraph(nx.Graph):
         n_components = format(nx.number_connected_components(self), ",")
         n_nodes = format(self.number_of_nodes(), ",")
         n_edges = format(self.number_of_edges(), ",")
-        memory = util.get_memory_usage()
         return (
             f"   SkeletonGraph(\n"
             f"      num_connected_components={n_components},\n"
             f"      num_nodes={n_nodes},\n"
             f"      num_edges={n_edges},\n"
-            f"      memory={memory:.2f} GBs,\n"
             f"   )"
         )
 
