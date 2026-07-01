@@ -15,7 +15,7 @@ from typing import Tuple
 
 import os
 
-from neuron_proofreader.machine_learning.augmentation import ImageTransforms
+from neuron_proofreader.machine_learning.image_augmentation import ImageTransforms
 from neuron_proofreader.utils import util
 
 
