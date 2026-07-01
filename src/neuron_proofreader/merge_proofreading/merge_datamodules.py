@@ -621,6 +621,7 @@ def create_dataset_collection(
         rebalance_classes = True
     else:
         img_config.set_val_mode()
+        random_nonmerge_site_prob = 0
         rebalance_classes = False
 
     # Load image prefixes
@@ -645,7 +646,6 @@ def create_dataset_collection(
         print(f"   \nBrain ID [{i}/{len(brain_ids)}]: {brain_id}")
         dataset = BrainDataset(
             brain_id,
-            img_path,
             sites_path,
             swcs_path,
             class_ratios=class_ratios,
