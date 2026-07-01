@@ -68,7 +68,6 @@ class BrainDataset:
     def __init__(
         self,
         brain_id,
-        img_path,
         sites_prefix,
         swcs_path,
         class_ratios=(0.5, 0.5),
@@ -94,7 +93,7 @@ class BrainDataset:
         self.nonmerge_sites = self.load_sites(
             os.path.join(sites_prefix, "nonmerge_sites")
         )
-        self.patch_loader = PatchLoader(self.graph, img_config, img_path)
+        self.patch_loader = PatchLoader(self.graph, img_config)
 
         # Store dataset info
         self.set_giant_components()
@@ -618,9 +617,10 @@ def create_dataset_collection(
     assert dataset_mode in ["Train", "Val"]
     if dataset_mode == "Train":
         img_config.set_train_mode()
-        random_nonmerge_site_prob = 0.5
+        random_nonmerge_site_prob = 0.25
         rebalance_classes = True
     else:
+        img_config.set_val_mode()
         random_nonmerge_site_prob = 0
         rebalance_classes = False
 
@@ -632,7 +632,7 @@ def create_dataset_collection(
     datasets = list()
     for i, brain_id in enumerate(brain_ids, start=1):
         # Extract dataset info
-        img_path = os.path.join(img_prefixes[brain_id], "0")
+        img_config.set_img_path(os.path.join(img_prefixes[brain_id], "0"))
         segmentation_id = get_segmentation_id(sites_root_path, brain_id)
         sites_path = os.path.join(sites_root_path, brain_id, segmentation_id)
         swcs_path = os.path.join(
@@ -646,7 +646,6 @@ def create_dataset_collection(
         print(f"   \nBrain ID [{i}/{len(brain_ids)}]: {brain_id}")
         dataset = BrainDataset(
             brain_id,
-            img_path,
             sites_path,
             swcs_path,
             class_ratios=class_ratios,
