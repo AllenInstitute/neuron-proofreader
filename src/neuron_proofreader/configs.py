@@ -104,8 +104,14 @@ class ImageConfig(Config):
     patch_shape: Tuple[int, int, int] = (128, 128, 128)
     transform = None
 
+    def set_img_path(self, img_path):
+        self.img_path = img_path
+
     def set_train_mode(self):
         self.transform = ImageTransforms()
+
+    def set_val_mode(self):
+        self.transform = None
 
 
 @dataclass
