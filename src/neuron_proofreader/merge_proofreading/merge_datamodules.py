@@ -610,6 +610,7 @@ def create_dataset_collection(
     class_ratios=(0.5, 0.5),
     graph_config=None,
     img_config=None,
+    random_nonmerge_site_prob=0.5,
     subgraph_depth=100,
     val_neg_multiplier=5,
 ):
@@ -618,10 +619,8 @@ def create_dataset_collection(
     assert dataset_mode in ["Train", "Val"]
     if dataset_mode == "Train":
         img_config.set_train_mode()
-        random_nonmerge_site_prob = 0.5
         rebalance_classes = True
     else:
-        random_nonmerge_site_prob = 0
         rebalance_classes = False
 
     # Load image prefixes

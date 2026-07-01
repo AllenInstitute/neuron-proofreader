@@ -100,7 +100,7 @@ def plot_error_vs_length(lengths, rmse_results, output_path=None):
     plt.xscale("log")
     plt.yscale("log")
     plt.xlabel("Path Length (μm)", fontsize=12)
-    plt.ylabel("RMSE", fontsize=12)
+    plt.ylabel("RMSE (μm)", fontsize=12)
     visualize_result(output_path=output_path)
 
 
@@ -183,5 +183,6 @@ def visualize_result(output_path=None):
     plt.tight_layout()
     if output_path:
         plt.savefig(output_path, dpi=300, bbox_inches="tight")
+        plt.close()
     else:
         plt.show()
