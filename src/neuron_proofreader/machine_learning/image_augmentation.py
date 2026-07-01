@@ -8,7 +8,7 @@ Routines for applying image augmentation during training.
 
 """
 
-from scipy.ndimage import rotate, zoom
+from scipy.ndimage import gaussian_filter, rotate, zoom
 
 import numpy as np
 import random
@@ -27,12 +27,9 @@ class ImageTransforms:
         an image and segmentation patch.
         """
         # Instance attributes
-        self.transforms = [
-            RandomFlip3D(),
-            RandomRotation3D(),
-            RandomNoise3D(),
-            RandomContrast3D(),
-        ]
+        self.geometric_transform = [RandomFlip3D(), RandomRotation3D()]
+        self.intensity1_transform = [RandomNoise3D(), RandomContrast3D()]
+        self.intensity2_transform = [RandomSmooth3D(), RandomContrast3D()]
 
     def __call__(self, patches):
         """
@@ -45,7 +42,19 @@ class ImageTransforms:
             Image with the shape (2, H, W, D), where the first channel is the
             raw image and second is a mask.
         """
-        for transform in self.transforms:
+        # Apply geometric transform
+        patches = self.apply(patches, self.geometric_transform)
+
+        # Apply intensity transform
+        transform = random.choice([
+            self.intensity1_transform, self.intensity2_transform,
+        ])
+        patches = self.apply(patches, transform)
+        return patches
+                
+
+    def apply(self, patches, transforms):
+        for transform in transforms:
             patches = transform(patches)
         return patches
 
@@ -208,31 +217,33 @@ class RandomContrast3D:
     Adjusts the contrast of a 3D image by scaling voxel intensities.
     """
 
-    def __init__(self, p_low=(0, 80), p_high=(99, 100)):
+    def __init__(self, factor_range=(0.8, 1.2)):
         """
         Initializes a RandomContrast3D transformer.
 
         Parameters
         ----------
-        ...
+        factor_range : Tuple[float], optional
+            Range of contrast factors. Default is (0.8, 1.2).
         """
-        self.p_low = p_low
-        self.p_high = p_high
+        self.factor_range = factor_range
 
     def __call__(self, patches):
         """
-        Applies contrast to the input 3D image.
+        Applies contrast to an image.
 
         Parameters
         ----------
-        patches : numpy.ndarray
-            Image with the shape (2, H, W, D), where the first channel is the
+        Image with the shape (2, H, W, D), where the first channel is the
             raw image and second is a mask.
+
+        Returns
+        -------
+        numpy.ndarray
+            Contrasted image.
         """
-        lo = np.percentile(patches[0], np.random.uniform(*self.p_low))
-        hi = np.percentile(patches[0], np.random.uniform(*self.p_high))
-        patches[0] = (patches[0] - lo) / (hi - lo + 1e-5)
-        patches[0] = np.clip(patches[0], 0, 1)
+        factor = random.uniform(*self.factor_range)
+        patches[0] = np.clip(patches[0] * factor, 0, 1)
         return patches
 
 
@@ -241,7 +252,7 @@ class RandomNoise3D:
     Adds random Gaussian noise to a 3D image.
     """
 
-    def __init__(self, max_std=0.1):
+    def __init__(self, max_std=0.2):
         """
         Initializes a RandomNoise3D transformer.
 
@@ -269,4 +280,39 @@ class RandomNoise3D:
         return patches
 
 
-# --- 3D Space Curve Augmentation ---
+class RandomSmooth3D:
+    """
+    Applies Gaussian smoothing to a 3D image.
+    """
+
+    def __init__(self, max_sigma=1):
+        """
+        Initializes a GaussianSmooth3D transformer.
+
+        Parameters
+        ----------
+        max_sigma : float, optional
+            Maximum standard deviation of the Gaussian kernel.
+            Default is 0.8.
+        """
+        self.max_sigma = max_sigma
+
+    def __call__(self, patches):
+        """
+        Applies Gaussian smoothing to an image.
+
+        Parameters
+        ----------
+        patches : numpy.ndarray
+            Image with the shape (2, H, W, D), where the first channel is the
+            raw image and second is a mask.
+
+        Returns
+        -------
+        numpy.ndarray
+            Smoothed image.
+        """
+        sigma = random.uniform(0, self.max_sigma)
+        patches[0] = gaussian_filter(patches[0], sigma=sigma)
+        patches[0] = np.clip(patches[0], 0, 1)
+        return patches
