@@ -122,6 +122,40 @@ def init_mlp(input_dim, hidden_dim, output_dim, dropout=0.1):
     return mlp
 
 
+# --- Performance Metric Class ---
+class BinaryMetricAccumulator:
+
+    def __init__(self):
+        self.tp = 0
+        self.fp = 0
+        self.fn = 0
+        self.loss = 0.0
+        self.n = 0
+
+    @torch.no_grad()
+    def update(self, pred, y, loss):
+        pred = pred.bool()
+        y = y.bool()
+
+        self.tp += (pred & y).sum().item()
+        self.fp += (pred & ~y).sum().item()
+        self.fn += (~pred & y).sum().item()
+
+        self.loss += loss.item()
+        self.n += y.numel()
+
+    def compute(self):
+        precision = self.tp / (self.tp + self.fp + 1e-8)
+        recall = self.tp / (self.tp + self.fn + 1e-8)
+        f1 = 2 * precision * recall / (precision + recall + 1e-8)
+        return {
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "loss": self.loss / max(self.n, 1),
+        }
+
+
 # --- Data Structures ---
 class TensorDict(dict):
     """
@@ -232,7 +266,7 @@ def to_cpu(tensor, to_numpy=False):
         Tensor or array on CPU.
     """
     if to_numpy:
-        return np.array(tensor.detach().cpu())
+        return tensor.detach().cpu().numpy()
     else:
         return tensor.detach().cpu()
 

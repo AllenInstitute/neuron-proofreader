@@ -10,7 +10,6 @@ proofreading classification tasks.
 """
 
 from datetime import datetime
-from sklearn.metrics import precision_score, recall_score, accuracy_score
 from torch.nn.parallel import DistributedDataParallel
 from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import CosineAnnealingLR
@@ -18,7 +17,6 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 
-import numpy as np
 import os
 import torch
 import torch.distributed as dist
@@ -168,16 +166,14 @@ class Trainer:
         if self.verbose:
             pbar = tqdm(total=len(dataloader), desc="Train")
 
-        # Train for an epoch
+        # Iterate over dataset
         self.model.train()
-        loss, y, hat_y = list(), list(), list()
-        for x_i, y_i in dataloader:
-            # Forward pass
-            self.optimizer.zero_grad()
-            hat_y_i, loss_i = self.forward_pass(x_i, y_i)
-
-            # Backward pass
-            self.scaler.scale(loss_i).backward()
+        metrics = ml_util.BinaryMetricAccumulator()
+        for x, y in dataloader:
+            # Forward and backward pass
+            self.optimizer.zero_grad(set_to_none=True)
+            y, hat_y, loss = self.forward_pass(x, y)
+            self.scaler.scale(loss).backward()
 
             # Step optimizer
             self.scaler.unscale_(self.optimizer)
@@ -185,19 +181,17 @@ class Trainer:
             self.scaler.step(self.optimizer)
             self.scaler.update()
 
-            # Store results
-            y.extend(ml_util.to_cpu(y_i, True).flatten().tolist())
-            hat_y.extend(ml_util.to_cpu(hat_y_i, True).flatten().tolist())
-            loss.append(float(ml_util.to_cpu(loss_i)))
+            # Compute metrics
+            hat_y = hat_y > 0
+            metrics.update(hat_y, y, loss)
 
             # Update progress bar
             if self.verbose:
                 pbar.update(1)
 
         # Write stats to tensorboard
-        stats = self.compute_stats(y, hat_y)
-        stats["loss"] = np.mean(loss)
-        self.update_tensorboard(stats, epoch, "train_")
+        stats = metrics.compute()
+        self.writer.add_scalars("train", stats, epoch)
         return stats
 
     def validate_step(self, dataloader, epoch):
@@ -222,42 +216,34 @@ class Trainer:
         if self.verbose:
             pbar = tqdm(total=len(dataloader), desc="Val")
 
-        # Initializations
+        # Check whether to save MIPs
         idx_offset = 0
-        loss_accum = 0
-        y_accum = list()
-        hat_y_accum = list()
         if self.save_mistake_mips:
             util.mkdir(self.mistakes_dir, True)
 
         # Iterate over dataset
         self.model.eval()
-        with torch.no_grad():
-            for x, y in dataloader:
-                # Run model
-                hat_y, loss = self.forward_pass(x, y)
+        metrics = ml_util.BinaryMetricAccumulator()
+        for x, y in dataloader:
+            # Run model
+            with torch.inference_mode():
+                y, hat_y, loss = self.forward_pass(x, y)
 
-                # Move to CPU
-                y = ml_util.tensor_to_list(y)
-                hat_y = ml_util.tensor_to_list(hat_y)
+            # Compute metrics
+            hat_y = hat_y > 0
+            metrics.update(hat_y, y, loss)
 
-                # Store predictions
-                y_accum.extend(y)
-                hat_y_accum.extend(hat_y)
-                loss_accum += float(ml_util.to_cpu(loss))
+            # Save MIPs of mistakes
+            self._save_mistake_mips(x, y, hat_y, idx_offset)
+            idx_offset += len(y)
 
-                # Save MIPs of mistakes
-                self._save_mistake_mips(x, y, hat_y, idx_offset)
-                idx_offset += len(y)
-
-                # Update progress bar
-                if self.verbose:
-                    pbar.update(1)
+            # Update progress bar
+            if self.verbose:
+                pbar.update(1)
 
         # Write stats to tensorboard
-        stats = self.compute_stats(y_accum, hat_y_accum)
-        stats["loss"] = loss_accum / len(y_accum)
-        self.update_tensorboard(stats, epoch, "val_")
+        stats = metrics.compute()
+        self.writer.add_scalars("train", stats, epoch)
         return stats
 
     def forward_pass(self, x, y):
@@ -278,12 +264,12 @@ class Trainer:
         loss : torch.Tensor
             Computed loss value.
         """
+        x = x.to(self.device, non_blocking=True)
+        y = y.to(self.device, non_blocking=True)
         with torch.autocast(device_type="cuda", dtype=torch.float16):
-            x = x.to(self.device)
-            y = y.to(self.device)
             hat_y = self.model(x)
             loss = self.criterion(hat_y, y)
-            return hat_y, loss
+        return y, hat_y, loss
 
     # --- Helpers ---
     @staticmethod
@@ -303,21 +289,20 @@ class Trainer:
         stats : Dict[str, float]
             Dictionary of metric names to values.
         """
-        # Reformat predictions
-        hat_y = (np.array(hat_y) > 0).astype(int)
-        y = np.array(y, dtype=int)
+        # Binarize predictions
+        hat_y = (hat_y > 0).int()
+        y = y.int()
 
         # Compute stats
-        avg_prec = precision_score(y, hat_y, zero_division=np.nan)
-        avg_recall = recall_score(y, hat_y, zero_division=np.nan)
-        avg_f1 = 2 * avg_prec * avg_recall / max((avg_prec + avg_recall), 1)
-        avg_acc = accuracy_score(y, hat_y)
-        stats = {
-            "f1": avg_f1,
-            "precision": avg_prec,
-            "recall": avg_recall,
-            "accuracy": avg_acc,
-        }
+        tp = (hat_y * y).sum()
+        fp = (hat_y * (1 - y)).sum()
+        fn = ((1 - hat_y) * y).sum()
+
+        precision = tp / (tp + fp + 1e-8)
+        recall = tp / (tp + fn + 1e-8)
+        f1 = 2 * precision * recall / (precision + recall + 1e-8)
+
+        stats = {"f1": f1, "precision": precision, "recall": recall}
         return stats
 
     @staticmethod
@@ -419,22 +404,6 @@ class Trainer:
         filename = f"{self.model_name}-{date}-{epoch}-{self.best_f1:.4f}.pth"
         path = os.path.join(self.log_dir, filename)
         torch.save(self.model.state_dict(), path)
-
-    def update_tensorboard(self, stats, epoch, prefix):
-        """
-        Logs scalar statistics to TensorBoard.
-
-        Parameters
-        ----------
-        stats : Dict[str, float]
-            Dictionary of metric names to lists of values.
-        epoch : int
-            Current training epoch.
-        prefix : str
-            Prefix to prepend to each metric name when logging.
-        """
-        for key, value in stats.items():
-            self.writer.add_scalar(prefix + key, stats[key], epoch)
 
 
 class DistributedTrainer(Trainer):

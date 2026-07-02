@@ -24,6 +24,7 @@ ThreadedDataLoader
     cloud storage and assemble batches.
 """
 
+from collections import deque
 from scipy.spatial import KDTree
 from concurrent.futures import as_completed, ThreadPoolExecutor
 from torch.utils.data import Dataset, DataLoader
@@ -32,8 +33,6 @@ import networkx as nx
 import numpy as np
 import os
 import pandas as pd
-import queue
-import threading
 import torch
 
 from neuron_proofreader.machine_learning.image_dataloader import (
@@ -424,83 +423,56 @@ class ThreadedDataLoader(DataLoader):
         self.prefetch = prefetch
         self.img_shape = (2,) + dataset.datasets[0].patch_loader.patch_shape
 
-        # Set batch loader
-        if self.is_multimodal and self.modality == "graph":
-            self._load_batch = self._load_image_graph_batch
-        elif self.is_multimodal and self.modality == "pointcloud":
-            self._load_batch = self._load_image_pc_batch
-        else:
-            self._load_batch = self._load_image_batch
-
     def __iter__(self):
-        # Extract indices
-        self.dataset._index_table = self.dataset._build_index_table()
-        idxs = self.dataset.get_idxs()
-        if self.shuffle:
-            np.random.shuffle(idxs)
+        # Subroutines
+        def submit_batch(executor, batch_idxs):
+            return [
+                executor.submit(self.dataset.__getitem__, idx)
+                for idx in batch_idxs
+            ]
 
-        # Split into batches upfront
-        batch_idx_groups = [
-            idxs[start : min(start + self.batch_size, len(idxs))]
-            for start in range(0, len(idxs), self.batch_size)
-        ]
+        def assemble_batch(futures):
+            if self.is_multimodal and self.modality == "graph":
+                return self._assemble_graph_batch(futures)
+            elif self.is_multimodal and self.modality == "pointcloud":
+                return self._assemble_pointcloud_batch(futures)
+            else:
+                return self._assemble_image_batch(futures)
 
-        # Sentinel signalling the prefetch thread is done
-        _DONE = object()
-        buffer = queue.Queue(maxsize=self.prefetch)
+        # Main
+        with ThreadPoolExecutor(max_workers=2*self.prefetch) as executor:
+            # Start prefetching
+            batch_iter = self.create_batch_iter()
+            pending_batches = deque()
+            for _ in range(self.prefetch):
+                try:
+                    batch_idxs = next(batch_iter)
+                    pending_batches.append(submit_batch(executor, batch_idxs))
+                except StopIteration:
+                    break
 
-        def prefetch_worker():
-            try:
-                for batch_idxs in batch_idx_groups:
-                    buffer.put(self._load_batch(batch_idxs))
-            except Exception as e:
-                buffer.put(e)
-            finally:
-                buffer.put(_DONE)
+            # Process batches and submit new jobs
+            while pending_batches:
+                # Get ready batch
+                futures = pending_batches.popleft()
 
-        thread = threading.Thread(target=prefetch_worker, daemon=True)
-        thread.start()
+                # Submit new batch
+                try:
+                    batch_idxs = next(batch_iter)
+                    pending_batches.append(
+                        submit_batch(executor, batch_idxs)
+                    )
+                except StopIteration:
+                    pass
 
-        while True:
-            item = buffer.get()
-            if item is _DONE:
-                break
-            if isinstance(item, Exception):
-                raise item
-            yield item
+                yield assemble_batch(futures)
 
-        thread.join()
-
-    def _load_image_batch(self, batch_idxs):
-        """
-        Loads a batch of samples from the dataset using multithreading.
-
-        Parameters
-        ----------
-        batch_idxs : List[int]
-            Indices of the dataset items to include in the batch.
-
-        Returns
-        -------
-        patches : torch.Tensor
-            Image patches for the batch.
-        targets : torch.Tensor
-            Target labels corresponding to each patch.
-        """
-        with ThreadPoolExecutor() as executor:
-            # Assign threads
-            pending = dict()
-            for i, idx in enumerate(batch_idxs):
-                thread = executor.submit(self.dataset.__getitem__, idx)
-                pending[thread] = i
-
-            # Store results
-            patches = np.zeros((len(batch_idxs),) + self.img_shape)
-            targets = np.zeros((len(batch_idxs), 1))
-            for thread in as_completed(pending.keys()):
-                i = pending.pop(thread)
-                patches[i], _, targets[i] = thread.result()
-        return ml_util.to_tensor(patches), ml_util.to_tensor(targets)
+    def _assemble_image_batch(self, futures):
+        x = np.zeros((len(futures),) + self.img_shape, dtype=np.float32)
+        y = np.zeros((len(futures), 1), dtype=np.float32)
+        for i, future in enumerate(futures):
+            x[i], _, y[i] = future.result()
+        return torch.from_numpy(x), torch.from_numpy(y)
 
     def _load_image_pc_batch(self, batch_idxs):
         """
@@ -597,6 +569,21 @@ class ThreadedDataLoader(DataLoader):
             }
         )
         return batch, ml_util.to_tensor(targets)
+
+    # --- Helpers ---
+    def create_batch_iter(self):
+        # Set indices
+        self.dataset._index_table = self.dataset._build_index_table()
+        idxs = self.dataset.get_idxs()
+        if self.shuffle:
+            np.random.shuffle(idxs)
+
+        # Form groups
+        batch_idx_groups = [
+            idxs[start:min(start + self.batch_size, len(idxs))]
+            for start in range(0, len(idxs), self.batch_size)
+        ]
+        return iter(batch_idx_groups)
 
 
 # --- Sites Loading ---
