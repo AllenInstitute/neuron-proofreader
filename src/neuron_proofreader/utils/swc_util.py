@@ -47,6 +47,8 @@ class Reader:
     archive, and (3) local directory of ZIP archives.
     """
 
+    gcs_client = None
+
     def __init__(
         self, anisotropy=(1.0, 1.0, 1.0), min_swc_pts=1, verbose=True
     ):
@@ -66,6 +68,12 @@ class Reader:
         self.anisotropy = anisotropy
         self.min_swc_pts = min_swc_pts
         self.verbose = verbose
+
+    @classmethod
+    def _get_gcs_client(cls):
+        if cls._gcs_client is None:
+            cls._gcs_client = storage.Client()
+        return cls._gcs_client
 
     # --- Read Data ---
     def __call__(self, swc_pointer):
@@ -319,7 +327,7 @@ class Reader:
         """
         # Initialize cloud reader
         bucket_name, key = util.parse_cloud_path(path)
-        bucket = storage.Client().bucket(bucket_name)
+        bucket = self._get_gcs_client().bucket(bucket_name)
         blob = bucket.blob(key)
 
         # Parse swc contents

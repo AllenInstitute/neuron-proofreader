@@ -9,9 +9,9 @@ models.
 
 """
 
-import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 # --- Architectures ---
@@ -232,6 +232,7 @@ def find_max_batch_size(
             with torch.autocast(device_type="cuda", dtype=torch.float16):
                 out = model(x)
                 loss = F.mse_loss(out, y)
+
             scaler.scale(loss).backward()
             scaler.step(opt)
             scaler.update()
