@@ -213,6 +213,39 @@ class TensorDict(dict):
 
 
 # --- Miscellaneous ---
+def find_max_batch_size(
+    model, input_shape, optimizer_cls, device="cuda", start=1, max_bs=32
+):
+    model.to(device)
+    lo, hi = start, max_bs
+    best = 0
+    while lo <= hi:
+        bs = (lo + hi) // 2
+        try:
+            torch.cuda.empty_cache()
+            torch.cuda.reset_peak_memory_stats()
+            x = torch.randn(bs, *input_shape, device=device)
+            y = torch.randn(bs, 1, device=device)
+            opt = optimizer_cls(model.parameters())
+            scaler = torch.cuda.amp.GradScaler()
+
+            with torch.autocast(device_type="cuda", dtype=torch.float16):
+                out = model(x)
+                loss = F.mse_loss(out, y)
+            scaler.scale(loss).backward()
+            scaler.step(opt)
+            scaler.update()
+
+            best = bs
+            lo = bs + 1
+            del x, y, out, loss, opt
+        except torch.cuda.OutOfMemoryError:
+            hi = bs - 1
+        finally:
+            torch.cuda.empty_cache()
+    return best
+
+
 def load_model(model, model_path, device="cuda"):
     """
     Loads a PyTorch model checkpoint, moves the model to the speficied device,
