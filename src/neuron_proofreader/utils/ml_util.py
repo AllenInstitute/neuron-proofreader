@@ -266,7 +266,7 @@ def to_cpu(tensor, to_numpy=False):
         Tensor or array on CPU.
     """
     if to_numpy:
-        return np.array(tensor.detach().cpu())
+        return tensor.detach().cpu().numpy()
     else:
         return tensor.detach().cpu()
 
