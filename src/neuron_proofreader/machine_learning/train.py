@@ -191,7 +191,7 @@ class Trainer:
 
         # Write stats to tensorboard
         stats = metrics.compute()
-        self.writer.add_scalars("train", stats, epoch)
+        self.update_tensorboard(stats, epoch, "train_")
         return stats
 
     def validate_step(self, dataloader, epoch):
@@ -243,7 +243,7 @@ class Trainer:
 
         # Write stats to tensorboard
         stats = metrics.compute()
-        self.writer.add_scalars("train", stats, epoch)
+        self.update_tensorboard(stats, epoch, "val_")
         return stats
 
     def forward_pass(self, x, y):
@@ -272,39 +272,6 @@ class Trainer:
         return y, hat_y, loss
 
     # --- Helpers ---
-    @staticmethod
-    def compute_stats(y, hat_y):
-        """
-        Computes F1 score, precision, and recall for each sample in a batch.
-
-        Parameters
-        ----------
-        y : torch.Tensor
-            Ground truth labels with shape (B, 1).
-        hat_y : torch.Tensor
-            Predicted labels with shape (B, 1).
-
-        Returns
-        -------
-        stats : Dict[str, float]
-            Dictionary of metric names to values.
-        """
-        # Binarize predictions
-        hat_y = (hat_y > 0).int()
-        y = y.int()
-
-        # Compute stats
-        tp = (hat_y * y).sum()
-        fp = (hat_y * (1 - y)).sum()
-        fn = ((1 - hat_y) * y).sum()
-
-        precision = tp / (tp + fp + 1e-8)
-        recall = tp / (tp + fn + 1e-8)
-        f1 = 2 * precision * recall / (precision + recall + 1e-8)
-
-        stats = {"f1": f1, "precision": precision, "recall": recall}
-        return stats
-
     @staticmethod
     def report_stats(stats, is_train=True):
         """
@@ -404,6 +371,22 @@ class Trainer:
         filename = f"{self.model_name}-{date}-{epoch}-{self.best_f1:.4f}.pth"
         path = os.path.join(self.log_dir, filename)
         torch.save(self.model.state_dict(), path)
+
+    def update_tensorboard(self, stats, epoch, prefix):
+        """
+        Logs scalar statistics to TensorBoard.
+
+        Parameters
+        ----------
+        stats : Dict[str, float]
+            Dictionary of metric names to lists of values.
+        epoch : int
+            Current training epoch.
+        prefix : str
+            Prefix to prepend to each metric name when logging.
+        """
+        for key, value in stats.items():
+            self.writer.add_scalar(prefix + key, stats[key], epoch)
 
 
 class DistributedTrainer(Trainer):
