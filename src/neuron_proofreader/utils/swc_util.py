@@ -292,8 +292,6 @@ class Reader:
         # List paths
         swc_paths = util.list_cloud_paths(path, ".swc")
         zip_paths = util.list_cloud_paths(path, ".zip")
-        print("path:", path)
-        print("zip paths:", zip_paths)
 
         # Call reader
         if swc_paths:
