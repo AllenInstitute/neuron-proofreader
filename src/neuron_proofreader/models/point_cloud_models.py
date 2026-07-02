@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from neuron_proofreader.machine_learning.vision_models import CNN3D
+from neuron_proofreader.models.vision_models import CNN3D
 from neuron_proofreader.utils.ml_util import FeedForwardNet
 
 

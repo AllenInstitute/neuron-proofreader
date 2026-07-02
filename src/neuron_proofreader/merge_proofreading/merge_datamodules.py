@@ -38,10 +38,10 @@ import torch
 from neuron_proofreader.machine_learning.image_dataloader import (
     DetectionPatchLoader as PatchLoader,
 )
-from neuron_proofreader.machine_learning.geometric_gnn_models import (
+from neuron_proofreader.models.geometric_gnn_models import (
     subgraph_to_data,
 )
-from neuron_proofreader.machine_learning.point_cloud_models import (
+from neuron_proofreader.models.point_cloud_models import (
     subgraph_to_point_cloud,
 )
 from neuron_proofreader.skeleton_graph import SkeletonGraph

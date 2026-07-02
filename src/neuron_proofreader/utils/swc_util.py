@@ -48,6 +48,7 @@ class Reader:
     """
 
     gcs_client = None
+    s3_client = None
 
     def __init__(
         self, anisotropy=(1.0, 1.0, 1.0), min_swc_pts=1, verbose=True
@@ -71,9 +72,22 @@ class Reader:
 
     @classmethod
     def _get_gcs_client(cls):
-        if cls._gcs_client is None:
-            cls._gcs_client = storage.Client()
-        return cls._gcs_client
+        if cls.gcs_client is None:
+            cls.gcs_client = storage.Client()
+        return cls.gcs_client
+
+    @classmethod
+    def _get_s3_client(cls):
+        # TEMP
+        return cls.s3_client
+
+    @classmethod
+    def _get_client(cls, path):
+        if util.is_gcs_path(path):
+            return cls._get_gcs_client()
+        elif util.is_s3_path(path):
+            return cls._get_s3_client()
+        return None
 
     # --- Read Data ---
     def __call__(self, swc_pointer):
@@ -156,7 +170,8 @@ class Reader:
             Dictionary whose keys and values are the attribute names and
             values from an SWC file.
         """
-        content = util.read_txt(path).splitlines()
+        client = self._get_client(path)
+        content = util.read_txt(path, client=client).splitlines()
         filename = os.path.basename(path)
         return self.parse(content, filename)
 
@@ -309,31 +324,6 @@ class Reader:
             return self.read_zips(zip_paths, read_fn)
         else:
             return list()
-
-    def read_gcs_swc(self, path):
-        """
-        Reads a single SWC file stored in a GCS bucket.
-
-        Parameters
-        ----------
-        path : List[str]
-            Path to SWC file to be read.
-
-        Returns
-        -------
-        Deque[dict]
-            Dictionaries whose keys and values are the attribute names and
-            values from an SWC file.
-        """
-        # Initialize cloud reader
-        bucket_name, key = util.parse_cloud_path(path)
-        bucket = self._get_gcs_client().bucket(bucket_name)
-        blob = bucket.blob(key)
-
-        # Parse swc contents
-        content = blob.download_as_text().splitlines()
-        filename = os.path.basename(key)
-        return self.parse(content, filename)
 
     def read_gcs_zip(self, path):
         """

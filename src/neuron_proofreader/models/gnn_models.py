@@ -15,7 +15,7 @@ import ast
 import torch
 import torch.nn.init as init
 
-from neuron_proofreader.machine_learning.vision_models import CNN3D
+from neuron_proofreader.models.vision_models import CNN3D
 from neuron_proofreader.split_proofreading import split_feature_extraction
 from neuron_proofreader.utils.ml_util import FeedForwardNet
 

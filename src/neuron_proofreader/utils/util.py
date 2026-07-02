@@ -221,7 +221,7 @@ def read_json(path):
         return json.load(f)
 
 
-def read_txt(path):
+def read_txt(path, client=None):
     """
     Reads txt file at the given path.
 
@@ -236,9 +236,9 @@ def read_txt(path):
         Text from the txt file.
     """
     if is_s3_path(path):
-        return read_s3_txt(path)
+        return read_s3_txt(path, client=client)
     elif is_gcs_path(path):
-        return read_gcs_txt(path)
+        return read_gcs_txt(path, client=client)
     else:
         with open(path, "r") as f:
             return f.read()
@@ -520,7 +520,7 @@ def list_gcs_subprefixes(path):
     return subdirs
 
 
-def read_gcs_txt(path):
+def read_gcs_txt(prefix, client=None):
     """
     Reads a txt file stored in a GCS bucket.
 
@@ -534,9 +534,10 @@ def read_gcs_txt(path):
     str
         Contents of txt file.
     """
-    bucket_name, subpath = parse_cloud_path(path)
-    bucket = storage.Client().bucket(bucket_name)
-    return bucket.blob(subpath).download_as_text()
+    bucket_name, subprefix = parse_cloud_path(prefix)
+    client = client or storage.Client()
+    bucket = client.bucket(bucket_name)
+    return bucket.blob(subprefix).download_as_text()
 
 
 def read_json_from_gcs(bucket_name, blob_path):
@@ -613,13 +614,13 @@ def list_s3_paths(bucket_name, prefix, extension=""):
     return paths
 
 
-def read_s3_txt(path):
+def read_s3_txt(prefix, client=None):
     """
     Reads a txt file stored in an S3 bucket.
 
     Parameters
     ----------
-    path : str
+    prefix : str
         Path to txt file to be read.
 
     Returns
@@ -627,9 +628,9 @@ def read_s3_txt(path):
     str
         Contents of txt file.
     """
-    bucket_name, subpath = parse_cloud_path(path)
-    s3 = boto3.client("s3", config=Config(signature_version=UNSIGNED))
-    obj = s3.get_object(Bucket=bucket_name, Key=subpath)
+    bucket_name, subprefix = parse_cloud_path(prefix)
+    client = boto3.client("s3", config=Config(signature_version=UNSIGNED))
+    obj = client.get_object(Bucket=bucket_name, Key=subprefix)
     return obj["Body"].read().decode("utf-8")
 
 
