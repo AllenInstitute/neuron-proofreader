@@ -46,12 +46,14 @@ class ImageTransforms:
         patches = self.apply(patches, self.geometric_transform)
 
         # Apply intensity transform
-        transform = random.choice([
-            self.intensity1_transform, self.intensity2_transform,
-        ])
+        transform = random.choice(
+            [
+                self.intensity1_transform,
+                self.intensity2_transform,
+            ]
+        )
         patches = self.apply(patches, transform)
         return patches
-                
 
     def apply(self, patches, transforms):
         for transform in transforms:
