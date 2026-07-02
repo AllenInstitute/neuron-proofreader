@@ -1,189 +1,147 @@
 """
-Created on Sat Sept 16 11:30:00 2024
- 
+Created on Wed June 3 12:00:00 2026
+
 @author: Anna Grim
 @email: anna.grim@alleninstitute.org
- 
-Code that trains a model that performs merge detection. This code assumes that
-there is a local directory with the following files:
-    - "merge_sites_df.csv"
-          DataFrame containing merge sites, must contain the columns:
-          "brain_id", "segmentation_id", "segment_id", and "xyz".
-    - "train_idxs.csv"
-          Row indices from merge_sites_df to use as training examples.
-    - "val_idxs.csv"
-          Row indices from merge_sites_df to use as validation examples.
- 
-Note: Use the following command to train with multiple GPUs
-        torchrun --nproc_per_node=4 train_merge_detector.py
+
+Code starting merge detection training session.
+
 """
- 
-from torch.utils.data import DistributedSampler
- 
-import numpy as np
-import os
- 
-from neuron_proofreader.machine_learning.train import (
-    DistributedTrainer, Trainer
-)
-from neuron_proofreader.machine_learning.point_cloud_models import VisionDGCNN
+
+import resource
+import torch
+
+from neuron_proofreader.configs import GraphConfig, ImageConfig
 from neuron_proofreader.machine_learning.vision_models import CNN3D, ViT3D
-from neuron_proofreader.merge_proofreading import merge_dataloading as data_util
-from neuron_proofreader.merge_proofreading.merge_datasets import (
-    MergeSiteDataset,
-    MergeSiteTrainDataset,
-    MergeSiteValDataset,
-    MergeSiteDataLoader
+from neuron_proofreader.machine_learning.train import Trainer
+from neuron_proofreader.merge_proofreading.merge_datamodules import (
+    create_dataset_collection,
+    ThreadedDataLoader,
 )
-from neuron_proofreader.utils import util
- 
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/root/capsule/data/gcs-token.json"
- 
- 
+from neuron_proofreader.utils import ml_util
+
+
+# Raise the soft file descriptor limit to the hard limit to prevent
+# "Too many open files" when many threads open GCS credentials concurrently
+_soft, _hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+resource.setrlimit(resource.RLIMIT_NOFILE, (_hard, _hard))
+print(f"File descriptor limit set to: {_hard}")
+
+
 def main():
-    # Set data paths
-    sites_path = os.path.join(dataset_path, "merge_sites_df.csv")
-    train_idxs_path = os.path.join(dataset_path, "train_idxs.csv")
-    val_idxs_path = os.path.join(dataset_path, "val_idxs.csv")
- 
-    # Load data
-    merge_sites_df = data_util.load_merge_sites_df(sites_path, is_test=is_test)
-    if is_test:
-        train_idxs = np.arange((merge_sites_df["brain_id"] == "653159").sum())
-        val_idxs = np.arange((merge_sites_df["brain_id"] == "653159").sum())
-    else:
-        train_idxs = data_util.read_idxs(train_idxs_path)
-        val_idxs = data_util.read_idxs(val_idxs_path)
- 
-    print("# Train Examples:", len(train_idxs))
-    print("# Validate Examples:", len(val_idxs))
- 
-    # Dataset
-    dataset = init_dataset(merge_sites_df)
-    train_dataset = MergeSiteTrainDataset(dataset, train_idxs, negative_bias)
-    val_dataset = MergeSiteValDataset(dataset, val_idxs)
-    print("len(train_dataset):", len(train_dataset))
-    print("len(val_dataset):", len(val_dataset))
-    del dataset
- 
-    # Dataloaders
-    trainer = init_trainer()
-    val_dataset.save_summary(trainer.log_dir)
- 
-    train_dataloader = MergeSiteDataLoader(
-        train_dataset,
+    # Save experiment parameters
+    graph_config.save(output_dir)
+    img_config.save(output_dir)
+
+    # Determine batch size
+    input_shape = (2,) + img_config.patch_shape
+    batch_size = ml_util.find_max_batch_size(
+        model,
+        input_shape=input_shape,
+        optimizer_cls=torch.optim.AdamW,
+        device="cuda",
+    )
+    print("Batch Size:", batch_size)
+
+    # Create datasets
+    train_dataset, val_dataset = [
+        create_dataset_collection(
+            brain_ids,
+            ds_mode,
+            img_prefixes_path,
+            sites_root_path,
+            swcs_root_path,
+            graph_config=graph_config,
+            img_config=img_config,
+            random_nonmerge_site_prob=random_nonmerge_site_prob,
+        )
+        for ds_mode, brain_ids in zip(["Train", "Val"], [train_ids, val_ids])
+    ]
+    print("\nDataset Summary...")
+    print("Train Dataset:", train_dataset)
+    print("Val Dataset:", val_dataset)
+
+    # Create dataloaders
+    train_loader_kwargs = dict(
         batch_size=batch_size,
         is_multimodal=is_multimodal,
-        modality="pointcloud"
+        modality=modality,
+        prefetch=prefetch,
     )
-    val_dataloader = MergeSiteDataLoader(
-        val_dataset,
-        batch_size=2*batch_size,
+    val_loader_kwargs = dict(
+        batch_size=batch_size,
         is_multimodal=is_multimodal,
-        modality="pointcloud",
-        use_shuffle=False
+        modality=modality,
+        prefetch=prefetch,
+        shuffle=False
     )
- 
-    # Train
-    print("\nModel Name:", model_name)
-    save_experiment_parameters()
+    train_dataloader = ThreadedDataLoader(train_dataset, **train_loader_kwargs)
+    val_dataloader = ThreadedDataLoader(val_dataset, **val_loader_kwargs)
+
+    # Train Model
+    trainer = init_trainer()
     trainer.run(train_dataloader, val_dataloader)
- 
- 
-def init_dataset(merge_sites_df):
-    # Initialize dataset
-    dataset = MergeSiteDataset(
-        merge_sites_df,
-        anisotropy=anisotropy,
-        brightness_clip=brightness_clip,
-        node_spacing=5,
-        patch_shape=patch_shape,
-        use_new_mask=use_new_mask
-    )
- 
-    # Load data
-    data_util.load_groundtruth(dataset, is_test=is_test)
-    data_util.load_fragments(dataset, is_test=is_test)
-    data_util.load_images(
-        dataset,
-        image_prefixes_path,
-        segmentation_prefixes_path,
-        is_test=is_test,
-    )
-    return dataset
- 
- 
+
+
+# --- Helpers ---
 def init_trainer():
     trainer = Trainer(
         model,
         model_name,
         output_dir,
-        lr=lr,
-        max_epochs=max_epochs,
+        device="cuda",
         min_recall=min_recall,
-        save_mistake_mips=save_mistake_mips
+        lr=lr,
+        save_mistake_mips=save_mistake_mips,
+        verbose=True
     )
     if model_path:
         trainer.load_pretrained_weights(model_path)
     return trainer
- 
- 
-def save_experiment_parameters():
-    parameters = {
-        "batch_size": batch_size,
-        "brightness_clip": brightness_clip,
-        "lr": lr,
-        "is_finetuned": model_path != None,
-        "is_multimodal": is_multimodal,
-        "min_recall": min_recall,
-        "model_class": model_class,
-        "model_path": model_path,
-        "negative_bias": negative_bias,
-        "patch_shape": patch_shape,
-        "use_new_mask": use_new_mask,
-    }
-    path = os.path.join(output_dir, "experiment_parameters.json")
-    util.write_json(path, parameters)
- 
- 
+
+
 if __name__ == "__main__":
-    # Parameters
-    anisotropy = (0.748, 0.748, 1.0)
-    batch_size = 16
-    brightness_clip = 400
-    is_test = False
-    lr = 1e-4
-    max_epochs = 100
-    min_recall = 0.85
-    model_class = "CNN3D"
-    negative_bias = 0.1
-    patch_shape = (128, 128, 128)
-    save_mistake_mips = True
-    use_new_mask = True
- 
+    # Dataset
+    train_ids = ["653159", "715345", "730902", "789202", "794491", "802449"]
+    val_ids = ["751473", "794495"]
+
     # Paths
-    dataset_path = "/root/capsule/data/V5"
-    image_prefixes_path = "/root/capsule/data/exaspim_image_prefixes.json"
-    segmentation_prefixes_path = "/root/capsule/data/exaspim_segmentation_prefixes.json"
+    img_prefixes_path = "/root/capsule/data/exaspim_image_prefixes.json"
     model_path = None
     output_dir = "/root/capsule/results"
- 
-    # Model
-    model_name = f"MergeDetector{model_class}-v6-run2-newmask={use_new_mask}"
-    if model_class == "CNN3D":
-        print("Model Class: CNN3D")
-        is_multimodal = False
-        model = CNN3D(
-            patch_shape,
-            n_conv_layers=6,
-            n_feat_channels=24,
-        )
-    elif model_class == "DGCNN":
-        print("Model Class: VisionDGCNN")
-        is_multimodal = True
-        model = VisionDGCNN(patch_shape)
-    else:
-        raise ValueError(f"model_class={model_class} is not valid!")
- 
-    # Main
+    sites_root_path = "gs://allen-nd-goog/automated_proofreading_dataset/curated_sites_05202026/"
+    swcs_root_path = sites_root_path  #"gs://allen-nd-goog/from_google/"
+
+    # Parameters
+    is_multimodal = False
+    lr = 1e-4
+    min_recall = 0.90
+    modality = None
+    prefetch = 32
+    random_nonmerge_site_prob = 0.25
+    save_mistake_mips = False
+
+    graph_config = GraphConfig(
+        anisotropy=(0.748, 0.748, 1.0),
+        min_cable_length=0,
+        node_spacing=5,
+        use_anisotropy=False,
+        verbose=True,
+    )
+    img_config = ImageConfig(
+        brightness_clip=500,
+        patch_shape=(128, 128, 128),
+        percentiles=(1, 99.9),
+    )
+
+    # Model architecture
+    model_name = "MergeDetectorCNN3D"
+    model = CNN3D(
+        img_config.patch_shape,
+        n_conv_layers=5,
+        n_feat_channels=24,
+        use_double_conv=True
+    )
+
+    # Run code
     main()
