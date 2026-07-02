@@ -53,6 +53,7 @@ class ImageTransforms:
             ]
         )
         patches = self.apply(patches, transform)
+        patches = np.clip(patches, 0, 1)
         return patches
 
     def apply(self, patches, transforms):
@@ -132,13 +133,13 @@ class RandomRotation3D:
         return patches
 
     @staticmethod
-    def rotate3d(img_patch, angle, axes, is_mask=False):
+    def rotate3d(img, angle, axes, is_mask=False):
         """
         Rotates a 3D image patch around the specified axes by a given angle.
 
         Parameters
         ----------
-        img_patch : numpy.ndarray
+        img : numpy.ndarray
             Image to be rotated.
         angle : float
             Angle (in degrees) by which to rotate the image patch around the
@@ -148,18 +149,17 @@ class RandomRotation3D:
         is_mask : bool, optional
             True if the image is a mask.
         """
-        order = 0 if is_mask else 3
         multipler = 4 if is_mask else 1
-        img_patch = rotate(
-            multipler * img_patch,
+        img = rotate(
+            multipler * img,
             angle,
             axes=axes,
             mode="grid-mirror",
             reshape=False,
-            order=order,
+            order=0,
         )
-        img_patch /= multipler
-        return img_patch
+        img /= multipler
+        return img
 
 
 class RandomScale3D:
@@ -208,7 +208,7 @@ class RandomScale3D:
         ]
 
         # Rescale images
-        patches[0] = zoom(patches[0], zoom_factors, order=3)
+        patches[0] = zoom(patches[0], zoom_factors, order=1)
         patches[1] = zoom(patches[1], zoom_factors, order=0)
         return patches
 
@@ -245,7 +245,7 @@ class RandomContrast3D:
             Contrasted image.
         """
         factor = random.uniform(*self.factor_range)
-        patches[0] = np.clip(patches[0] * factor, 0, 1)
+        patches[0] = patches[0] * factor
         return patches
 
 
@@ -278,7 +278,6 @@ class RandomNoise3D:
         """
         std = self.max_std * random.random()
         patches[0] += np.random.uniform(-std, std, patches[0].shape)
-        patches[0] = np.clip(patches[0], 0, 1)
         return patches
 
 
@@ -316,5 +315,4 @@ class RandomSmooth3D:
         """
         sigma = random.uniform(0, self.max_sigma)
         patches[0] = gaussian_filter(patches[0], sigma=sigma)
-        patches[0] = np.clip(patches[0], 0, 1)
         return patches
