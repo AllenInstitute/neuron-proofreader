@@ -22,15 +22,14 @@ class NewCNN3D(nn.Module):
 
     def __init__(
         self,
-        patch_shape,
-        in_channels=2,
-        first_out_channels=16,
-        output_dim=1,
-        channel_growth=2,
+        input_shape,
+        base_channels=16,
+        channel_multiplier=2,
+        depth=5,
         dropout=0.1,
         max_channels=256,
-        num_blocks=5,
         num_single_blocks=2,
+        output_dim=1,
         use_double=True,
     ):
         """
@@ -38,14 +37,12 @@ class NewCNN3D(nn.Module):
 
         Parameters
         ----------
-        patch_shape : Tuple[int]
-            Shape of input image patch.
         output_dim : int, optional
             Dimension of output. Default is 1.
         dropout : float, optional
             Fraction of values to randomly drop during training. Default is
             0.1.
-        num_blocks : int, optional
+        depth : int, optional
             Number of convolutional blocks. Default is 5.
         use_double : bool, optional
             Indication of whether to use double convolution. Default is True.
@@ -55,13 +52,11 @@ class NewCNN3D(nn.Module):
 
         # Instance attributes
         self.dropout = dropout
-        self.patch_shape = patch_shape
-
         self.encode = Encoder3D(
-            in_channels,
-            first_out_channels,
-            num_blocks,
-            channel_growth=channel_growth,
+            input_shape[0],
+            base_channels,
+            depth,
+            channel_multiplier=channel_multiplier,
             use_double=use_double,
             max_channels=max_channels,
             num_single_blocks=num_single_blocks,
@@ -121,8 +116,8 @@ class Encoder3D(nn.Module):
         self,
         in_channels,
         out_channels,
-        num_blocks,
-        channel_growth=2,
+        depth,
+        channel_multiplier=2,
         use_double=True,
         max_channels=256,
         num_single_blocks=2,
@@ -136,9 +131,9 @@ class Encoder3D(nn.Module):
             Number of channels input to the first block.
         out_channels : int
             Number of channels output by the first block.
-        num_blocks : int
+        depth : int
             Number of conv blocks in the encoder.
-        channel_growth : float, optional
+        channel_multiplier : float, optional
             Multiplicative channel growth factor per layer. Default is 2.
         use_double : bool, optional
             Indication of whether blocks use double convolution. Default is True.
@@ -150,14 +145,14 @@ class Encoder3D(nn.Module):
 
         # Create encoding blocks
         blocks = list()
-        for i in range(num_blocks):
+        for i in range(depth):
             use_double = i > num_single_blocks
             block = ConvBlock3D(
                 in_channels, out_channels, use_double=use_double
             )
             blocks.append(block)
             in_channels = block.out_channels
-            out_channels = int(min(out_channels * channel_growth, max_channels))
+            out_channels = int(min(out_channels * channel_multiplier, max_channels))
 
         # Instance attributes
         self.blocks = nn.ModuleList(blocks)
