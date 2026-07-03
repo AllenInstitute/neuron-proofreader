@@ -20,5 +20,32 @@ setup_google_creds
 
 export AWS_REGION=us-west-2
 
-# This is the master script for the capsule. When you click "Reproducible Run", the code in this file will execute.
-python -u train.py "$@"
+# Parse --mode from named parameters; collect remaining args to forward
+MODE="train"
+REMAINING_ARGS=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --mode)
+            MODE="$2"
+            shift 2
+            ;;
+        *)
+            REMAINING_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# Dispatch to the appropriate script
+case "$MODE" in
+    train)
+        python -u train.py "${REMAINING_ARGS[@]}"
+        ;;
+    evaluate)
+        python -u evaluate.py "${REMAINING_ARGS[@]}"
+        ;;
+    *)
+        echo "Invalid mode: '$MODE'. Must be 'train' or 'evaluate'." >&2
+        exit 1
+        ;;
+esac

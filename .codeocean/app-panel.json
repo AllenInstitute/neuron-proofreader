@@ -1,0 +1,95 @@
+{
+	"version": 1,
+	"named_parameters": true,
+	"categories": [
+		{
+			"id": "Yvcoc6PL0oxQmLtv",
+			"name": "Run Configuration",
+			"icon": "⚙️"
+		},
+		{
+			"id": "Nz8IxgqxB3cBzOdF",
+			"name": "Model",
+			"icon": "🤖"
+		},
+		{
+			"id": "Ykdwt4Q1oUCgEg3J",
+			"name": "Train",
+			"icon": "💪"
+		}
+	],
+	"parameters": [
+		{
+			"id": "WlUhFAHELHBSyYr0",
+			"category": "Yvcoc6PL0oxQmLtv",
+			"name": "Run Mode",
+			"param_name": "mode",
+			"type": "list",
+			"value_type": "string",
+			"default_value": "train",
+			"extra_data": [
+				"train",
+				"evaluate"
+			]
+		},
+		{
+			"id": "WIbm2vPvbaJkjUOq",
+			"category": "Nz8IxgqxB3cBzOdF",
+			"name": "Base Channels",
+			"param_name": "base_channels",
+			"description": "Number of channels in first convolutional layer",
+			"type": "text",
+			"value_type": "integer",
+			"minimum": 1
+		},
+		{
+			"id": "45k8IMYqn1KpJZxh",
+			"category": "Nz8IxgqxB3cBzOdF",
+			"name": "Depth",
+			"param_name": "depth",
+			"description": "Number of convolutional blocks",
+			"type": "text",
+			"value_type": "integer",
+			"minimum": 1
+		},
+		{
+			"id": "wKL4zPEB9SnKoOKi",
+			"category": "Nz8IxgqxB3cBzOdF",
+			"name": "Model Name",
+			"param_name": "model_name",
+			"description": "Name of Model",
+			"type": "text",
+			"value_type": "string",
+			"required": true
+		},
+		{
+			"id": "k1bZDNuoilsfDhxL",
+			"category": "Ykdwt4Q1oUCgEg3J",
+			"name": "Learning Rate",
+			"param_name": "lr",
+			"type": "text",
+			"value_type": "number"
+		},
+		{
+			"id": "xqwpl4Ga065pI6kT",
+			"category": "Ykdwt4Q1oUCgEg3J",
+			"name": "Minimum Recall",
+			"param_name": "min_recall",
+			"description": "Required recall for saved checkpoints",
+			"type": "text",
+			"value_type": "number",
+			"default_value": "0.9"
+		},
+		{
+			"id": "SOs8E3JCiLdnvxLI",
+			"category": "Ykdwt4Q1oUCgEg3J",
+			"name": "Random Nonmerge Site Probability",
+			"param_name": "random_nonmerge_site_prob",
+			"type": "text",
+			"value_type": "number",
+			"default_value": "0.25",
+			"minimum": 0,
+			"maximum": 1
+		}
+	]
+}

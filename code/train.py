@@ -8,24 +8,17 @@ Code starting merge detection training session.
 
 """
 
-import resource
+import argparse
 import torch
 
 from neuron_proofreader.configs import GraphConfig, ImageConfig
-from neuron_proofreader.machine_learning.vision_models import CNN3D, ViT3D
+from neuron_proofreader.models.vision_models import CNN3D, ViT3D
 from neuron_proofreader.machine_learning.train import Trainer
 from neuron_proofreader.merge_proofreading.merge_datamodules import (
     create_dataset_collection,
     ThreadedDataLoader,
 )
 from neuron_proofreader.utils import ml_util
-
-
-# Raise the soft file descriptor limit to the hard limit to prevent
-# "Too many open files" when many threads open GCS credentials concurrently
-_soft, _hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-resource.setrlimit(resource.RLIMIT_NOFILE, (_hard, _hard))
-print(f"File descriptor limit set to: {_hard}")
 
 
 def main():
@@ -41,7 +34,9 @@ def main():
         optimizer_cls=torch.optim.AdamW,
         device="cuda",
     )
+    batch_size -= 1
     print("Batch Size:", batch_size)
+    assert batch_size > 0
 
     # Create datasets
     train_dataset, val_dataset = [
@@ -53,7 +48,7 @@ def main():
             swcs_root_path,
             graph_config=graph_config,
             img_config=img_config,
-            random_nonmerge_site_prob=random_nonmerge_site_prob,
+            random_nonmerge_site_prob=args.random_nonmerge_site_prob,
         )
         for ds_mode, brain_ids in zip(["Train", "Val"], [train_ids, val_ids])
     ]
@@ -87,12 +82,11 @@ def main():
 def init_trainer():
     trainer = Trainer(
         model,
-        model_name,
+        args.model_name,
         output_dir,
         device="cuda",
-        min_recall=min_recall,
-        lr=lr,
-        save_mistake_mips=save_mistake_mips,
+        min_recall=args.min_recall,
+        lr=args.lr,
         verbose=True
     )
     if model_path:
@@ -101,6 +95,15 @@ def init_trainer():
 
 
 if __name__ == "__main__":
+    # Parse arguments
+    parser = argparse.ArgumentParser(description="Process named arguments")
+    parser.add_argument("--base_channels", type=int, required=True)
+    parser.add_argument("--depth", type=int, required=True)
+    parser.add_argument("--lr", type=float, required=True)
+    parser.add_argument("--min_recall", type=float, required=True)
+    parser.add_argument("--model_name", type=str, required=True)
+    args = parser.parse_args()
+
     # Dataset
     train_ids = ["653159", "715345", "730902", "789202", "794491", "802449"]
     val_ids = ["751473", "794495"]
@@ -114,12 +117,8 @@ if __name__ == "__main__":
 
     # Parameters
     is_multimodal = False
-    lr = 1e-4
-    min_recall = 0.90
     modality = None
     prefetch = 32
-    random_nonmerge_site_prob = 0.25
-    save_mistake_mips = False
 
     graph_config = GraphConfig(
         anisotropy=(0.748, 0.748, 1.0),
@@ -135,13 +134,23 @@ if __name__ == "__main__":
     )
 
     # Model architecture
-    model_name = "MergeDetectorCNN3D"
-    model = CNN3D(
-        img_config.patch_shape,
-        n_conv_layers=5,
-        n_feat_channels=24,
-        use_double_conv=True
-    )
+    print("Model Name:", args.model_name)
+    if "new" in args.model_name.lower():
+        input_shape = (2,) + img_config.patch_shape
+        model = NewCNN3D(
+            input_shape,
+            base_channels=args.base_channels,
+            depth=args.depth,
+            max_channels=256,
+            use_double=True,
+        )
+    else:    
+        model = CNN3D(
+            img_config.patch_shape,
+            n_conv_layers=args.depth,
+            n_feat_channels=args.base_channels,
+            use_double_conv=True,
+        )
 
     # Run code
     main()
