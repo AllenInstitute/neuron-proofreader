@@ -171,7 +171,7 @@ class ConvBlock3D(nn.Module):
     ):
         """
         Instantiates a ConvBlock3D object.
- 
+
         Parameters
         ----------
         in_channels : int
