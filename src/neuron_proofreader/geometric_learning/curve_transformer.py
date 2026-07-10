@@ -17,10 +17,13 @@ from neuron_proofreader.utils import util
 
 class CurveEncoder(nn.Module):
     """
-    Transformer encoder that maps a 3D first order finite differences, to a
+    Transformer encoder that maps 3D first-order finite differences to a
     latent vector. The curve is tokenized into fixed-length segments with a
-    class token. Positional encodings are sinusoidal over the normalized arc
-    position [0, 1], making the encoder robust to varying numbers of points
+    class token. Each segment token is built from its flattened finite
+    differences concatenated with its normalized arc-length position in
+    [0, 1], letting the segment projection learn the geometry-position
+    relationship directly rather than injecting a separate positional
+    encoding. This makes the encoder robust to varying numbers of points
     and path lengths.
     """
 
@@ -60,7 +63,7 @@ class CurveEncoder(nn.Module):
         # Instance attributes
         self.segment_len = segment_len
         self.cls_token = nn.Parameter(torch.randn(1, 1, d_token))
-        self.segment_proj = nn.Linear(segment_len * 3, d_token)
+        self.segment_proj = nn.Linear(segment_len * 3 + 1, d_token)
 
         # Architecture
         encoder_layer = nn.TransformerEncoderLayer(
@@ -98,14 +101,24 @@ class CurveEncoder(nn.Module):
         B, N, _ = diffs.shape
         n_segments = N // self.segment_len
 
-        # CLS and segment tokens
-        cls_token = self.cls_token.expand(B, -1, -1)
-        segments = diffs[:, :n_segments * self.segment_len, :]
-        seg_tokens = self.segment_proj(
-            segments.reshape(B, n_segments, self.segment_len * 3)
-        )
+        # Arc length: cumulative step norm, normalized to [0, 1] per sequence.
+        step_len = diffs.norm(dim=-1)
+        arc_pos = torch.cumsum(step_len, dim=1)
+        arc_pos = arc_pos / arc_pos[:, -1:].clamp_min(1e-8)
 
-        # Concatenate: [CLS | segments | end]
+        # Segment features: flattened diffs + arc position
+        segments = diffs[:, :n_segments * self.segment_len, :]
+        segments = segments.reshape(B, n_segments, self.segment_len, 3)
+        seg_pos = arc_pos[:, :n_segments * self.segment_len]
+        seg_pos = seg_pos.reshape(B, n_segments, self.segment_len)[:, :, -1:]
+
+        seg_input = torch.cat(
+            [segments.reshape(B, n_segments, -1), seg_pos], dim=-1
+        )
+        seg_tokens = self.segment_proj(seg_input)
+
+        # Concatenate: [CLS | segments]
+        cls_token = self.cls_token.expand(B, -1, -1)
         tokens = torch.cat([cls_token, seg_tokens], dim=1)
 
         # Token-level mask — CLS is always unmasked
@@ -116,13 +129,6 @@ class CurveEncoder(nn.Module):
                 torch.zeros(B, 1, dtype=torch.bool, device=mask.device),
                 seg_mask,
             ], dim=1)
-
-        # Sinusoidal positional encoding — skip CLS (position 0 reserved)
-        pe = sinusoidal_encoding(tokens.shape[1], tokens.shape[2], tokens.device)
-        pe[:, 0, :] = 0.0
-        if token_mask is not None:
-            pe = pe * (~token_mask).unsqueeze(-1).float()
-        tokens = tokens + pe
 
         tokens = self.transformer(tokens, src_key_padding_mask=token_mask)
 
@@ -172,14 +178,12 @@ class AutoregressiveINRDecoder(nn.Module):
         super().__init__()
 
         # Instance attributes
-        self.segment_len = segment_len
-        self.n_frequencies = n_frequencies
-        d_seg = segment_len * 3
-
-        # Seed the GRU hidden state from z
         self.latent_proj = nn.Linear(latent_dim, d_hidden)
+        self.n_frequencies = n_frequencies
+        self.segment_len = segment_len
 
         # Input at each step: [T_{i-1} | pe(t_i) | z]
+        d_seg = segment_len * 3
         d_input = d_seg + 1 + latent_dim
         self.gru = nn.GRU(
             input_size=d_input,
@@ -321,33 +325,3 @@ class CurveAutoencoder(nn.Module):
         model = cls(**checkpoint["config"])
         model.load_state_dict(checkpoint["model_state_dict"])
         return model
-
-
-# --- Helpers ---
-def sinusoidal_encoding(n_tokens, d_token, device):
-    """
-    Sinusoidal positional encoding over normalised arc position [0, 1].
-
-    Parameters
-    ----------
-    n_tokens : int
-        Number of tokens.
-    d_token : int
-        Token dimension.
-    device : torch.device
-        Device to create the encoding on.
-
-    Returns
-    -------
-    torch.Tensor
-        Encoding of shape (1, n_tokens, d_token).
-    """
-    position = torch.linspace(0, 1, n_tokens, device=device).unsqueeze(1)
-    div_term = torch.exp(
-        torch.arange(0, d_token, 2, device=device)
-        * (-np.log(10000.0) / d_token)
-    )
-    pe = torch.zeros(n_tokens, d_token, device=device)
-    pe[:, 0::2] = torch.sin(position * div_term)
-    pe[:, 1::2] = torch.cos(position * div_term)
-    return pe.unsqueeze(0)
