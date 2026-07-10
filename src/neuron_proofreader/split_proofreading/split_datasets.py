@@ -31,46 +31,31 @@ from neuron_proofreader.utils import util
 class FragmentsDataset(IterableDataset):
     """
     A dataset object that contains a graph built from fragments corresponding
-    to a single brain. Note that this dataset supports fragments extracted
-    from either a block or whole-brain.
+    to a single brain.
     """
 
-    def __init__(
-        self,
-        fragments_graph,
-        img_config,
-        batch_size=32,
-        gt_path=None,
-        prefetch=4,
-    ):
+    def __init__(self, fragments_graph, img_config, proposals_per_batch=64):
         """
         Instantiates a FragmentsDataset object.
 
         Parameters
         ----------
-        fragments_path : str
-            Path to predicted SWC files to be loaded.
-        img_path : str
-            Path to the raw image associated with the fragments.
-        graph_config : GraphConfig
+        fragments_graph : str
             ...
-        gt_path : str, optional
-            Path to ground-truth SWC files to be loaded. Default is None.
+        img_config : ImageConfig
+            Configuration object containing image parameters.
+        proposals_per_batch : int, optional
+            Maximum number of proposals in subgraphs yielded per batch.
+            Default is 64.
         """
-        # Instance attributes
-        self.batch_size = batch_size
         self.graph = fragments_graph
-        self.gt_path = gt_path
-        self.prefetch = prefetch
-        self.transform = img_config.transform
-
-        # Feature extractor
         self.feature_extractor = FeaturePipeline(
             self.graph,
             img_config.img_path,
             brightness_clip=img_config.brightness_clip,
             patch_shape=img_config.patch_shape,
         )
+        self.proposals_per_batch = proposals_per_batch
 
     # --- Get Data ---
     def __iter__(self):
@@ -101,7 +86,9 @@ class FragmentsDataset(IterableDataset):
         sampler : SubgraphSampler
             Subgraph sampler that is used to iterate over dataset.
         """
-        sampler = SubgraphSampler(self.graph, max_proposals=self.batch_size)
+        sampler = SubgraphSampler(
+            self.graph, max_proposals=self.proposals_per_batch
+        )
         return iter(sampler)
 
 
@@ -111,63 +98,18 @@ class FragmentsDatasetCollection(IterableDataset):
     to different whole-brain images.
     """
 
-    def __init__(self, shuffle=True):
+    def __init__(self, datasets, shuffle=True):
         """
         Instantiates a FragmentsDatasetCollection object.
 
         Parameters
         ----------
         shuffle : bool, optional
-            Indication of whether to shuffle examples. Default is True.
+            True if examples should be shuffled each epoch. Default is True.
         """
         # Instance attributes
-        self.datasets = dict()
+        self.datasets = datasets
         self.shuffle = shuffle
-
-    def add_dataset(
-        self,
-        key,
-        fragments_path,
-        img_path,
-        config,
-        gt_path=None,
-        metadata_path=None,
-        prefetch=4,
-        soma_centroids=list(),
-    ):
-        """
-        Adds a dataset to the collection of datasets.
-
-        Parameters
-        ----------
-        key : hashable
-            Unique identifier of the dataset to be added.
-        fragments_path : str
-            Path to predicted SWC files to be loaded.
-        img_path : str
-            Path to the raw image associated with the fragments.
-        config : Config
-            Configuration object containing parameters and settings.
-        gt_path : str, optional
-            Path to ground-truth SWC files to be loaded. Default is None.
-        metadata_path : str, optional
-            Patch to JSON file containing metadata on block that fragments
-            were extracted from. Default is None.
-        prefetch : int, optional
-            Number of batches to prefetch. Default is 4.
-        soma_centroids : List[Tuple[int]], optional
-            Phyiscal coordinates of soma centroids. Default is an empty list.
-        """
-        assert key not in self.datasets, "Key has been used!"
-        self.datasets[key] = FragmentsDataset(
-            fragments_path,
-            img_path,
-            config,
-            gt_path=gt_path,
-            metadata_path=metadata_path,
-            prefetch=prefetch,
-            soma_centroids=soma_centroids,
-        )
 
     def __iter__(self):
         """
@@ -180,7 +122,7 @@ class FragmentsDatasetCollection(IterableDataset):
         targets : torch.Tensor
             Ground truth labels.
         """
-        # Initializations
+        # Create prefetching data structures
         samplers = self.init_samplers()
         queue = Queue(maxsize=self.prefetch * len(samplers))
         active_keys = set(samplers.keys())
@@ -214,18 +156,20 @@ class FragmentsDatasetCollection(IterableDataset):
         finally:
             queue.put((key, StopIteration, None))
 
-    def generate_proposals(self, search_radius):
+    def generate_proposals(self, proposal_config):
         """
         Generates proposals for each dataset.
 
         Parameters
         ----------
-        search_radius : float
-            Search radius used to generate proposals.
+        proposal_config : ProposalConfig
+            Configuration object containing parameters for generating
+            proposals.
         """
         for key in tqdm(self.datasets, desc="Generate Proposals"):
             self.datasets[key].graph.generate_proposals(
-                search_radius, allow_nonleaf_proposals=True
+                proposal_config.search_radius,
+                **proposal_config,
             )
 
     # --- Helpers ---
@@ -322,39 +266,34 @@ class FragmentsDatasetCollection(IterableDataset):
 
 
 # -- Helpers --
-def generate_dataset_example_ids(bucket_name, dataset_prefix):
+def generate_example_ids(ds_prefix):
     """
     Generates dataset example identifiers.
 
     Parameters
     ----------
-    bucket_name : str
-        Name of the Google Cloud Storage bucket.
-    dataset_prefix : str
-        Root prefix under which dataset contents are organized.
+    ds_prefix : str
+        Root prefix under which datasets are organized.
 
     Yields
     -------
     Tuple[str]
-        Dataset example ID formatted as (brain_id, segmentation_id, block_id).
+        Dataset ID formatted as (brain_id, segmentation_id, block_id).
     """
-    brain_prefixes = util.list_gcs_subdirectories(bucket_name, dataset_prefix)
-    for brain_prefix in brain_prefixes:
+    bucket_name, _ = util.parse_cloud_path(ds_prefix)
+    for brain_prefix in util.list_gcs_subprefixes(ds_prefix):
         # Extract brain id
         brain_id = brain_prefix.split("/")[-2]
 
         # Iterate over segmentations
-        pred_prefix = os.path.join(brain_prefix, "pred_swcs/")
-        prefixes = util.list_gcs_subdirectories(bucket_name, pred_prefix)
-        for brain_segmentation_prefix in prefixes:
+        pred_prefix = os.path.join(bucket_name, brain_prefix, "pred_swcs")
+        for brain_seg_prefix in util.list_gcs_subprefixes(pred_prefix):
             # Extract segmentation id
-            segmentation_id = brain_segmentation_prefix.split("/")[-2]
+            segmentation_id = brain_seg_prefix.split("/")[-2]
 
             # Iterate over blocks
-            block_prefixes = util.list_gcs_subdirectories(
-                bucket_name, brain_segmentation_prefix
-            )
-            for block_prefix in block_prefixes:
+            ex_prefix = os.path.join(bucket_name, brain_seg_prefix)
+            for block_prefix in util.list_gcs_subprefixes(ex_prefix):
                 # Extract block id
                 block_id = block_prefix.split("/")[-2]
                 yield brain_id, segmentation_id, block_id

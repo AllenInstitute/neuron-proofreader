@@ -627,7 +627,7 @@ class SkeletonGraph(nx.Graph):
             clip skeletons to.
         """
         bucket_name, path = util.parse_cloud_path(metadata_path)
-        if util.check_gcs_file_exists(bucket_name, path):
+        if util.check_gcs_exists(bucket_name, path):
             # Extract bounding box
             metadata = util.read_json_from_gcs(bucket_name, path)
             origin = metadata["chunk_origin"][::-1]

@@ -46,6 +46,15 @@ class Config(ABC):
         path = os.path.join(output_dir, f"{self.name}.json")
         util.write_json(path, self.to_dict())
 
+    def __repr__(self):
+        fields = self.to_dict()
+        width = max(len(k) for k in fields)
+        lines = "\n".join(
+            f"  {k:<{width}} = {v!r}"
+            for k, v in fields.items()
+        )
+        return f"{self.__class__.__name__}(\n{lines}\n)"
+
 
 @dataclass
 class GraphConfig(Config):
@@ -124,7 +133,7 @@ class ProposalsConfig(Config):
     allow_nonleaf_proposals : bool
         Indication of whether to generate proposals between leaf and nodes
         with degree 2.
-    proposals_per_leaf : int
+    max_proposals_per_leaf : int
         Maximum number of proposals generated at leaf nodes.
     trim_endpoints_bool : bool
         Indication of whether trim endpoints of isolated leaf-to-leaf
