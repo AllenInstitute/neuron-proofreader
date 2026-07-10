@@ -168,6 +168,7 @@ class SkeletonFeatureExtractor:
             edge_features[edge] = np.array(
                 [
                     np.mean(self.graph.node_radius[path]),
+                    min(self.graph.path_length(path), 5000) / 5000,
                 ],
             )
         features.set_features(edge_features, "edge")
@@ -605,7 +606,7 @@ class FeatureSet:
         "proposal": ("proposal_features", "proposal_index_mapping"),
         "proposal_patches": ("proposal_patches", "proposal_index_mapping"),
     }
-    n_branch_features = 1
+    n_branch_features = 2
     n_proposal_features = 70
 
     def __init__(self, graph):
@@ -986,7 +987,7 @@ def get_feature_dict():
         Dictionary that contains the number of features for branchs and
         proposals.
     """
-    return {"branch": 1, "proposal": 67}
+    return {"branch": 2, "proposal": 67}
 
 
 def resize_segmentation(mask, new_shape):
