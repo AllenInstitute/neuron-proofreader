@@ -117,7 +117,7 @@ class Trainer:
         self.writer = SummaryWriter(log_dir=log_dir)
 
     # --- Core Routines ---
-    def run(self, train_dataloader, val_dataloader):
+    def __call__(self, train_dataloader, val_dataloader):
         """
         Runs the full training and validation loop.
 
@@ -128,9 +128,7 @@ class Trainer:
         val_dataloader : torch.utils.data.Dataset
             Dataloader used for validation.
         """
-        exp_name = os.path.basename(os.path.normpath(self.log_dir))
-        val_dataloader.dataset.save_val_summary(self.log_dir)
-        print("\nExperiment:", exp_name)
+        print("\nExperiment:", os.path.basename(self.log_dir))
         for epoch in range(self.max_epochs):
             # Train-Validate
             print("\nEpoch", epoch)
@@ -181,11 +179,8 @@ class Trainer:
             self.scaler.step(self.optimizer)
             self.scaler.update()
 
-            # Compute metrics
-            hat_y = hat_y > 0
-            metrics.update(hat_y, y, loss)
-
-            # Update progress bar
+            # Updates
+            metrics.update(hat_y > 0, y, loss)
             if self.verbose:
                 pbar.update(1)
 
@@ -229,15 +224,12 @@ class Trainer:
             with torch.inference_mode():
                 y, hat_y, loss = self.forward_pass(x, y)
 
-            # Compute metrics
-            hat_y = hat_y > 0
-            metrics.update(hat_y, y, loss)
-
             # Save MIPs of mistakes
             self._save_mistake_mips(x, y, hat_y, idx_offset)
             idx_offset += len(y)
 
-            # Update progress bar
+            # Updates
+            metrics.update(hat_y > 0, y, loss)
             if self.verbose:
                 pbar.update(1)
 
@@ -264,8 +256,8 @@ class Trainer:
         loss : torch.Tensor
             Computed loss value.
         """
-        x = x.to(self.device, non_blocking=True)
-        y = y.to(self.device, non_blocking=True)
+        x = x.to(self.device)
+        y = y.to(self.device)
         with torch.autocast(device_type="cuda", dtype=torch.float16):
             hat_y = self.model(x)
             loss = self.criterion(hat_y, y)

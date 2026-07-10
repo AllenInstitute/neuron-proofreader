@@ -116,38 +116,22 @@ class ProposalGraph(SkeletonGraph):
         self.node_proposals[j].add(i)
         self.proposals.add(frozenset({i, j}))
 
-    def generate_proposals(
-        self,
-        search_radius,
-        allow_nonleaf_proposals=False,
-        max_proposals_per_leaf=3,
-        min_size_with_proposals=0,
-    ):
+    def generate_proposals(self, config):
         """
         Generates proposals from leaf nodes.
 
         Parameters
         ----------
-        search_radius : float
-            Search radius used to generate proposals.
-        allow_nonleaf_proposals : bool, optional
-            Indication of whether to generate proposals between leaf and nodes
-            with degree 2. Default is False.
-        min_size_with_proposals : float
-            Minimum cable length (in microns) of connected components that
-            proposals are generated from. Default is 0.
+        config : ProposalConfig
+            Configuration object containing parameters for generating
+            proposals.
         """
         # Proposal generation
         assert len(self.kdtree.data) == self.number_of_nodes()
-        proposal_generator = ProposalGenerator(
-            self,
-            allow_nonleaf_proposals=allow_nonleaf_proposals,
-            max_proposals_per_leaf=max_proposals_per_leaf,
-            min_size_with_proposals=min_size_with_proposals,
-        )
-        proposals = proposal_generator(search_radius)
+        proposal_generator = ProposalGenerator(self, config)
+        proposals = proposal_generator()
 
-        self.search_radius = search_radius
+        self.search_radius = config.initial_search_radius
         self.store_proposals(proposals)
         self.trim_proposals()
 
