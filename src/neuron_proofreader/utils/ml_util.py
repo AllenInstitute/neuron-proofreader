@@ -144,6 +144,8 @@ class BinaryMetricAccumulator:
         self.loss += loss.item()
         self.n += y.numel()
 
+        del pred, y, loss
+
     def compute(self):
         precision = self.tp / (self.tp + self.fp + 1e-8)
         recall = self.tp / (self.tp + self.fn + 1e-8)

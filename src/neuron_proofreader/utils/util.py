@@ -217,8 +217,11 @@ def read_json(path):
     dict
         Contents of JSON file.
     """
-    with open(path, "r") as f:
-        return json.load(f)
+    if is_gcs_path(path):
+        return json.loads(read_gcs_txt(path))
+    else:
+        with open(path, "r") as f:
+            return json.load(f)
 
 
 def read_txt(path, client=None):
@@ -338,9 +341,9 @@ def get_google_swcs_prefix(root_prefix, brain_id, segmentation_id):
     # Determine old vs. new result
     prefix1 = os.path.join(root_prefix, brain_id, "whole_brain")
     prefix2 = os.path.join(root_prefix, "whole_brain", brain_id)
-    if check_gcs_exists(prefix1, is_prefix=True):
+    if check_gcs_prefix_exists(prefix1, is_prefix=True):
         prefix = prefix1
-    elif check_gcs_exists(prefix2, is_prefix=True):
+    elif check_gcs_prefix_exists(prefix2, is_prefix=True):
         prefix = prefix2
     else:
         raise Exception("Unable to find Google swcs result!")
@@ -411,16 +414,15 @@ def parse_cloud_path(path):
 
 
 # --- GCS Utils ---
-def check_gcs_exists(path, is_prefix=False):
+def check_gcs_file_exists(path, is_prefix=False):
     """
-    Checks if a file or prefix exists in GCS.
+    Checks if a file exists at the given GCS path.
+
     Parameters
     ----------
     path : str
         GCS path to check.
-    prefix : bool
-        If True, checks whether any object exists under the given prefix.
-        If False, checks whether the exact file exists.
+
     Returns
     -------
     bool
@@ -428,17 +430,13 @@ def check_gcs_exists(path, is_prefix=False):
     """
     bucket_name, key = parse_cloud_path(path)
     bucket = storage.Client().bucket(bucket_name)
-    if is_prefix:
-        key = key.rstrip("/") + "/"
-        return any(bucket.list_blobs(prefix=key, max_results=1))
-    else:
-        return bucket.blob(key).exists()
+    return bucket.blob(key).exists()
 
 
 def check_gcs_prefix_exists(path):
     bucket_name, prefix = parse_cloud_path(path)
-    prefix = prefix.rstrip("/") + "/"
     bucket = storage.Client().bucket(bucket_name)
+    prefix = prefix.rstrip("/") + "/"
     exists = any(bucket.list_blobs(prefix=prefix, max_results=1))
     return exists
 
@@ -483,7 +481,7 @@ def list_gcs_paths(bucket_name, prefix, extension=""):
     for name in [b.name for b in bucket.list_blobs(prefix=prefix)]:
         if extension in name:
             paths.append(os.path.join(f"gs://{bucket_name}", name))
-    return paths
+    return sorted(paths)
 
 
 def list_gcs_subprefixes(path):
@@ -511,13 +509,12 @@ def list_gcs_subprefixes(path):
 
     # Parse directory contents
     prefix_depth = len(prefix.split("/"))
-    subdirs = list()
+    subprefixes = list()
     for prefix in blobs.prefixes:
-        is_dir = prefix.endswith("/")
-        is_direct_subdir = len(prefix.split("/")) - 1 == prefix_depth
-        if is_dir and is_direct_subdir:
-            subdirs.append(prefix)
-    return subdirs
+        is_direct = len(prefix.split("/")) - 1 == prefix_depth
+        if prefix.endswith("/") and is_direct:
+            subprefixes.append(prefix)
+    return sorted(subprefixes)
 
 
 def read_gcs_txt(prefix, client=None):
@@ -526,7 +523,7 @@ def read_gcs_txt(prefix, client=None):
 
     Parameters
     ----------
-    path : str
+    prefix : str
         Path to txt file to be read.
 
     Returns
@@ -538,28 +535,6 @@ def read_gcs_txt(prefix, client=None):
     client = client or storage.Client()
     bucket = client.bucket(bucket_name)
     return bucket.blob(subprefix).download_as_text()
-
-
-def read_json_from_gcs(bucket_name, blob_path):
-    """
-    Reads JSON file stored in a GCS bucket.
-
-    Parameters
-    ----------
-    bucket_name : str
-        Name of the GCS bucket containing the JSON file.
-    blob_path : str
-        Path to the JSON file within the GCS bucket.
-
-    Returns
-    -------
-    dict
-        Parsed JSON content as a Python dictionary.
-    """
-    client = storage.Client()
-    bucket = client.bucket(bucket_name)
-    blob = bucket.blob(blob_path)
-    return json.loads(blob.download_as_text())
 
 
 # --- S3 Utils ---

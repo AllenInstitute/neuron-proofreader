@@ -133,16 +133,20 @@ class ProposalsConfig(Config):
     allow_nonleaf_proposals : bool
         Indication of whether to generate proposals between leaf and nodes
         with degree 2.
+    initial_search_radius : float
+        Initial search radius for generating proposals.
     max_proposals_per_leaf : int
         Maximum number of proposals generated at leaf nodes.
     trim_endpoints_bool : bool
-        Indication of whether trim endpoints of isolated leaf-to-leaf
-        proposals.
+        True if endpoints of isolated leaf-to-leaf proposals should be 
+        trimmed.
     """
 
     allow_nonleaf_proposals: bool = False
+    initial_search_radius: float = 25
+    max_attempts: int = 2
     max_proposals_per_leaf: int = 3
     min_size_with_proposals: float = 0
-    trim_endpoints_bool: bool = True
-    search_radius: float = 25
+    name: str = "proposals_config"
     search_scaling_factor: float = 1.5
+    trim_endpoints_bool: bool = True

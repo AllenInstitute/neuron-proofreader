@@ -626,10 +626,9 @@ class SkeletonGraph(nx.Graph):
             Path to JSON file containing origin and shape of bounding box to
             clip skeletons to.
         """
-        bucket_name, path = util.parse_cloud_path(metadata_path)
-        if util.check_gcs_exists(bucket_name, path):
+        if util.check_gcs_file_exists(metadata_path):
             # Extract bounding box
-            metadata = util.read_json_from_gcs(bucket_name, path)
+            metadata = util.read_json(metadata_path)
             origin = metadata["chunk_origin"][::-1]
             shape = metadata["chunk_shape"][::-1]
 

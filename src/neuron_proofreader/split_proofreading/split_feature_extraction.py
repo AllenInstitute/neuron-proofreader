@@ -82,6 +82,18 @@ class FeaturePipeline:
             extractor(subgraph, features)
         return features
 
+    def close(self):
+        """Shuts down any persistent resources held by extractors."""
+        for extractor in self.extractors:
+            if hasattr(extractor, "close"):
+                extractor.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
 
 class SkeletonFeatureExtractor:
     """
@@ -156,7 +168,6 @@ class SkeletonFeatureExtractor:
             edge_features[edge] = np.array(
                 [
                     np.mean(self.graph.node_radius[path]),
-                    min(self.graph.path_length(path), 5000) / 5000,
                 ],
             )
         features.set_features(edge_features, "edge")
@@ -246,6 +257,7 @@ class ImageFeatureExtractor:
             point of proposal for image patch extraction. Default is 40.
         """
         self.brightness_clip = brightness_clip
+        self.executor = ThreadPoolExecutor()
         self.graph = graph
         self.img = TensorStoreImage(img_path)
         self.patch_shape = patch_shape
@@ -262,21 +274,19 @@ class ImageFeatureExtractor:
         features : FeatureSet
             Data structure that stores features.
         """
-        with ThreadPoolExecutor() as executor:
-            # Assign threads
-            pending = dict()
-            for proposal in subgraph.proposals:
-                thread = executor.submit(self.init_extractor, proposal)
-                pending[thread] = proposal
+        # Assign threads
+        pending = {
+            self.executor.submit(self.init_extractor, proposal): proposal
+            for proposal in subgraph.proposals
+        }
 
-            # Store results
-            patches, profiles = dict(), dict()
-            for thread in as_completed(pending.keys()):
-                proposal = pending.pop(thread)
-                extractor = thread.result()
-
-                profiles[proposal] = extractor.get_intensity_profile()
-                patches[proposal] = extractor.get_input_patch()
+        # Store results
+        patches, profiles = dict(), dict()
+        for thread in as_completed(pending.keys()):
+            proposal = pending.pop(thread)
+            extractor = thread.result()
+            profiles[proposal] = extractor.get_intensity_profile()
+            patches[proposal] = extractor.get_input_patch()
 
         # Update features
         features.set_features(patches, "proposal_patches")
@@ -312,6 +322,19 @@ class ImageFeatureExtractor:
         return extractor
 
     # --- Helpers ---
+    def close(self):
+        """
+        Shuts down the persistent thread pool. Call when this extractor is
+        no longer needed.
+        """
+        self.executor.shutdown(wait=True)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
     def create_segment_mask(self, proposal, shape, offset):
         # Find nearby nodes
         center = self.graph.proposal_midpoint(proposal)
@@ -582,7 +605,7 @@ class FeatureSet:
         "proposal": ("proposal_features", "proposal_index_mapping"),
         "proposal_patches": ("proposal_patches", "proposal_index_mapping"),
     }
-    n_branch_features = 2
+    n_branch_features = 1
     n_proposal_features = 70
 
     def __init__(self, graph):
@@ -963,7 +986,7 @@ def get_feature_dict():
         Dictionary that contains the number of features for branchs and
         proposals.
     """
-    return {"branch": 2, "proposal": 67}
+    return {"branch": 1, "proposal": 67}
 
 
 def resize_segmentation(mask, new_shape):
