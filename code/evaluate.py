@@ -335,6 +335,12 @@ if __name__ == "__main__":
     step_size = 20
     use_new_mask = True
 
+    img_config = ImageConfig(
+        brightness_clip=500,
+        patch_shape=(128, 128, 128),
+        percentiles=(1, 99.9),
+    )
+
     # Paths
     dataset_prefix = f"automated_proofreading_dataset/merge_detection/whole_brain_fragments_dataset/{brain_id}/{segmentation_id}"
     img_prefix_lookup_path = "/root/capsule/data/exaspim_image_prefixes.json"

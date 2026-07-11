@@ -12,6 +12,7 @@ import argparse
 import torch
 
 from neuron_proofreader.configs import GraphConfig, ImageConfig
+from neuron_proofreader.models.new_vision_models import NewCNN3D
 from neuron_proofreader.models.vision_models import CNN3D, ViT3D
 from neuron_proofreader.machine_learning.train import Trainer
 from neuron_proofreader.merge_proofreading.merge_datamodules import (
@@ -100,8 +101,10 @@ if __name__ == "__main__":
     parser.add_argument("--base_channels", type=int, required=True)
     parser.add_argument("--depth", type=int, required=True)
     parser.add_argument("--lr", type=float, required=True)
+    parser.add_argument("--max_channels", type=int, required=True)
     parser.add_argument("--min_recall", type=float, required=True)
     parser.add_argument("--model_name", type=str, required=True)
+    parser.add_argument("--random_nonmerge_site_prob", type=float, default=0.25)
     args = parser.parse_args()
 
     # Dataset
@@ -141,7 +144,7 @@ if __name__ == "__main__":
             input_shape,
             base_channels=args.base_channels,
             depth=args.depth,
-            max_channels=256,
+            max_channels=args.max_channels,
             use_double=True,
         )
     else:    

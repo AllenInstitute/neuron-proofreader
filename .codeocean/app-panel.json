@@ -63,6 +63,16 @@
 			"required": true
 		},
 		{
+			"id": "SwbIvbS2gnXmpmFE",
+			"category": "Nz8IxgqxB3cBzOdF",
+			"name": "Max Channels",
+			"param_name": "max_channels",
+			"type": "text",
+			"value_type": "integer",
+			"default_value": "256",
+			"minimum": 256
+		},
+		{
 			"id": "k1bZDNuoilsfDhxL",
 			"category": "Ykdwt4Q1oUCgEg3J",
 			"name": "Learning Rate",
