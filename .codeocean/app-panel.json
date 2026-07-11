@@ -73,6 +73,16 @@
 			"minimum": 256
 		},
 		{
+			"id": "lZb5A28rnHb6b7GP",
+			"category": "Nz8IxgqxB3cBzOdF",
+			"name": "Use ResBlock",
+			"param_name": "use_resblock",
+			"type": "list",
+			"value_type": "boolean",
+			"default_value": "True",
+			"extra_data": []
+		},
+		{
 			"id": "k1bZDNuoilsfDhxL",
 			"category": "Ykdwt4Q1oUCgEg3J",
 			"name": "Learning Rate",

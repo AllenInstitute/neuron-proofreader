@@ -105,6 +105,7 @@ if __name__ == "__main__":
     parser.add_argument("--min_recall", type=float, required=True)
     parser.add_argument("--model_name", type=str, required=True)
     parser.add_argument("--random_nonmerge_site_prob", type=float, default=0.25)
+    parser.add_argument("--use_resblock", type=bool, required=True)
     args = parser.parse_args()
 
     # Dataset
@@ -146,6 +147,7 @@ if __name__ == "__main__":
             depth=args.depth,
             max_channels=args.max_channels,
             use_double=True,
+            use_resblock=args.use_resblock,
         )
     else:    
         model = CNN3D(
