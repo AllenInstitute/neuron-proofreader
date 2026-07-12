@@ -21,32 +21,26 @@ from neuron_proofreader.utils import geometry_util
 
 # --- Plot Curves ---
 def plot_curves(curve1, curve2, name1=None, name2=None):
+    """
+    Plots two 3D curves using Plotly.
+
+    Parameters
+    ----------
+    curve1 : numpy.ndarray
+        Array with shape (N, 3) containing coordinates of the first curve.
+    curve2 : numpy.ndarray
+        Array with shape (M, 3) containing coordinates of the second curve.
+    name1 : str, optional
+        Label for the first curve in the plot legend. Default is None.
+    name2 : str, optional
+        Label for the second curve in the plot legend. Default is None.
+    """
+    pt = np.zeros((1, 3))
     fig = go.Figure(
         data=[
-            go.Scatter3d(
-                x=curve1[:, 0],
-                y=curve1[:, 1],
-                z=curve1[:, 2],
-                mode="lines",
-                name=name1,
-                line=dict(width=5, color="blue"),
-            ),
-            go.Scatter3d(
-                x=curve2[:, 0],
-                y=curve2[:, 1],
-                z=curve2[:, 2],
-                mode="lines",
-                name=name2,
-                line=dict(width=5, color="green"),
-            ),
-            go.Scatter3d(
-                x=[0],
-                y=[0],
-                z=[0],
-                mode="markers",
-                name="Origin",
-                marker=dict(size=3, color="red"),
-            ),
+            create_scatter3d(curve1, color="blue", name=name1),
+            create_scatter3d(curve2, color="green", name=name2),
+            create_scatter3d(pt, color="red", mode="markers", name="Origin"),
         ]
     )
     fig.update_layout(
@@ -55,18 +49,31 @@ def plot_curves(curve1, curve2, name1=None, name2=None):
     fig.show()
 
 
-def plot_length_distribution(dataset_collection, title=None, output_path=None):
+def plot_length_distribution(dataset, output_path=None, title=None):
+    """
+    Plots the distribution of path lengths in a dataset.
+
+    Parameters
+    ----------
+    dataset : PathsDataset
+        Dataset containing an "examples_df" attribute with a "length" column
+        specifying the path lengths.
+    output_path : str, optional
+        If provided, the figure is saved to this location. Otherwise, it is
+        displayed. Default is None.
+    title : str, optional
+        Title of the plot. Default is None.
+    """
     # Compute path length stats
-    lengths = dataset_collection.examples_df["length"]
-    p50 = round(np.percentile(lengths, 50), 2)
-    p99 = round(np.percentile(lengths, 99.9), 2)
-    thr_lengths = [l for l in lengths if l < p99]
+    lengths = dataset.examples_df["length"].to_numpy()
+    p50, p99 = np.percentile(lengths, [50, 99.9])
+    lengths = lengths[lengths <= p999]
 
     # Plot path lengths
     plt.figure(figsize=(8, 5))
-    plt.hist(thr_lengths, bins=50, edgecolor="white", linewidth=0.5, zorder=2)
-    add_line(p50, color="r", label=f"50th perc = {p50}")
-    add_line(p99, color="g", label=f"99.9th perc = {p99}")
+    plt.hist(lengths, bins=50, edgecolor="white", linewidth=0.5, zorder=2)
+    add_line(p50, color="r", label=f"50th perc = {p50:.2f}")
+    add_line(p99, color="g", label=f"99.9th perc = {p99:.2f}")
 
     # Plot labels
     plt.grid(axis="y", color="lightgrey", linewidth=0.5)
@@ -90,13 +97,26 @@ def plot_length_distribution(dataset_collection, title=None, output_path=None):
 
 # --- Plot Curve Embeddings ---
 def plot_error_vs_length(lengths, rmse_results, output_path=None):
+    """
+    Plots reconstruction error as a function of path length.
+
+    ----------
+    lengths : numpy.ndarray
+        One-dimensional array of path lengths in mircons.
+    rmse_results : numpy.ndarray
+        One-dimensional array of root mean squared errors in mircons.
+    output_path : str, optional
+        If provided, the figure is saved to this location. Otherwise, it is
+        displayed. Default is None.
+    """
     # Set colors
     norm = LogNorm(vmin=lengths.min(), vmax=lengths.max())
     colors = plt.cm.viridis(norm(lengths))
 
     # Plot
     plt.figure(figsize=(8, 6))
-    plt.scatter(lengths, rmse_results, c=colors, s=10, alpha=0.8)
+    sc = plt.scatter(lengths, rmse_results, c=colors, s=10, alpha=0.8)
+    plt.colorbar(sc, label="Path Length (μm)")
     plt.xscale("log")
     plt.yscale("log")
     plt.xlabel("Path Length (μm)", fontsize=12)
@@ -105,6 +125,19 @@ def plot_error_vs_length(lengths, rmse_results, output_path=None):
 
 
 def plot_latents_by_pca(curves, latents, output_path=None):
+    """
+    Visualizes latent representations using PCA.
+
+    Parameters
+    ----------
+    curves : List[numpy.ndarray]
+        Curves such that each is an array with shape (N, 3).
+    latents : numpy.ndarray
+        Array of latent representations with shape (N, latent_dim).
+    output_path : str, optional
+        Base path for saving the figures. If provided, the figure is saved to
+        this location. Otherwise, it is displayed. Default is None.
+    """
     # Set output paths
     if output_path:
         dir_output_path = output_path.replace("pca", "pca_direction")
@@ -124,6 +157,21 @@ def plot_latents_by_pca(curves, latents, output_path=None):
 
 
 def _plot_latents_by_direction(curves, latents_2d, pca, output_path=None):
+    """
+    Plots 2D latent colored by the principal direction of each curve.
+
+    Parameters
+    ----------
+    curves : List[numpy.ndarray]
+        Curves such that each is an array with shape (N, 3).
+    latents_2d : numpy.ndarray
+        Latent representations with shape (N, 2).
+    pca : sklearn.decomposition.PCA
+        Fitted PCA object used to generate "latents_2d".
+    output_path : str, optional
+        If provided, the figure is saved to this location. Otherwise, it is
+        displayed. Default is None.
+    """
     # Compute directions and colors for each curve
     directions = np.array([curve_principal_direction(c) for c in curves])
     colors = np.array([direction_to_color(d) for d in directions])
@@ -138,6 +186,21 @@ def _plot_latents_by_direction(curves, latents_2d, pca, output_path=None):
 
 
 def _plot_latents_by_length(lengths, latents_2d, pca, output_path=None):
+    """
+    Plots 2D latents colored by the length of each curve.
+
+    Parameters
+    ----------
+    curves : List[numpy.ndarray]
+        Curves such that each is an array with shape (N, 3).
+    latents_2d : numpy.ndarray
+        Latent representations with shape (N, 2).
+    pca : sklearn.decomposition.PCA
+        Fitted PCA object used to generate "latents_2d".
+    output_path : str, optional
+        If provided, the figure is saved to this location. Otherwise, it is
+        displayed. Default is None.
+    """
     plt.figure(figsize=(8, 6))
     sc = plt.scatter(
         latents_2d[:, 0],
@@ -148,19 +211,87 @@ def _plot_latents_by_length(lengths, latents_2d, pca, output_path=None):
         alpha=0.7,
         norm=LogNorm(vmin=lengths.min(), vmax=lengths.max()),
     )
-    plt.colorbar(sc, label="Path length (μm)")
+    plt.colorbar(sc, label="Path Length (μm)")
     plt.xlabel(f"PC1 ({pca.explained_variance_ratio_[0]*100:.1f}%)")
     plt.ylabel(f"PC2 ({pca.explained_variance_ratio_[1]*100:.1f}%)")
-    plt.title("PCA of curve embeddings")
+    plt.title("Curve Embeddings Colored by Path Length")
     visualize_result(output_path=output_path)
 
 
 # --- Helpers ---
-def add_line(p, color=None, label=None):
-    plt.axvline(p, color=color, linestyle="--", label=label, zorder=2)
+def add_line(x, color=None, label=None):
+    """
+    Adds a vertical reference line to the current Matplotlib axes.
+
+    Parameters
+    ----------
+    x : float
+        X-coordinate at which to draw the vertical line.
+    color : str, optional
+        Color of the line. Default is None.
+    label : str, optional
+        Label for the line displayed in the plot legend. Default is None.
+    """
+    plt.axvline(x, color=color, linestyle="--", label=label, zorder=2)
+
+
+def create_scatter3d(pts, color=None, mode="lines", name=None, width=5):
+    """
+    Creates a Plotly 3D scatter trace.
+
+    Parameters
+    ----------
+    pts : numpy.ndarray
+        Array with shape (N, 3) containing the 3D coordinates to plot.
+    color : str, optional
+        Color of the line or markers. Default is None.
+    mode : str, optional
+        Rendering mode for the trace. Default is "lines".
+    name : str, optional
+        Name of the trace displayed in the plot legend. Default is None.
+    width : float, optional
+        Width of object to be plotted. Default is 5.
+
+    Returns
+    -------
+    plotly.graph_objects.Scatter3d
+        A Plotly 3D scatter trace.
+    """
+    # Create object dict
+    if mode == "lines":
+        line = dict(width=width, color=color)
+        marker = None
+    else:
+        line = None
+        marker = dict(size=width, color=color)
+
+    # Create scatter plot
+    return go.Scatter3d(
+        x=pts[:, 0],
+        y=pts[:, 1],
+        z=pts[:, 2],
+        mode=mode,
+        name=name,
+        line=line,
+        marker=marker,
+    )
 
 
 def curve_principal_direction(curve):
+    """
+    Computes the principal direction of a 3D curve using PCA.
+
+    Parameters
+    ----------
+    curve : numpy.ndarray
+        Array with shape (N, 3) containing the 3D coordinates of the curve.
+
+    Returns
+    -------
+    numpy.ndarray
+        Unit vector of shape (3,) representing the principal direction of the
+        curve.
+    """
     curve_pca = PCA(n_components=1)
     curve_pca.fit(curve)
     direction = curve_pca.components_[0]
@@ -170,6 +301,21 @@ def curve_principal_direction(curve):
 
 
 def direction_to_color(direction):
+    """
+    Converts a 3D direction vector into an RGB color representation, where the
+    azimuth angle of the vector is mapped to a hue and polar angle is mapped
+    to a saturation.
+
+    Parameters
+    ----------
+    direction : numpy.ndarray
+        Unit vector of shape (3,) representing a 3D direction.
+
+    Returns
+    -------
+    tuple
+        RGB color corresponding to the input direction.
+    """
     x, y, z = direction
     azimuth = np.arctan2(y, x)
     hue = (azimuth + np.pi) / (2 * np.pi)
@@ -180,6 +326,15 @@ def direction_to_color(direction):
 
 
 def visualize_result(output_path=None):
+    """
+    Displays or saves the current Matplotlib figure.
+
+    Parameters
+    ----------
+    output_path : str, optional
+        If provided, the figure is saved to this location. Otherwise, it is
+        displayed. Default is None.
+    """
     plt.tight_layout()
     if output_path:
         plt.savefig(output_path, dpi=300, bbox_inches="tight")
