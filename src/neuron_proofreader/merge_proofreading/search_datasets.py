@@ -283,7 +283,6 @@ class BranchingSearchDataset(SearchDataset):
         is_multimodal=False,
         min_search_size=0,
         prefetch=64,
-        step_size=10,
         subgraph_radius=100,
     ):
         # Call parent class

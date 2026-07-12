@@ -37,6 +37,12 @@ class NewCNN3D(nn.Module):
 
         Parameters
         ----------
+        input_shape : Tuple[int]
+            Input shape.
+        base_channels : int, optional
+            Number of channels in first convolutional layer. Default is 16.
+        channel_multiplier : float, optional
+            Multiplier that controls how many numb
         output_dim : int, optional
             Dimension of output. Default is 1.
         dropout : float, optional
