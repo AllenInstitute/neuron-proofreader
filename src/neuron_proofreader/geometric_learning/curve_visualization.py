@@ -149,7 +149,7 @@ def plot_latents_by_pca(curves, latents, output_path=None):
     # PCA of latents
     pca = PCA(n_components=2)
     latents_2d = pca.fit_transform(latents)
-    lengths = np.array([geometry_util.compute_length(c) for c in curves])
+    lengths = np.array([geometry_util.path_length(c) for c in curves])
 
     # Visualize results
     _plot_latents_by_direction(curves, latents_2d, pca, dir_output_path)
