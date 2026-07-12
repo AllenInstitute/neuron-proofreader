@@ -20,7 +20,7 @@ import torch
 
 
 # --- Curve Utils ---
-def compute_length(curve):
+def path_length(curve):
     """
     Computes the Euclidean length of the given curve.
 
@@ -34,8 +34,27 @@ def compute_length(curve):
     float
         Euclidean length of the given curve.
     """
-    diffs = curve[1:] - curve[:-1]
-    return np.linalg.norm(diffs**2, axis=1).sum()
+    return np.linalg.norm(np.diff(curve, axis=0), axis=1,).sum()
+
+
+def compute_max_l2_error(curve1, curve2):
+    """
+    Computes maximum pointwise L2 error.
+
+    Parameters
+    ----------
+    curve1 : numpy.ndarray
+        Ground truth curve.
+    curve2 : numpy.ndarray
+        Reconstruction curve.
+
+    Returns
+    -------
+    float
+        Maximum Euclidean error.
+    """
+    assert curve1.shape == curve2.shape, "Curves have different number of pts"
+    return np.linalg.norm(curve1 - curve2, axis=1,).max()
 
 
 def fit_spline_1d(pts, k=3, s=None):
@@ -309,14 +328,14 @@ def closest_pair(pts1, pts2):
     return np.unravel_index(np.argmin(dists_sq), dists_sq.shape)
 
 
-def compute_svd(xyz):
+def compute_svd(pts):
     """
     Compute singular value decomposition (svd) of an NxD array where N is the
     number of points and D is the dimension of the space.
 
     Parameters
     ----------
-    xyz : numpy.ndarray
+    pts : numpy.ndarray
         Array containing data points.
 
     Returns
@@ -331,8 +350,8 @@ def compute_svd(xyz):
         Unitary matrix having right singular vectors as rows. Of shape (D, D)
         or (K, D) depending on full_matrices.
     """
-    xyz = xyz - np.mean(xyz, axis=0)
-    return svd(xyz)
+    pts = pts - np.mean(pts, axis=0)
+    return svd(pts)
 
 
 def make_digital_line(p1, p2):
@@ -416,23 +435,23 @@ def make_voxels_connected(voxels):
     return np.array(voxels_out, dtype=int)
 
 
-def midpoint(xyz_1, xyz_2):
+def midpoint(pt1, pt2):
     """
-    Computes the midpoint between "xyz_1" and "xyz_2".
+    Computes the midpoint between the two given points.
 
     Parameters
     ----------
-    xyz_1 : numpy.ndarray
-        n-dimensional coordinate.
-    xyz_2 : numpy.ndarray
-        n-dimensional coordinate.
+    pt1 : numpy.ndarray
+        N-dimensional coordinate.
+    pt2 : numpy.ndarray
+        N-dimensional coordinate.
 
     Returns
     -------
     numpy.ndarray
-        Midpoint of "xyz_1" and "xyz_2".
+        Midpoint of "pt1" and "pt2".
     """
-    return np.mean([xyz_1, xyz_2], axis=0)
+    return np.mean([pt1, pt2], axis=0)
 
 
 def nearest_neighbor(pts, query_pt, return_index=False):
@@ -460,23 +479,6 @@ def nearest_neighbor(pts, query_pt, return_index=False):
     return idx if return_index else pts[idx]
 
 
-def path_length(path):
-    """
-    Computes the path length of list of xyz coordinates that form a path.
-
-    Parameters
-    ----------
-    path : list
-        List of coordinates that form a discrete path.
-
-    Returns
-    -------
-    float
-        Path length of "path".
-    """
-    return np.sqrt(np.sum((path[:-1] - path[1:]) ** 2))
-
-
 def tangent(pts):
     """
     Computes the tangent vector at a given point or along a curve defined by
@@ -485,7 +487,7 @@ def tangent(pts):
     Parameters
     ----------
     pts : numpy.ndarray
-        Array containing either two xyz coordinates or an arbitrary number of
+        Array containing either two coordinates or an arbitrary number of
         defining a curve.
 
     Returns

@@ -1083,8 +1083,9 @@ class SkeletonGraph(nx.Graph):
         Length of the given path.
         """
         if len(path) > 1:
-            diffs = self.node_xyz[path[1:]] - self.node_xyz[path[:-1]]
-            return np.linalg.norm(diffs**2, axis=1).sum()
+            return geometry_util.path_length(self.node_xyz[path])
+        else:
+            return 0
 
     def path_thru_node(self, i, max_depth=np.inf):
         if self.degree[i] == 0:
