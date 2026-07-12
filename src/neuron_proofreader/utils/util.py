@@ -217,8 +217,11 @@ def read_json(path):
     dict
         Contents of JSON file.
     """
-    with open(path, "r") as f:
-        return json.load(f)
+    if is_gcs_path(path):
+        return json.loads(read_gcs_txt(path))
+    else:
+        with open(path, "r") as f:
+            return json.load(f)
 
 
 def read_txt(path, client=None):
@@ -338,9 +341,9 @@ def get_google_swcs_prefix(root_prefix, brain_id, segmentation_id):
     # Determine old vs. new result
     prefix1 = os.path.join(root_prefix, brain_id, "whole_brain")
     prefix2 = os.path.join(root_prefix, "whole_brain", brain_id)
-    if check_gcs_exists(prefix1, is_prefix=True):
+    if check_gcs_prefix_exists(prefix1):
         prefix = prefix1
-    elif check_gcs_exists(prefix2, is_prefix=True):
+    elif check_gcs_prefix_exists(prefix2):
         prefix = prefix2
     else:
         raise Exception("Unable to find Google swcs result!")
@@ -406,21 +409,20 @@ def parse_cloud_path(path):
     # Split path
     parts = path.split("/", 1)
     bucket_name = parts[0]
-    prefix = parts[1] if len(parts) > 1 else ""
-    return bucket_name, prefix
+    key = parts[1] if len(parts) > 1 else ""
+    return bucket_name, key
 
 
 # --- GCS Utils ---
-def check_gcs_exists(path, is_prefix=False):
+def check_gcs_file_exists(path):
     """
-    Checks if a file or prefix exists in GCS.
+    Checks if a file exists at the given GCS path.
+
     Parameters
     ----------
     path : str
         GCS path to check.
-    prefix : bool
-        If True, checks whether any object exists under the given prefix.
-        If False, checks whether the exact file exists.
+
     Returns
     -------
     bool
@@ -428,18 +430,14 @@ def check_gcs_exists(path, is_prefix=False):
     """
     bucket_name, key = parse_cloud_path(path)
     bucket = storage.Client().bucket(bucket_name)
-    if is_prefix:
-        key = key.rstrip("/") + "/"
-        return any(bucket.list_blobs(prefix=key, max_results=1))
-    else:
-        return bucket.blob(key).exists()
+    return bucket.blob(key).exists()
 
 
-def check_gcs_prefix_exists(path):
-    bucket_name, prefix = parse_cloud_path(path)
-    prefix = prefix.rstrip("/") + "/"
+def check_gcs_prefix_exists(prefix):
+    bucket_name, key = parse_cloud_path(prefix)
     bucket = storage.Client().bucket(bucket_name)
-    exists = any(bucket.list_blobs(prefix=prefix, max_results=1))
+    key = key.rstrip("/") + "/"
+    exists = any(bucket.list_blobs(prefix=key, max_results=1))
     return exists
 
 
@@ -538,28 +536,6 @@ def read_gcs_txt(prefix, client=None):
     client = client or storage.Client()
     bucket = client.bucket(bucket_name)
     return bucket.blob(subprefix).download_as_text()
-
-
-def read_json_from_gcs(bucket_name, blob_path):
-    """
-    Reads JSON file stored in a GCS bucket.
-
-    Parameters
-    ----------
-    bucket_name : str
-        Name of the GCS bucket containing the JSON file.
-    blob_path : str
-        Path to the JSON file within the GCS bucket.
-
-    Returns
-    -------
-    dict
-        Parsed JSON content as a Python dictionary.
-    """
-    client = storage.Client()
-    bucket = client.bucket(bucket_name)
-    blob = bucket.blob(blob_path)
-    return json.loads(blob.download_as_text())
 
 
 # --- S3 Utils ---
