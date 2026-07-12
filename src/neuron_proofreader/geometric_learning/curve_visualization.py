@@ -67,7 +67,7 @@ def plot_length_distribution(dataset, output_path=None, title=None):
     # Compute path length stats
     lengths = dataset.examples_df["length"].to_numpy()
     p50, p99 = np.percentile(lengths, [50, 99.9])
-    lengths = lengths[lengths <= p999]
+    lengths = lengths[lengths <= p99]
 
     # Plot path lengths
     plt.figure(figsize=(8, 5))
