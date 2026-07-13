@@ -1,0 +1,1 @@
+* lr=1e-5 is too small and had signficantly worse performance than lr=1e-4
