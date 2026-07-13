@@ -12,6 +12,7 @@ from collections import defaultdict
 from scipy.interpolate import UnivariateSpline
 from scipy.linalg import svd
 from scipy.spatial.distance import euclidean
+from sklearn.decomposition import PCA
 from tqdm import tqdm
 
 import networkx as nx
@@ -20,24 +21,7 @@ import torch
 
 
 # --- Curve Utils ---
-def path_length(curve):
-    """
-    Computes the Euclidean length of the given curve.
-
-    Parameters
-    ----------
-    curve : numpy.ndarray
-        Array of points that form an n-d curve.
-
-    Returns
-    -------
-    float
-        Euclidean length of the given curve.
-    """
-    return np.linalg.norm(np.diff(curve, axis=0), axis=1,).sum()
-
-
-def compute_max_l2_error(curve1, curve2):
+def max_l2_error(curve1, curve2):
     """
     Computes maximum pointwise L2 error.
 
@@ -54,7 +38,59 @@ def compute_max_l2_error(curve1, curve2):
         Maximum Euclidean error.
     """
     assert curve1.shape == curve2.shape, "Curves have different number of pts"
-    return np.linalg.norm(curve1 - curve2, axis=1,).max()
+    return np.linalg.norm(curve1 - curve2, axis=1).max()
+
+
+def curves_pca_projection(curve1, curve2):
+    """
+    Projects two 3D curves into a shared PCA coordinate system.
+
+    Parameters
+    ----------
+    curve1 : numpy.ndarray
+        First curve with shape ``(N, 3)``.
+    curve2 : numpy.ndarray
+        Second curve with shape ``(M, 3)``.
+
+    Returns
+    -------
+    tuple
+        Two projected curves with shape ``(N, 2)`` and ``(M, 2)``.
+    """
+    # Compute PCA components
+    pts = np.vstack([curve1, curve2])
+    center = pts.mean(axis=0)
+
+    pca = PCA(n_components=3)
+    pca.fit(pts - center)
+
+    # Compute projections
+    curve1_proj = pca.transform(curve1 - center)
+    curve2_proj = pca.transform(curve2 - center)
+    return curve1_proj[:, :2], curve2_proj[:, :2]
+
+
+def curve_principal_direction(curve):
+    """
+    Computes the principal direction of a 3D curve using PCA.
+
+    Parameters
+    ----------
+    curve : numpy.ndarray
+        Array with shape (N, 3) containing the 3D coordinates of the curve.
+
+    Returns
+    -------
+    numpy.ndarray
+        Unit vector of shape (3,) representing the principal direction of the
+        curve.
+    """
+    curve_pca = PCA(n_components=1)
+    curve_pca.fit(curve)
+    direction = curve_pca.components_[0]
+    if direction[2] < 0:
+        direction = -direction
+    return direction / np.linalg.norm(direction)
 
 
 def fit_spline_1d(pts, k=3, s=None):
@@ -106,6 +142,23 @@ def fit_spline_3d(pts, k=3, s=None):
     spline_y = fit_spline_1d(pts[:, 1], k=k, s=s)
     spline_z = fit_spline_1d(pts[:, 2], k=k, s=s)
     return spline_x, spline_y, spline_z
+
+
+def path_length(curve):
+    """
+    Computes the Euclidean length of the given curve.
+
+    Parameters
+    ----------
+    curve : numpy.ndarray
+        Array of points that form an n-d curve.
+
+    Returns
+    -------
+    float
+        Euclidean length of the given curve.
+    """
+    return np.linalg.norm(np.diff(curve, axis=0), axis=1).sum()
 
 
 def resample_curve_1d(pts, n_pts=None, s=None):
@@ -350,8 +403,7 @@ def compute_svd(pts):
         Unitary matrix having right singular vectors as rows. Of shape (D, D)
         or (K, D) depending on full_matrices.
     """
-    pts = pts - np.mean(pts, axis=0)
-    return svd(pts)
+    return svd(pts - np.mean(pts, axis=0))
 
 
 def make_digital_line(p1, p2):
