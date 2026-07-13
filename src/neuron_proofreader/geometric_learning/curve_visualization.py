@@ -12,11 +12,17 @@ from colorsys import hsv_to_rgb
 from matplotlib.colors import LogNorm
 from sklearn.decomposition import PCA
 
+import matplotlib.patheffects as pe
 import matplotlib.pyplot as plt
 import numpy as np
 import plotly.graph_objects as go
 
 from neuron_proofreader.utils import geometry_util
+
+CURVE_COLORS = [
+    "#0072B2",  # blue
+    "#D55E00",  # vermillion
+]
 
 
 # --- Plot Curves ---
@@ -38,8 +44,8 @@ def plot_curves(curve1, curve2, name1=None, name2=None):
     pt = np.zeros((1, 3))
     fig = go.Figure(
         data=[
-            create_scatter3d(curve1, color="blue", name=name1),
-            create_scatter3d(curve2, color="green", name=name2),
+            create_scatter3d(curve1, color=CURVE_COLORS[0], name=name1),
+            create_scatter3d(curve2, color=CURVE_COLORS[1], name=name2),
             create_scatter3d(pt, color="red", mode="markers", name="Origin"),
         ]
     )
@@ -93,6 +99,140 @@ def plot_length_distribution(dataset, output_path=None, title=None):
     )
     plt.subplots_adjust(bottom=0.8)
     visualize_result(output_path=output_path)
+
+
+# --- Plot Publication Ready Curves ---
+def plot_curve_mip(
+    curve1,
+    curve2,
+    name1="Original",
+    name2="Reconstruction",
+    output_path=None,
+):
+    """
+    Creates a publication-quality PCA projection of two 3D curves.
+
+    Parameters
+    ----------
+    curve1 : numpy.ndarray
+        First 3D curve.
+    curve2 : numpy.ndarray
+        Second 3D curve.
+    name1 : str
+        Label for first curve.
+    name2 : str
+        Label for second curve.
+    output_path : str, optional
+        Output path.
+    """
+    # Project 3D curves
+    curve1, curve2 = geometry_util.curves_pca_projection(curve1, curve2)
+    pts = np.vstack([curve1, curve2])
+
+    # Create figure
+    fig, ax = plt.subplots(figsize=(7, 5), dpi=300)
+    fig.subplots_adjust(
+        left=0.03,
+        right=0.97,
+        bottom=0.08,
+        top=0.95,
+    )
+
+    # Plot curves
+    itr = zip((curve1, curve2), CURVE_COLORS, (name1, name2))
+    for curve, color, label in itr:
+        ax.plot(
+            curve[:, 0],
+            curve[:, 1],
+            color=color,
+            linewidth=3,
+            solid_capstyle="round",
+            alpha=0.9,
+            label=label,
+        )
+
+    # Preserve geometry but allow rectangular neurons
+    ax.set_aspect(
+        "equal",
+        adjustable="datalim",
+    )
+    ax.autoscale()
+    ax.margins(0.05)
+    ax.axis("off")
+
+    # Add annotations
+    scale_length = nice_scale_bar_length(np.ptp(pts[:, 0]) * 0.12)
+    _add_scale_bar(fig, ax, scale_length)
+    _add_error_annotation(fig, ax, curve1, curve2)
+
+    ax.legend(
+        loc="upper left",
+        fontsize=9,
+        frameon=True,
+        framealpha=0.8,
+        edgecolor="none",
+    )
+
+    visualize_result(output_path=output_path)
+
+
+def _add_scale_bar(fig, ax, length, width=0.1):
+    """
+    Adds a scale bar in the bottom-left of the figure.
+    """
+    # Get scale bar position
+    x0 = ax.get_position().x0 + 0.02
+    y0 = ax.get_position().y0 + 0.05
+
+    # Create scale bar
+    bar = plt.Line2D(
+        [x0, x0 + width],
+        [y0, y0],
+        transform=fig.transFigure,
+        color="black",
+        linewidth=4,
+        solid_capstyle="butt",
+    )
+
+    path_effects = [pe.Stroke(linewidth=7, foreground="white"), pe.Normal()]
+    bar.set_path_effects(path_effects)
+
+    # Add text
+    fig.lines.append(bar)
+    fig.text(
+        x0 + width / 2,
+        y0 + 0.015,
+        f"{length:g} μm",
+        transform=fig.transFigure,
+        ha="center",
+        va="bottom",
+        fontsize=9,
+    )
+
+
+def _add_error_annotation(fig, ax, curve1, curve2):
+    """
+    Adds path length and reconstruction error annotations.
+    """
+    # Compute error
+    gt_length = geometry_util.path_length(curve1)
+    recon_length = geometry_util.path_length(curve2)
+    error = geometry_util.max_l2_error(curve1, curve2)
+
+    # Display reconstruction error
+    fig.text(
+        ax.get_position().x1 - 0.02,
+        ax.get_position().y0 + 0.05,
+        (
+            f"GT length: {gt_length:.1f}μm\n"
+            f"Recon length: {recon_length:.1f} μm\n"
+            f"Max L2 error: {error:.2f} μm"
+        ),
+        transform=fig.transFigure,
+        fontsize=9,
+        ha="right",
+        va="bottom",
+    )
 
 
 # --- Plot Curve Embeddings ---
@@ -173,7 +313,7 @@ def _plot_latents_by_direction(curves, latents_2d, pca, output_path=None):
         displayed. Default is None.
     """
     # Compute directions and colors for each curve
-    directions = np.array([curve_principal_direction(c) for c in curves])
+    directions = [geometry_util.curve_principal_direction(c) for c in curves]
     colors = np.array([direction_to_color(d) for d in directions])
 
     # Plot
@@ -277,29 +417,6 @@ def create_scatter3d(pts, color=None, mode="lines", name=None, width=5):
     )
 
 
-def curve_principal_direction(curve):
-    """
-    Computes the principal direction of a 3D curve using PCA.
-
-    Parameters
-    ----------
-    curve : numpy.ndarray
-        Array with shape (N, 3) containing the 3D coordinates of the curve.
-
-    Returns
-    -------
-    numpy.ndarray
-        Unit vector of shape (3,) representing the principal direction of the
-        curve.
-    """
-    curve_pca = PCA(n_components=1)
-    curve_pca.fit(curve)
-    direction = curve_pca.components_[0]
-    if direction[2] < 0:
-        direction = -direction
-    return direction / np.linalg.norm(direction)
-
-
 def direction_to_color(direction):
     """
     Converts a 3D direction vector into an RGB color representation, where the
@@ -323,6 +440,27 @@ def direction_to_color(direction):
     saturation = polar / (np.pi / 2)
     value = 1.0
     return hsv_to_rgb(hue, saturation, value)
+
+
+def nice_scale_bar_length(length):
+    """
+    Rounds a length to nice numerical value.
+
+    Parameters
+    ----------
+    length : float
+        Proposed scale bar length.
+
+    Returns
+    -------
+    float
+        Rounded scale bar length.
+    """
+    exponent = np.floor(np.log10(length))
+    fraction = length / 10**exponent
+    for value in (1, 2, 5, 10):
+        if fraction < 1.5 * value:
+            return value * 10**exponent
 
 
 def visualize_result(output_path=None):
