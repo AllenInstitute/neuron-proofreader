@@ -83,7 +83,6 @@ def main():
             # Evaluate performance
             pred_df = load_pred_df(model_output_dir, gt_neurons)
             evaluate_model(gt_df, pred_df, model_output_dir)
-            stop
 
 
 # --- Evaluation

@@ -3,12 +3,12 @@ set -e
 
 git clone https://github.com/AllenInstitute/neuron-proofreader.git
 cd neuron-proofreader
-git checkout 64d7158
+git checkout be6d5ce
 pip install -e .
 
 git clone https://github.com/AllenNeuralDynamics/neuron-proofreading-evaluation.git
 cd neuron-proofreading-evaluation
-git checkout 32f8a9e
+git checkout 4af4dc6
 pip install -e .
 
 
