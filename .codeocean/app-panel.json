@@ -8,14 +8,24 @@
 			"icon": "⚙️"
 		},
 		{
+			"id": "vy47bQRb5L8q6Bwt",
+			"name": "Evaluate: Dataset",
+			"icon": "🧠"
+		},
+		{
+			"id": "XDpY0wRt77Qlfj6Q",
+			"name": "Evaluate: Search",
+			"icon": "🔎"
+		},
+		{
 			"id": "Nz8IxgqxB3cBzOdF",
-			"name": "Model",
+			"name": "Train: Model",
 			"icon": "🤖"
 		},
 		{
 			"id": "Ykdwt4Q1oUCgEg3J",
-			"name": "Train",
-			"icon": "💪"
+			"name": "Train: Hyperparameters",
+			"icon": "🥽"
 		}
 	],
 	"parameters": [
@@ -31,6 +41,57 @@
 				"train",
 				"evaluate"
 			]
+		},
+		{
+			"id": "TuhRbCuqxfdNg2TF",
+			"category": "vy47bQRb5L8q6Bwt",
+			"name": "Brain ID",
+			"param_name": "brain_id",
+			"type": "text",
+			"value_type": "string"
+		},
+		{
+			"id": "002Zya6MohPO367X",
+			"category": "vy47bQRb5L8q6Bwt",
+			"name": "Segmentation ID",
+			"param_name": "segmentation_id",
+			"type": "text",
+			"value_type": "string"
+		},
+		{
+			"id": "fiDYGsfrHiowMk2x",
+			"category": "vy47bQRb5L8q6Bwt",
+			"name": "Model Version",
+			"param_name": "model_version",
+			"type": "text",
+			"value_type": "string"
+		},
+		{
+			"id": "ABzJdb2PJNQadaFX",
+			"category": "XDpY0wRt77Qlfj6Q",
+			"name": "Min Search Size",
+			"param_name": "min_search_size",
+			"type": "text",
+			"value_type": "number"
+		},
+		{
+			"id": "vhzNvEGXyrUSVPXv",
+			"category": "XDpY0wRt77Qlfj6Q",
+			"name": "Step Size",
+			"param_name": "step_size",
+			"type": "text",
+			"value_type": "number"
+		},
+		{
+			"id": "CVE1GEj8qCLQIiPl",
+			"category": "XDpY0wRt77Qlfj6Q",
+			"name": "Threshold",
+			"param_name": "threshold",
+			"type": "text",
+			"value_type": "number",
+			"default_value": "0.2",
+			"minimum": 0,
+			"maximum": 1
 		},
 		{
 			"id": "WIbm2vPvbaJkjUOq",
