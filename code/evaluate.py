@@ -11,7 +11,7 @@ Code evaluating merge detection models.
 from scipy.spatial import KDTree
 from tqdm import tqdm
 
-import argsparse
+import argparse
 import numpy as np
 import os
 
@@ -185,7 +185,7 @@ def load_pred_df(output_dir, gt_neurons, max_dist=10):
 
 # --- Helpers ---
 def get_img_path():
-    prefixes_path = "/home/jupyter/data/exaspim_image_prefixes.json"
+    prefixes_path = "/root/capsule/data/exaspim_image_prefixes.json"
     prefixes = util.read_json(prefixes_path)
     #return os.path.join(prefixes[brain_id], "0")
     return "gs://allen-nd-goog/from_aind/exaSPIM_794495_2026-01-21_14-25-07_training-data/whole-brain-denoised/fused.zarr/0"
@@ -227,6 +227,7 @@ if __name__ == "__main__":
     # Parameters
     brain_id = args.brain_id.strip()
     segmentation_id = args.segmentation_id.strip()
+    model_version = args.model_version.strip()
 
     img_config = ImageConfig(
         brightness_clip=500,
@@ -238,7 +239,7 @@ if __name__ == "__main__":
     # Paths
     fragments_prefix = f"gs://allen-nd-goog/anna.grim/intersecting_neuron_fragments/{brain_id}/{segmentation_id}"
     gt_sites_path = f"/root/capsule/data/{brain_id}-{segmentation_id}.csv"
-    models_dir = f"/root/capsule/scratch/{args.model_version.strip()}}"
+    models_dir = f"/root/capsule/data/{model_version}"
     output_dir = f"/root/capsule/results"
 
     # Run evaluation

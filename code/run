@@ -20,29 +20,42 @@ setup_google_creds
 
 export AWS_REGION=us-west-2
 
-# Parse --mode from named parameters; collect remaining args to forward
-MODE="train"
-REMAINING_ARGS=()
+# Parse all named parameters into an associative array
+declare -A PARAMS
+
 while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --mode)
-            MODE="$2"
-            shift 2
-            ;;
-        *)
-            REMAINING_ARGS+=("$1")
-            shift
-            ;;
-    esac
+    if [[ "$1" == --*=* ]]; then
+        key="${1%%=*}"; key="${key#--}"
+        PARAMS["$key"]="${1#*=}"
+        shift
+    elif [[ "$1" == --* ]]; then
+        key="${1#--}"
+        PARAMS["$key"]="${2:-}"
+        shift 2
+    else
+        shift
+    fi
 done
 
-# Dispatch to the appropriate script
+MODE="${PARAMS[mode]:-train}"
+
+# Dispatch, forwarding only the params each script expects
 case "$MODE" in
     train)
-        python -u train.py "${REMAINING_ARGS[@]}"
+        TRAIN_KEYS=(base_channels depth model_name max_channels use_resblock lr min_recall random_nonmerge_site_prob)
+        TRAIN_ARGS=()
+        for k in "${TRAIN_KEYS[@]}"; do
+            [[ -v PARAMS["$k"] ]] && TRAIN_ARGS+=("--${k}=${PARAMS[$k]}")
+        done
+        python -u train.py "${TRAIN_ARGS[@]}"
         ;;
     evaluate)
-        python -u evaluate.py "${REMAINING_ARGS[@]}"
+        EVAL_KEYS=(brain_id segmentation_id model_version min_search_size step_size threshold)
+        EVAL_ARGS=()
+        for k in "${EVAL_KEYS[@]}"; do
+            [[ -v PARAMS["$k"] ]] && EVAL_ARGS+=("--${k}=${PARAMS[$k]}")
+        done
+        python -u evaluate.py "${EVAL_ARGS[@]}"
         ;;
     *)
         echo "Invalid mode: '$MODE'. Must be 'train' or 'evaluate'." >&2

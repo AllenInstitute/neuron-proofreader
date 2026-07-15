@@ -106,7 +106,7 @@ if __name__ == "__main__":
     parser.add_argument("--model_name", type=str, required=True)
     parser.add_argument("--random_nonmerge_site_prob", type=float, default=0.25)
     parser.add_argument("--use_resblock", type=bool, required=True)
-    args = parser.parse_args()
+    args, _ = parser.parse_known_args()
 
     # Dataset
     train_ids = ["653159", "715345", "730902", "789202", "794491", "802449"]
