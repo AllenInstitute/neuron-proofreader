@@ -83,6 +83,7 @@ class MergeDetector:
         numpy.ndarray
             Predicted merge site likelihoods.
         """
+        self.model.eval()
         with torch.inference_mode():
             x = x.to(self.device)
             y = sigmoid(self.model(x))
@@ -116,7 +117,7 @@ class MergeDetector:
                     iou = img_util.compute_iou3d(
                         xyz_i, xyz_root, self.patch_shape, self.patch_shape
                     )
-                    if iou > 0.35:
+                    if iou > 0.3 and self.dataset.degree[i] == 2:
                         merge_sites_set.remove(i)
                         self.node_preds[i] = 0
 
