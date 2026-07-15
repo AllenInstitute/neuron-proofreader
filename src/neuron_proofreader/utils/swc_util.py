@@ -313,8 +313,8 @@ class Reader:
         use_s3 = util.is_s3_path(path)
 
         # List paths
-        swc_paths = util.list_cloud_paths(path, ".swc")
-        zip_paths = util.list_cloud_paths(path, ".zip")
+        swc_paths = util.list_paths(path, extension=".swc")
+        zip_paths = util.list_paths(path, extension=".zip")
 
         # Call reader
         if swc_paths:

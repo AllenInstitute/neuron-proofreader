@@ -9,6 +9,7 @@ image segmentation.
 
 """
 
+from copy import deepcopy
 from torch.nn.functional import sigmoid
 from torch.utils.data import DataLoader
 from time import time
@@ -28,10 +29,8 @@ class MergeDetector:
         self,
         dataset,
         model,
-        model_path,
         batch_size=16,
         device="cuda",
-        remove_detected_sites=False,
         threshold=0.5,
     ):
         # Instance attributes
@@ -40,12 +39,11 @@ class MergeDetector:
         self.device = device
         self.node_preds = np.zeros((len(dataset.node_xyz)))
         self.patch_shape = dataset.patch_shape
-        self.remove_detected_sites = remove_detected_sites
+        self.visited_sites = list()
         self.threshold = threshold
 
         # Load model
         self.model = model
-        ml_util.load_model(model, model_path, device=self.device)
 
     # --- Core routines ---
     def search_graph(self):
@@ -55,7 +53,9 @@ class MergeDetector:
         pbar = tqdm(total=self.dataset.estimate_iterations())
         for nodes, x_nodes in dataloader:
             self.node_preds[np.array(nodes)] = self.predict(x_nodes)
+            self.visited_sites.extend(nodes.tolist())
             pbar.update(len(nodes))
+        pbar.close()
 
         # Non-maximum suppression of detected sites
         merge_sites = np.where(self.node_preds > self.threshold)[0]
@@ -63,14 +63,9 @@ class MergeDetector:
         merge_sites = self.filter_with_nms(merge_sites, likelihoods)
 
         # Report results
-        rate = self.dataset.distance_traversed / (time() - t0)
-        print("\n# Detected Merge Sites:", len(merge_sites))
-        print(f"Distance Traversed: {self.dataset.distance_traversed:.2f}μm")
-        print(f"Merge Proofreading Rate: {rate:.2f}μm/s")
-
-        # Remove merge mistakes (optional)
-        if self.remove_detected_sites:
-            pass
+        rate = len(self.visited_sites) / (time() - t0)
+        print("\n# Detected Merges:", len(merge_sites))
+        print(f"Proofreading Rate: {rate:.2f} site/s")
         return merge_sites
 
     def predict(self, x):
@@ -153,10 +148,22 @@ class MergeDetector:
         self.dataset.remove_nodes(rm_nodes)
         print("# Nodes Deleted:", len(rm_nodes))
 
-    # --- Helpers ---
-    def get_detected_sites(self, threshold):
-        nodes = np.where(self.node_preds >= threshold)[0]
-        return [self.dataset.node_xyz[i] for i in nodes]
+    # --- Report Results ---
+    def save(self, output_dir, inplace=True):
+        self.save_fragment_predictions(output_dir, inplace=inplace)
+        self.save_parameters(output_dir)
+        self.save_predictions(output_dir)
+        self.save_sites(output_dir)
+
+    def save_fragment_predictions(self, output_dir, inplace=True):
+        fragments_path = os.path.join(output_dir, "fragment_preds.zip")
+        if inplace:
+            self.dataset.node_radius = 10 * np.maximum(self.node_preds, 0.1)
+            self.dataset.to_zipped_swcs(fragments_path, use_radius=True)
+        else:
+            graph = deepcopy(self.dataset.graph)
+            graph.node_radius = 10 * np.maximum(self.node_preds, 0.1)
+            graph.to_zipped_swcs(fragments_path, use_radius=True)
 
     def save_parameters(self, output_dir):
         json_path = os.path.join(output_dir, "detection_parameters.json")
@@ -165,41 +172,23 @@ class MergeDetector:
             "is_multimodal": self.dataset.is_multimodal,
             "min_search_size": self.dataset.min_size,
             "patch_shape": self.patch_shape,
-            "remove_detected_sites": self.remove_detected_sites,
             "search_mode": self.dataset.search_mode,
             "subgraph_radius": self.dataset.subgraph_radius,
         }
         util.write_json(json_path, parameters)
 
-    def save_results(
-        self, output_dir, output_prefix_s3=None, save_fragments=True
-    ):
-        self.save_sites(output_dir)
-        if save_fragments:
-            self.dataset.graph.node_radius = 10 * np.maximum(
-                self.node_preds, 0.1
-            )
-            fragments_path = os.path.join(output_dir, "fragments.zip")
-            self.dataset.to_zipped_swcs(fragments_path, use_radius=True)
-
-        # Upload results to S3 (if applicable)
-        if output_prefix_s3:
-            bucket_name, prefix = util.parse_cloud_path(output_prefix_s3)
-            util.upload_dir_to_s3(output_dir, bucket_name, prefix)
-
-    def save_sites(self, output_dir):
-        # Save model predictions
+    def save_predictions(self, output_dir):
+        nodes = np.array(self.visited_sites, dtype=int)
         df = pd.DataFrame(
-            columns=["World", "Segment_ID", "Prediction", "Degree"]
+            columns=["xyz", "Segment_ID", "Prediction", "Degree"]
         )
-        df["World"] = list(map(tuple, self.dataset.node_xyz))
-        df["Prediction"] = self.node_preds
-        df["Segment_ID"] = [
-            self.dataset.node_segment_id(i) for i in self.dataset.nodes
-        ]
-        df["Degree"] = [self.dataset.degree[i] for i in self.dataset.nodes]
+        df["xyz"] = list(map(tuple, self.dataset.node_xyz[nodes]))
+        df["Prediction"] = self.node_preds[nodes]
+        df["Segment_ID"] = [self.dataset.node_segment_id(i) for i in nodes]
+        df["Degree"] = [self.dataset.degree[i] for i in nodes]
         df.to_csv(os.path.join(output_dir, "model_predictions.csv"))
 
+    def save_sites(self, output_dir):
         # Get predicted merge sites
         nodes = np.where(self.node_preds >= self.threshold)[0]
         detected_sites = [self.dataset.node_xyz[i] for i in nodes]
@@ -230,3 +219,8 @@ class MergeDetector:
         self.dataset._batch_to_zipped_swcs(roots, zip_path, False)
         self.save_sites(output_dir)
         print("# Fragments Saved:", len(roots))
+
+    # --- Helpers ---
+    def get_detected_sites(self, threshold):
+        nodes = np.where(self.node_preds >= threshold)[0]
+        return [self.dataset.node_xyz[i] for i in nodes]

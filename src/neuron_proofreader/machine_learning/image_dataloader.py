@@ -246,7 +246,7 @@ class DetectionPatchLoader(PatchLoader):
         # Check whether to apply image augmentation
         if self.transform:
             patches = self.transform(patches)
-        return patches
+        return node, patches
 
     def compute_patch_specs(self, node):
         voxel = self.graph.node_voxel(node)
@@ -264,7 +264,7 @@ class DetectionBatchLoader(PatchLoader):
         # Load patches
         img = self.read_image(center, shape)
         mask = self.create_mask(center, shape, nodes[len(nodes) // 2])
-        return self.stack(img, mask), offset
+        return nodes, self.stack(img, mask), offset
 
     def compute_patch_specs(self, nodes):
         # Compute bounding box

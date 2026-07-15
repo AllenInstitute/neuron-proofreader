@@ -42,7 +42,6 @@ class SearchDataset(IterableDataset, ABC):
         super().__init__()
 
         # Instance attributes
-        self.distance_traversed = 0
         self.graph = graph
         self.is_multimodal = is_multimodal
         self.min_size = min_search_size
@@ -64,33 +63,33 @@ class SearchDataset(IterableDataset, ABC):
         def producer():
             sites = self._all_sites()
             with ThreadPoolExecutor(max_workers=self.prefetch) as executor:
-                futures = {}
+                futures = set()
 
                 def fill():
                     while len(futures) < self.prefetch:
                         try:
                             site = next(sites)
-                            futures[
-                                executor.submit(self.patch_loader, site)
-                            ] = site
+                            futures.add(executor.submit(self.patch_loader, site))
                         except StopIteration:
                             break
 
-                fill()
+                fill()    
                 while futures:
                     done, _ = wait(futures, return_when=FIRST_COMPLETED)
                     for f in done:
-                        patch_queue.put((futures.pop(f), f.result()))
+                        futures.remove(f)
+                        patch_queue.put(f.result())
+
                     fill()
 
             patch_queue.put(sentinel)
 
         Thread(target=producer, daemon=True).start()
-
         while True:
             item = patch_queue.get()
             if item is sentinel:
                 break
+
             yield from self.get_input(*item)
 
     def _all_sites(self):
@@ -208,7 +207,6 @@ class DenseSearchDataset(SearchDataset):
         nodes = list()
         for i, j in nx.dfs_edges(self.graph, source=root):
             # Check if starting new batch
-            self.distance_traversed += self.dist(i, j)
             if len(nodes) == 0:
                 if self.is_node_valid(i):
                     root = i
@@ -271,10 +269,6 @@ class DenseSearchDataset(SearchDataset):
 
 
 class SparseSearchDataset(SearchDataset):
-    pass
-
-
-class BranchingSearchDataset(SearchDataset):
 
     def __init__(
         self,
@@ -298,7 +292,7 @@ class BranchingSearchDataset(SearchDataset):
 
         # Instance attributes
         self.patch_loader = DetectionPatchLoader(self.graph, img_config)
-        self.search_mode = "branching_nodes"
+        self.search_mode = "sparse"
 
     def estimate_iterations(self):
         return len(self.branching_nodes())
