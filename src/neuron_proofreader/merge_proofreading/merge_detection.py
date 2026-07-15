@@ -55,6 +55,7 @@ class MergeDetector:
             self.node_preds[np.array(nodes)] = self.predict(x_nodes)
             self.visited_sites.extend(nodes.tolist())
             pbar.update(len(nodes))
+        pbar.close()
 
         # Non-maximum suppression of detected sites
         merge_sites = np.where(self.node_preds > self.threshold)[0]
@@ -171,7 +172,6 @@ class MergeDetector:
             "is_multimodal": self.dataset.is_multimodal,
             "min_search_size": self.dataset.min_size,
             "patch_shape": self.patch_shape,
-            "remove_detected_sites": self.remove_detected_sites,
             "search_mode": self.dataset.search_mode,
             "subgraph_radius": self.dataset.subgraph_radius,
         }

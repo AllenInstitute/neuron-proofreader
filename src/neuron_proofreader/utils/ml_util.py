@@ -215,7 +215,67 @@ class TensorDict(dict):
 
 
 # --- Miscellaneous ---
-def find_max_batch_size(
+def find_max_eval_batch_size(
+    model, input_shape, device="cuda", start_batch_size=1, max_batch_size=128
+):
+    """
+    Finds the largest batch size that fits in GPU memory for a forward
+    pass of "model" on inputs of "input_shape", via binary search.
+
+    Parameters
+    ----------
+    model : torch.nn.Module
+        Model to run inference with. Assumed to already be on "device" and
+        in eval mode.
+    input_shape : Tuple[int]
+        Shape of a single input sample, excluding the batch dimension.
+    device : str, optional
+        Device to run inference on. Default is "cuda".
+    start_batch_size : int, optional
+        Initial batch size to test. Default is 1.
+    max_batch_size : int, optional
+        Upper bound on batch size to consider. Default is 4096.
+
+    Returns
+    -------
+    max_batch_size : int
+        Largest batch size that ran successfully.
+    """
+    def fits(batch_size):
+        try:
+            x = torch.zeros((batch_size, *input_shape), device=device)
+            with torch.no_grad():
+                model(x)
+            del x
+            torch.cuda.empty_cache()
+            return True
+        except RuntimeError as e:
+            if "out of memory" not in str(e).lower():
+                raise
+            torch.cuda.empty_cache()
+            return False
+
+    # Exponential search for an upper bound that fails
+    lo, hi = 0, start_batch_size
+    while hi <= max_batch_size and fits(hi):
+        lo = hi
+        hi *= 2
+    hi = min(hi, max_batch_size + 1)
+
+    if lo == 0:
+        return 0
+
+    # Binary search between last success (lo) and first failure (hi)
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        if fits(mid):
+            lo = mid
+        else:
+            hi = mid
+    return lo
+
+
+def find_max_train_batch_size(
     model, input_shape, optimizer_cls, device="cuda", start=1, max_bs=32
 ):
     model.to(device)
