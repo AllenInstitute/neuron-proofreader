@@ -94,6 +94,7 @@ class MergeDetector:
         """
         with torch.inference_mode():
             x = x.to(self.device)
+            y = sigmoid(self.model(x))
             y = y.detach().cpu().numpy()
             return np.squeeze(y, axis=1)
 
