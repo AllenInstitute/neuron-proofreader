@@ -61,7 +61,7 @@ class MergeDetector:
         pbar.close()
 
         # Non-maximum suppression of detected sites
-        merge_sites = np.where(self.node_preds > self.threshold)[0]
+        merge_sites = np.where(self.node_preds >= self.threshold)[0]
         likelihoods = self.node_preds[merge_sites]
         merge_sites = self.apply_graph_nms(merge_sites, likelihoods)
 
@@ -102,7 +102,7 @@ class MergeDetector:
 
     def apply_graph_nms(self, merge_sites, likelihoods):
         # Sort by confidence
-        merge_sites = [merge_sites[i] for i in np.argsort(likelihoods)[::-1]]
+        merge_sites = [merge_sites[i] for i in np.argsort(likelihoods)]
         merge_sites = deque(merge_sites)
 
         # NMS
@@ -110,7 +110,7 @@ class MergeDetector:
         filtered_merge_sites = set()
         while merge_sites:
             # Local max
-            root = merge_sites.popleft()
+            root = merge_sites.pop()
             xyz_root = self.dataset.node_xyz[root]
             if root in merge_sites_set:
                 filtered_merge_sites.add(root)
