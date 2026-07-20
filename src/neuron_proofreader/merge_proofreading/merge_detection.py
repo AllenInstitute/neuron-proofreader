@@ -10,11 +10,13 @@ image segmentation.
 """
 
 from copy import deepcopy
+from scipy.spatial import KDTree
 from torch.nn.functional import sigmoid
 from torch.utils.data import DataLoader
 from time import time
 from tqdm import tqdm
 
+import networkx as nx
 import numpy as np
 import os
 import pandas as pd
@@ -60,7 +62,14 @@ class MergeDetector:
         # Non-maximum suppression of detected sites
         merge_sites = np.where(self.node_preds > self.threshold)[0]
         likelihoods = self.node_preds[merge_sites]
-        merge_sites = self.filter_with_nms(merge_sites, likelihoods)
+        merge_sites = self.apply_graph_nms(merge_sites, likelihoods)
+
+        # Iteratively average nearby sites
+        while True:
+            before = len(merge_sites)
+            merge_sites = self.avg_nearby_sites(merge_sites)
+            if before == len(merge_sites):
+                break
 
         # Report results
         rate = len(self.visited_sites) / (time() - t0)
@@ -83,22 +92,22 @@ class MergeDetector:
         numpy.ndarray
             Predicted merge site likelihoods.
         """
-        self.model.eval()
         with torch.inference_mode():
             x = x.to(self.device)
-            y = sigmoid(self.model(x))
-            return np.squeeze(ml_util.to_cpu(y, to_numpy=True), axis=1)
+            y = y.detach().cpu().numpy()
+            return np.squeeze(y, axis=1)
 
-    def filter_with_nms(self, merge_sites, likelihoods):
+    def apply_graph_nms(self, merge_sites, likelihoods):
         # Sort by confidence
-        merge_sites = [merge_sites[i] for i in np.argsort(likelihoods)]
+        merge_sites = [merge_sites[i] for i in np.argsort(likelihoods)[::-1]]
+        merge_sites = deque(merge_sites)
 
         # NMS
         merge_sites_set = set(merge_sites)
         filtered_merge_sites = set()
         while merge_sites:
             # Local max
-            root = merge_sites.pop()
+            root = merge_sites.popleft()
             xyz_root = self.dataset.node_xyz[root]
             if root in merge_sites_set:
                 filtered_merge_sites.add(root)
@@ -129,6 +138,61 @@ class MergeDetector:
                         visited.add(j)
         return filtered_merge_sites
 
+    def avg_nearby_sites(self, merge_sites, max_dist=24):
+        # Sort sites by likelihood
+        merge_sites = list(merge_sites)
+        likelihoods = [self.node_preds[i] for i in merge_sites]
+        merge_sites = [merge_sites[i] for i in np.argsort(likelihoods)[::-1]]
+
+        # Search for spatially nearby sites
+        visited = set()
+        new_merge_sites = list()
+        sites_kdtree = KDTree([self.dataset.node_xyz[i] for i in merge_sites])
+        for root in merge_sites:
+            # Check whether to skip
+            if root in visited:
+                continue
+            else:
+                visited.add(root)
+
+            # Get nearby sites
+            xyz_query = self.dataset.node_xyz[root]
+            idxs = sites_kdtree.query_ball_point(xyz_query, max_dist)
+            nodes = [merge_sites[i] for i in idxs]
+
+            # Check whether to combine sites
+            if len(nodes) > 1:
+                hits = list()
+                for node in nodes:
+                    try:
+                        path = nx.shortest_path(
+                            self.dataset.graph, source=root, target=node
+                        )
+                        if self.dataset.path_length(path) < max_dist + 4:
+                            hits.append(node)
+                            visited.add(node)
+                    except nx.exception.NetworkXNoPath:
+                        pass
+    
+                # Add site to list
+                xyz_arr = np.array([self.dataset.node_xyz[i] for i in hits])
+                xyz_avg = xyz_arr.mean(axis=0)
+                best_node = min(
+                    hits,
+                    key=lambda n: np.linalg.norm(self.dataset.node_xyz[n] - xyz_avg)
+                )
+                new_merge_sites.append(best_node)
+
+                # Update node predictions
+                likelihood = self.node_preds[root]
+                for node in hits:
+                    if node != best_node:
+                        self.node_preds[node] = 0
+                self.node_preds[best_node] = likelihood
+            else:
+                new_merge_sites.append(root)
+        return new_merge_sites
+
     def remove_merge_sites(self, merge_site_nodes, max_depth=10):
         rm_nodes = set()
         for root in tqdm(merge_site_nodes, desc="Remove Merge Sites"):
@@ -149,7 +213,7 @@ class MergeDetector:
         self.dataset.remove_nodes(rm_nodes)
         print("# Nodes Deleted:", len(rm_nodes))
 
-    # --- Report Results ---
+    # --- Save Results ---
     def save(self, output_dir, inplace=True):
         self.save_fragment_predictions(output_dir, inplace=inplace)
         self.save_parameters(output_dir)
