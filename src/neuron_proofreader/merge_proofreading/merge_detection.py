@@ -9,6 +9,7 @@ image segmentation.
 
 """
 
+from collections import deque
 from copy import deepcopy
 from scipy.spatial import KDTree
 from torch.nn.functional import sigmoid
