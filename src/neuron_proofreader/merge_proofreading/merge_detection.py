@@ -89,7 +89,7 @@ class MergeDetector:
 
         Returns
         -------
-        numpy.ndarray
+        y : numpy.ndarray
             Predicted merge site likelihoods.
         """
         self.model.eval()
