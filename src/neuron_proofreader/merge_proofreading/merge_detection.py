@@ -89,12 +89,13 @@ class MergeDetector:
 
         Returns
         -------
-        numpy.ndarray
+        y : numpy.ndarray
             Predicted merge site likelihoods.
         """
         self.model.eval()
         with torch.inference_mode():
             x = x.to(self.device)
+            y = sigmoid(self.model(x))
             y = y.detach().cpu().numpy()
             return np.squeeze(y, axis=1)
 
