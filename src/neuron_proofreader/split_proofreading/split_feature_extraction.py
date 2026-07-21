@@ -111,7 +111,9 @@ class SkeletonFeatureExtractor:
         """
         # Instance attributes
         self.graph = graph
-        self.kdtree = KDTree(graph.node_xyz[np.array(graph.leaf_nodes())])
+        self.kdtree = KDTree(
+            graph.node_xyz[np.array(graph.leaf_nodes(), dtype=int)]
+        )
 
     def __call__(self, subgraph, features):
         """

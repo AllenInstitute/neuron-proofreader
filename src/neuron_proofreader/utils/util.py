@@ -341,9 +341,9 @@ def get_google_swcs_prefix(root_prefix, brain_id, segmentation_id):
     # Determine old vs. new result
     prefix1 = os.path.join(root_prefix, brain_id, "whole_brain")
     prefix2 = os.path.join(root_prefix, "whole_brain", brain_id)
-    if check_gcs_prefix_exists(prefix1, is_prefix=True):
+    if check_gcs_prefix_exists(prefix1):
         prefix = prefix1
-    elif check_gcs_prefix_exists(prefix2, is_prefix=True):
+    elif check_gcs_prefix_exists(prefix2):
         prefix = prefix2
     else:
         raise Exception("Unable to find Google swcs result!")
@@ -380,9 +380,8 @@ def list_cloud_paths(path, extension=""):
         Filenames stored at the GCS path with the given extension.
     """
     assert is_gcs_path(path) or is_s3_path(path)
-    bucket_name, prefix = parse_cloud_path(path)
     list_fn = list_gcs_paths if is_gcs_path(path) else list_s3_paths
-    return list_fn(bucket_name, prefix, extension=extension)
+    return list_fn(path, extension=extension)
 
 
 def parse_cloud_path(path):
@@ -414,7 +413,7 @@ def parse_cloud_path(path):
 
 
 # --- GCS Utils ---
-def check_gcs_file_exists(path, is_prefix=False):
+def check_gcs_file_exists(path):
     """
     Checks if a file exists at the given GCS path.
 
@@ -458,16 +457,14 @@ def is_gcs_path(path):
     return path.startswith("gs://")
 
 
-def list_gcs_paths(bucket_name, prefix, extension=""):
+def list_gcs_paths(path, extension=""):
     """
     Lists paths at a GCS prefix with the given extension.
 
     Parameters
     ----------
-    bucket_name : str
-        Name of bucket containing prefix.
-    prefix : str
-        Path to location within bucket to be searched.
+    path : str
+        Path to location in GCS bucket.
     extension : str, optional
         File extension of filenames to be listed. Default is an empty string.
 
@@ -476,11 +473,25 @@ def list_gcs_paths(bucket_name, prefix, extension=""):
     List[str]
         Paths under the GCS prefix with the given extension.
     """
+    # Create bucket reader
+    path = path.rstrip("/") + "/"
+    bucket_name, prefix = parse_cloud_path(path)
     bucket = storage.Client().bucket(bucket_name)
-    paths = list()
-    for name in [b.name for b in bucket.list_blobs(prefix=prefix)]:
-        if extension in name:
-            paths.append(os.path.join(f"gs://{bucket_name}", name))
+
+    # Parse directory
+    paths = []
+    for blob in bucket.list_blobs(prefix=prefix):
+        # Portion of the path after the directory prefix
+        relative = blob.name[len(prefix):]
+        print(relative)
+
+        # Skip files in subdirectories and directory placeholders
+        if "/" in relative or not relative:
+            continue
+
+        if not extension or relative.endswith(extension):
+            paths.append(f"gs://{bucket_name}/{blob.name}")
+
     return sorted(paths)
 
 

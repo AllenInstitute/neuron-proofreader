@@ -61,14 +61,13 @@ class SplitProofreader:
         ...
         """
         # Instance attributes
-        self.dataset = FragmentsDataset(
-            graph,
-            img_config,
-            batch_size=batch_size,
-        )
+        self.batch_size = batch_size
         self.device = device
         self.model = model
         self.output_dir = output_dir
+
+        # Core datastructures
+        self.dataset = FragmentsDataset(graph, img_config)
 
         # Logger
         log_path = os.path.join(self.output_dir, "summary.txt")
@@ -156,19 +155,14 @@ class SplitProofreader:
         # Main
         t0 = time()
         self.log("Generate Proposals...")
-        self.dataset.generate_proposals(
-            proposals_config.search_radius,
-            allow_nonleaf_proposals=proposals_config.allow_nonleaf_proposals,
-            max_proposals_per_leaf=proposals_config.max_proposals_per_leaf,
-            min_size_with_proposals=proposals_config.min_size_with_proposals,
-        )
+        self.dataset.generate_proposals(proposals_config)
 
         # Report results
         n_proposals = format(self.dataset.n_proposals(), ",")
         n_proposals_blocked = self.dataset.n_proposals_blocked
         t, unit = util.time_writer(time() - t0)
 
-        self.log(f"Search Radius: {proposals_config.search_radius}")
+        self.log(f"Search Radius: {proposals_config.initial_search_radius}")
         self.log(f"# Proposals: {n_proposals}")
         self.log(f"# Proposals Blocked: {n_proposals_blocked}")
         self.log(f"Module Runtime: {t:.2f} {unit}\n")
@@ -230,9 +224,12 @@ class SplitProofreader:
         preds : Dict[Frozenset[int], float]
             Dictionary that maps proposals to the model prediction.
         """
+        # Initializations
+        self.dataset.set_sampler(self.batch_size)
+        pbar = tqdm(total=self.dataset.n_proposals(), desc="Inference")
+        
         # Main
         preds = dict()
-        pbar = tqdm(total=self.dataset.n_proposals(), desc="Inference")
         for data in self.dataset:
             preds.update(self.predict(data))
             pbar.update(data.n_proposals())

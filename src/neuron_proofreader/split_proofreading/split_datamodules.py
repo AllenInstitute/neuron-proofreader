@@ -19,9 +19,7 @@ import numpy as np
 import os
 import random
 
-from neuron_proofreader.machine_learning.subgraph_sampler import (
-    SubgraphSampler,
-)
+from neuron_proofreader.machine_learning.subgraph_sampler import GraphSampler
 from neuron_proofreader.split_proofreading.split_feature_extraction import (
     FeaturePipeline,
     HeteroGraphData,
@@ -54,6 +52,7 @@ class FragmentsDataset(IterableDataset):
             brightness_clip=img_config.brightness_clip,
             patch_shape=img_config.patch_shape,
         )
+        self.sampler = None
 
     # --- Get Data ---
     def __iter__(self):
@@ -67,23 +66,18 @@ class FragmentsDataset(IterableDataset):
         targets : torch.Tensor
             Ground truth labels.
         """
-        for subgraph in self.sampler():
+        for subgraph in iter(self.sampler):
             yield HeteroGraphData(self.feature_extractor(subgraph))
 
     # --- Helpers ---
     def __getattr__(self, name):
         return getattr(self.graph, name)
 
-    def sampler(self, batch_size):
+    def set_sampler(self, batch_size):
         """
-        Gets a subgraph sampler used to iterate over dataset.
-
-        Returns
-        -------
-        sampler : SubgraphSampler
-            Subgraph sampler that is used to iterate over dataset.
+        Sets graph sampler to iterate over dataset.
         """
-        return iter(SubgraphSampler(self.graph, max_proposals=batch_size))
+        self.sampler = GraphSampler(self.graph, max_proposals=batch_size)
 
 
 class FragmentsCollection(Dataset):
@@ -217,7 +211,7 @@ class FragmentsLoader:
         samplers = dict()
         for key, dataset in self.collection.datasets.items():
             samplers[key] = iter(
-                SubgraphSampler(dataset.graph, max_proposals=self.batch_size)
+                GraphSampler(dataset.graph, max_proposals=self.batch_size)
             )
         return samplers
 

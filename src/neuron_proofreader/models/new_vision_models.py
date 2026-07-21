@@ -112,6 +112,7 @@ class Encoder3D(nn.Module):
     """
     Sequence of ConvBlock3D blocks with growing (capped) channel width.
     """
+
     def __init__(
         self,
         in_channels,
@@ -152,7 +153,9 @@ class Encoder3D(nn.Module):
             )
             blocks.append(block)
             in_channels = block.out_channels
-            out_channels = int(min(out_channels * channel_multiplier, max_channels))
+            out_channels = int(
+                min(out_channels * channel_multiplier, max_channels)
+            )
 
         # Instance attributes
         self.blocks = nn.ModuleList(blocks)
@@ -214,7 +217,7 @@ class ConvBlock3D(nn.Module):
                 padding=padding,
             ),
             nn.GroupNorm(n_groups, out_channels),
-            nn.GELU()
+            nn.GELU(),
         ]
         return unit
 
