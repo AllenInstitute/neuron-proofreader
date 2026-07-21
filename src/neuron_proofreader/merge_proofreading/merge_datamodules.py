@@ -148,7 +148,7 @@ class BrainDataset:
     def __getitem__(self, idx):
         node, label = self.get_site(idx)
         subgraph = self.rooted_subgraph(node, self.subgraph_depth)
-        patches = self.patch_loader(node)
+        _, patches = self.patch_loader(node)
         return patches, subgraph, label
 
     def get_site(self, idx):
@@ -164,6 +164,9 @@ class BrainDataset:
     def get_random_nonmerge_site(self):
         use_br = np.random.random() < self.random_branching_site_probability
         nodes = self.branching_nodes() if use_br else self.nodes
+        nodes = nodes or self.nodes
+        assert len(nodes) > 0, f"len(branching)={len(self.branching_nodes())}, len(nodes)={len(self.nodes)}"
+
         n_attempts = 0
         while True:
             # Sample node
@@ -197,6 +200,10 @@ class BrainDataset:
             )
         else:
             self.nonmerge_sites = pd.DataFrame(new_sites)
+
+    def get_valid_branching_nodes(self):
+        nodes = self.branching_nodes()
+        return [i for i in nodes if self.is_valid_nonmerge_site(node)]
 
     def is_valid_nonmerge_site(self, node):
         # Reject if high-degree
@@ -648,7 +655,8 @@ def create_dataset_collection(
         if dataset_mode == "Val":
             num_target_neg = val_neg_multiplier * len(dataset.merge_sites)
             num_added_neg = num_target_neg - len(dataset.nonmerge_sites)
-            dataset.add_nonmerge_sites(num_added_neg)
+            if num_added_neg > 0:
+                dataset.add_nonmerge_sites(num_added_neg)
 
         # Add dataset to collection
         datasets.append(dataset)
