@@ -52,6 +52,7 @@ class MergeDetector:
     def search_graph(self):
         # Iterate over dataset
         t0 = time()
+        self.model.eval()
         dataloader = DataLoader(self.dataset, batch_size=self.batch_size)
         pbar = tqdm(total=self.dataset.estimate_iterations())
         for nodes, x_nodes in dataloader:
@@ -93,7 +94,6 @@ class MergeDetector:
         y : numpy.ndarray
             Predicted merge site likelihoods.
         """
-        self.model.eval()
         with torch.inference_mode():
             x = x.to(self.device)
             y = sigmoid(self.model(x))
