@@ -162,11 +162,12 @@ class BrainDataset:
             return self.get_random_nonmerge_site()
 
     def get_random_nonmerge_site(self):
+        # Set sample space
         use_br = np.random.random() < self.random_branching_site_probability
         nodes = self.branching_nodes() if use_br else self.nodes
         nodes = nodes or self.nodes
-        assert len(nodes) > 0, f"len(branching)={len(self.branching_nodes())}, len(nodes)={len(self.nodes)}"
 
+        # Sample node
         n_attempts = 0
         while True:
             # Sample node
@@ -200,10 +201,6 @@ class BrainDataset:
             )
         else:
             self.nonmerge_sites = pd.DataFrame(new_sites)
-
-    def get_valid_branching_nodes(self):
-        nodes = self.branching_nodes()
-        return [i for i in nodes if self.is_valid_nonmerge_site(node)]
 
     def is_valid_nonmerge_site(self, node):
         # Reject if high-degree

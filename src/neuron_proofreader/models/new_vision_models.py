@@ -204,6 +204,24 @@ class Encoder3D(nn.Module):
         stem_dilations=None,
         use_double=True,
     ):
+        """
+        Instantiates an Encoder3D object.
+
+        Parameters
+        ----------
+        in_channels : int
+            Number of channels input to the first block.
+        out_channels : int
+            Number of channels output by the first block.
+        depth : int
+            Number of conv blocks in the encoder.
+        channel_multiplier : float, optional
+            Multiplicative channel growth factor per layer. Default is 2.
+        use_double : bool, optional
+            True if blocks use double convolution. Default is True.
+        max_channels : int, optional
+            Cap on channel growth across layers. Default is 128.
+        """
         # Call parent class
         super().__init__()
 
