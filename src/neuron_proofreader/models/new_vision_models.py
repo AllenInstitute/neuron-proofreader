@@ -71,7 +71,7 @@ class NewCNN3D(nn.Module):
         }
 
         # Encoder
-        self.dropout = dropout
+        self.drop = nn.Dropout(dropout)
         self.encode = Encoder3D(
             input_shape[0], base_channels, depth,
             block_type=block_type,
@@ -183,8 +183,9 @@ class NewCNN3D(nn.Module):
             center = pool(s)
             mx = F.adaptive_max_pool3d(s, 1).flatten(1)
             feats.append(torch.cat([center, mx], dim=1))
-        return self.output(torch.cat(feats, dim=1))
-
+        x = torch.cat(feats, dim=1)
+        x = self.drop(x)
+        return self.output(x)
 
 class Encoder3D(nn.Module):
     """
