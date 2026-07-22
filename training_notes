@@ -1,1 +1,3 @@
+*** Learning Rate
 * lr=1e-5 is too small and had signficantly worse performance than lr=1e-4
+* lr=1e-3 is too big and models performed worse than lr=1e-4

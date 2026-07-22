@@ -13,13 +13,13 @@ import torch
 
 from neuron_proofreader.configs import GraphConfig, ImageConfig
 from neuron_proofreader.models.new_vision_models import NewCNN3D
-from neuron_proofreader.models.vision_models import CNN3D, ViT3D
+from neuron_proofreader.models.vision_models import ViT3D
 from neuron_proofreader.machine_learning.train import Trainer
 from neuron_proofreader.merge_proofreading.merge_datamodules import (
     create_dataset_collection,
     ThreadedDataLoader,
 )
-from neuron_proofreader.utils import ml_util
+from neuron_proofreader.utils import ml_util, util
 
 
 def main():
@@ -27,8 +27,10 @@ def main():
     graph_config.save(output_dir)
     img_config.save(output_dir)
 
+    json_path = os.path.join(output_dir, "model_config.json")
+    util.write_json(json_path, model.config)
+
     # Determine batch size
-    input_shape = (2,) + img_config.patch_shape
     batch_size = ml_util.find_max_batch_size(
         model,
         input_shape=input_shape,
@@ -83,11 +85,11 @@ def main():
 def init_trainer():
     trainer = Trainer(
         model,
-        args.model_name,
+        model_name,
         output_dir,
         device="cuda",
         min_recall=args.min_recall,
-        lr=args.lr,
+        lr=lr,
         verbose=True
     )
     if model_path:
@@ -99,11 +101,10 @@ if __name__ == "__main__":
     # Parse arguments
     parser = argparse.ArgumentParser(description="Process named arguments")
     parser.add_argument("--base_channels", type=int, required=True)
+    parser.add_argument("--block_type", type=int, required=True)
     parser.add_argument("--depth", type=int, required=True)
-    parser.add_argument("--lr", type=float, required=True)
     parser.add_argument("--max_channels", type=int, required=True)
     parser.add_argument("--min_recall", type=float, required=True)
-    parser.add_argument("--model_name", type=str, required=True)
     parser.add_argument("--random_nonmerge_site_prob", type=float, default=0.25)
     parser.add_argument("--use_resblock", type=bool, required=True)
     args, _ = parser.parse_known_args()
@@ -121,7 +122,9 @@ if __name__ == "__main__":
 
     # Parameters
     is_multimodal = False
+    lr = 1e-4
     modality = None
+    model_name = "NewCNN3D"
     prefetch = 32
 
     graph_config = GraphConfig(
@@ -138,24 +141,15 @@ if __name__ == "__main__":
     )
 
     # Model architecture
-    print("Model Name:", args.model_name)
-    if "new" in args.model_name.lower():
-        input_shape = (2,) + img_config.patch_shape
-        model = NewCNN3D(
-            input_shape,
-            base_channels=args.base_channels,
-            depth=args.depth,
-            max_channels=args.max_channels,
-            use_double=True,
-            use_resblock=args.use_resblock,
-        )
-    else:    
-        model = CNN3D(
-            img_config.patch_shape,
-            n_conv_layers=args.depth,
-            n_feat_channels=args.base_channels,
-            use_double_conv=True,
-        )
+    input_shape = (2,) + img_config.patch_shape
+    model = NewCNN3D(
+        input_shape,
+        base_channels=args.base_channels,
+        block_type=args.block_type
+        depth=args.depth,
+        max_channels=args.max_channels,
+        use_double=True,
+    )
 
     # Run code
     main()

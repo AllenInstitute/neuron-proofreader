@@ -101,6 +101,7 @@
 			"description": "Number of channels in first convolutional layer",
 			"type": "text",
 			"value_type": "integer",
+			"default_value": "32",
 			"minimum": 1
 		},
 		{
@@ -111,17 +112,8 @@
 			"description": "Number of convolutional blocks",
 			"type": "text",
 			"value_type": "integer",
+			"default_value": "5",
 			"minimum": 1
-		},
-		{
-			"id": "wKL4zPEB9SnKoOKi",
-			"category": "Nz8IxgqxB3cBzOdF",
-			"name": "Model Name",
-			"param_name": "model_name",
-			"description": "Name of Model",
-			"type": "text",
-			"value_type": "string",
-			"required": true
 		},
 		{
 			"id": "SwbIvbS2gnXmpmFE",
@@ -134,22 +126,18 @@
 			"minimum": 256
 		},
 		{
-			"id": "lZb5A28rnHb6b7GP",
+			"id": "loiMGZq5epvgchdT",
 			"category": "Nz8IxgqxB3cBzOdF",
-			"name": "Use ResBlock",
-			"param_name": "use_resblock",
+			"name": "Block Type",
+			"param_name": "block_type",
 			"type": "list",
-			"value_type": "boolean",
-			"default_value": "True",
-			"extra_data": []
-		},
-		{
-			"id": "k1bZDNuoilsfDhxL",
-			"category": "Ykdwt4Q1oUCgEg3J",
-			"name": "Learning Rate",
-			"param_name": "lr",
-			"type": "text",
-			"value_type": "number"
+			"value_type": "string",
+			"extra_data": [
+				"conv",
+				"res",
+				"se_res",
+				"convnext"
+			]
 		},
 		{
 			"id": "xqwpl4Ga065pI6kT",
