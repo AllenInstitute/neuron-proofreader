@@ -13,9 +13,7 @@ from neuron_proofreader.merge_proofreading.merge_inference import (
     DenseGraphDataset,
     MergeDetector,
 )
-from neuron_proofreader.merge_proofreading.merge_datasets import (
-    MergeSiteDataset
-)
+from neuron_proofreader.merge_proofreading.merge_datasets import MergeSiteDataset
 from neuron_proofreader.utils import swc_util, util
 
 
@@ -48,7 +46,7 @@ def evaluate(brain_id, fragments_graph, merge_sites_df):
         prefetch=64,
         segmentation_path=segmentation_path,
         step_size=step_size,
-        use_new_mask=use_new_mask
+        use_new_mask=use_new_mask,
     )
 
     # Initialize merge detection object
@@ -87,7 +85,9 @@ def compute_performance_metrics(brain_id, gt_sites, detected_sites):
     results.append(f"Recall: {recall}")
     results.append(f"F1: {f1}\n")
     results.append(f"# Detected Merge Sites: {len(detected_sites)}")
-    results.append(f"% Detected GT Merge Sites: {int(len(gt_sites) * recall)}/{len(gt_sites)}")
+    results.append(
+        f"% Detected GT Merge Sites: {int(len(gt_sites) * recall)}/{len(gt_sites)}"
+    )
     results = "\n".join(results)
     print(results)
 
@@ -153,13 +153,7 @@ def plot_precision_vs_recall(brain_id, gt_sites, merge_detector, dt=0.05):
 
     # Visualize result
     plt.figure(figsize=(6, 4))
-    plt.plot(
-        precision_list,
-        recall_list,
-        marker="o",
-        linestyle="-",
-        color="steelblue"
-    )
+    plt.plot(precision_list, recall_list, marker="o", linestyle="-", color="steelblue")
     plt.xlabel("Precision")
     plt.ylabel("Recall")
     plt.grid(True, linestyle="--", alpha=0.7)
@@ -175,9 +169,7 @@ def plot_precision_vs_recall(brain_id, gt_sites, merge_detector, dt=0.05):
 def init_dataset():
     # Load merge sites
     test_idxs = data_util.read_idxs(test_idxs_path)
-    merge_sites_df = data_util.load_merge_sites_df(
-        merge_sites_path, is_test=is_test
-    )
+    merge_sites_df = data_util.load_merge_sites_df(merge_sites_path, is_test=is_test)
     merge_sites_df = merge_sites_df.iloc[test_idxs].reset_index(drop=True)
 
     # Initialize dataset
@@ -203,18 +195,15 @@ def init_dataset():
 
 def save_points(zip_path, pts, color, prefix):
     swc_util.write_points(
-        zip_path,
-        pts,
-        color=color,
-        prefix=prefix,
-        radius=10,
-        write_mode="a"
+        zip_path, pts, color=color, prefix=prefix, radius=10, write_mode="a"
     )
 
 
 if __name__ == "__main__":
     # Parameters
-    model_name = "MergeDetectorCNN3D-v5-run2-newmask=False-negativebias=0.15-20260201-137-0.8771"
+    model_name = (
+        "MergeDetectorCNN3D-v5-run2-newmask=False-negativebias=0.15-20260201-137-0.8771"
+    )
     exp_name = "V5"
 
     accept_threshold = 0.4

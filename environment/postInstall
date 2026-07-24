@@ -8,7 +8,7 @@ pip install -e .
 
 git clone https://github.com/AllenNeuralDynamics/neuron-proofreading-evaluation.git
 cd neuron-proofreading-evaluation
-git checkout 4af4dc6
+git checkout 73e5e32
 pip install -e .
 
 

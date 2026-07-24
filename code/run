@@ -42,7 +42,7 @@ MODE="${PARAMS[mode]:-train}"
 # Dispatch, forwarding only the params each script expects
 case "$MODE" in
     train)
-        TRAIN_KEYS=(base_channels depth model_name max_channels use_resblock lr min_recall random_nonmerge_site_prob)
+        TRAIN_KEYS=(base_channels block_type depth model_name max_channels lr min_recall random_nonmerge_site_prob)
         TRAIN_ARGS=()
         for k in "${TRAIN_KEYS[@]}"; do
             [[ -v PARAMS["$k"] ]] && TRAIN_ARGS+=("--${k}=${PARAMS[$k]}")
@@ -50,7 +50,7 @@ case "$MODE" in
         python -u train.py "${TRAIN_ARGS[@]}"
         ;;
     evaluate)
-        EVAL_KEYS=(brain_id segmentation_id model_version min_search_size step_size threshold)
+        EVAL_KEYS=(brain_id segmentation_id version top_k_ckpts min_search_size step_size threshold)
         EVAL_ARGS=()
         for k in "${EVAL_KEYS[@]}"; do
             [[ -v PARAMS["$k"] ]] && EVAL_ARGS+=("--${k}=${PARAMS[$k]}")

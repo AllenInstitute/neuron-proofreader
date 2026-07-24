@@ -8,6 +8,10 @@ Code starting merge detection training session.
 
 """
 
+import os
+
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 import argparse
 import torch
 
@@ -31,13 +35,13 @@ def main():
     util.write_json(json_path, model.config)
 
     # Determine batch size
-    batch_size = ml_util.find_max_batch_size(
+    max_batch_size = ml_util.find_max_train_batch_size(
         model,
         input_shape=input_shape,
         optimizer_cls=torch.optim.AdamW,
         device="cuda",
     )
-    batch_size -= 1
+    batch_size = max(1, int(max_batch_size * 0.85))
     print("Batch Size:", batch_size)
     assert batch_size > 0
 
@@ -71,7 +75,7 @@ def main():
         is_multimodal=is_multimodal,
         modality=modality,
         prefetch=prefetch,
-        shuffle=False
+        shuffle=False,
     )
     train_dataloader = ThreadedDataLoader(train_dataset, **train_loader_kwargs)
     val_dataloader = ThreadedDataLoader(val_dataset, **val_loader_kwargs)
@@ -90,7 +94,7 @@ def init_trainer():
         device="cuda",
         min_recall=args.min_recall,
         lr=lr,
-        verbose=True
+        verbose=False,
     )
     if model_path:
         trainer.load_pretrained_weights(model_path)
@@ -101,12 +105,11 @@ if __name__ == "__main__":
     # Parse arguments
     parser = argparse.ArgumentParser(description="Process named arguments")
     parser.add_argument("--base_channels", type=int, required=True)
-    parser.add_argument("--block_type", type=int, required=True)
+    parser.add_argument("--block_type", type=str, required=True)
     parser.add_argument("--depth", type=int, required=True)
     parser.add_argument("--max_channels", type=int, required=True)
     parser.add_argument("--min_recall", type=float, required=True)
     parser.add_argument("--random_nonmerge_site_prob", type=float, default=0.25)
-    parser.add_argument("--use_resblock", type=bool, required=True)
     args, _ = parser.parse_known_args()
 
     # Dataset
@@ -117,8 +120,10 @@ if __name__ == "__main__":
     img_prefixes_path = "/root/capsule/data/exaspim_image_prefixes.json"
     model_path = None
     output_dir = "/root/capsule/results"
-    sites_root_path = "gs://allen-nd-goog/automated_proofreading_dataset/curated_sites_05202026/"
-    swcs_root_path = sites_root_path  #"gs://allen-nd-goog/from_google/"
+    sites_root_path = (
+        "gs://allen-nd-goog/automated_proofreading_dataset/curated_sites_05202026/"
+    )
+    swcs_root_path = sites_root_path  # "gs://allen-nd-goog/from_google/"
 
     # Parameters
     is_multimodal = False
@@ -145,10 +150,9 @@ if __name__ == "__main__":
     model = NewCNN3D(
         input_shape,
         base_channels=args.base_channels,
-        block_type=args.block_type
+        block_type=args.block_type,
         depth=args.depth,
         max_channels=args.max_channels,
-        use_double=True,
     )
 
     # Run code

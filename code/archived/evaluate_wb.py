@@ -12,20 +12,15 @@ from neuron_proofreader.skeleton_graph import SkeletonGraph
 from neuron_proofreader.machine_learning.vision_models import CNN3D
 from neuron_proofreader.merge_proofreading.merge_inference import (
     MergeDetector,
-    DenseGraphDataset
+    DenseGraphDataset,
 )
-from neuron_proofreader.utils import (
-    graph_util as gutil,
-    img_util,
-    swc_util,
-    util
-)
+from neuron_proofreader.utils import graph_util as gutil, img_util, swc_util, util
 
 
 def main():
     # Load merge sites
-    #path = f"gs://{bucket_name}/{dataset_prefix}/merge_sites.csv"
-    #merge_sites = pd.read_csv(path)
+    # path = f"gs://{bucket_name}/{dataset_prefix}/merge_sites.csv"
+    # merge_sites = pd.read_csv(path)
 
     merge_sites = load_merge_sites()
 
@@ -35,7 +30,9 @@ def main():
     for cnt, swc_zip_path in enumerate(sorted(swc_zip_paths)):
         # Set paths
         name = get_name(swc_zip_path)
-        gt_path = f"gs://allen-nd-goog/ground_truth_tracings/{brain_id}/voxel/{name}.swc"
+        gt_path = (
+            f"gs://allen-nd-goog/ground_truth_tracings/{brain_id}/voxel/{name}.swc"
+        )
         fragments_path = f"gs://{bucket_name}/{swc_zip_path}"
 
         # Evaluate
@@ -91,7 +88,7 @@ def load_data(gt_path, fragments_path):
         is_multimodal=is_multimodal,
         min_search_size=min_search_size,
         step_size=step_size,
-        use_new_mask=use_new_mask
+        use_new_mask=use_new_mask,
     )
     return dataset
 
@@ -107,7 +104,7 @@ def load_graphs(gt_path, fragments_path):
         node_spacing=node_spacing,
         min_size=min_fragment_size,
         use_anisotropy=False,
-        verbose=True
+        verbose=True,
     )
     graph.load(fragments_path)
 
@@ -213,13 +210,7 @@ def plot_precision_vs_recall(gt_sites, merge_detector, neuron_id, dt=0.05):
 
     # Visualize result
     plt.figure(figsize=(6, 4))
-    plt.plot(
-        precision_list,
-        recall_list,
-        marker="o",
-        linestyle="-",
-        color="steelblue"
-    )
+    plt.plot(precision_list, recall_list, marker="o", linestyle="-", color="steelblue")
     plt.xlabel("Precision")
     plt.ylabel("Recall")
     plt.grid(True, linestyle="--", alpha=0.7)
@@ -259,7 +250,7 @@ def clip_to_groundtruth(gt_graph, graph, threshold=60):
     for node in graph.nodes:
         dist, _ = gt_graph.kdtree.query(graph.node_xyz[node])
         if dist > threshold:
-             nodes.append(node)
+            nodes.append(node)
     graph.remove_nodes(nodes)
 
 
@@ -304,12 +295,7 @@ def save_detections(gt_sites, detected_sites, neuron_id):
 
 def save_points(zip_path, pts, color, prefix):
     swc_util.write_points(
-        zip_path,
-        pts,
-        color=color,
-        prefix=prefix,
-        radius=10,
-        write_mode="a"
+        zip_path, pts, color=color, prefix=prefix, radius=10, write_mode="a"
     )
 
 
@@ -317,7 +303,9 @@ if __name__ == "__main__":
     # Parameters
     brain_id = "802449"
     segmentation_id = "jin_masked_mean40_stddev105"
-    model_name = "MergeDetectorCNN3D-v5-run2-newmask=True-negativebias=0-20260204-16-0.8669"
+    model_name = (
+        "MergeDetectorCNN3D-v5-run2-newmask=True-negativebias=0-20260204-16-0.8669"
+    )
 
     bucket_name = "allen-nd-goog"
     exp_name = "V5"

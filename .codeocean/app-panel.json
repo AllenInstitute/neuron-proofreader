@@ -61,10 +61,20 @@
 		{
 			"id": "fiDYGsfrHiowMk2x",
 			"category": "vy47bQRb5L8q6Bwt",
-			"name": "Model Version",
-			"param_name": "model_version",
+			"name": "Version",
+			"param_name": "version",
 			"type": "text",
 			"value_type": "string"
+		},
+		{
+			"id": "SiycODnnANmNzJb5",
+			"category": "vy47bQRb5L8q6Bwt",
+			"name": "Top K Checkpoints",
+			"param_name": "top_k_ckpts",
+			"type": "text",
+			"value_type": "integer",
+			"default_value": "3",
+			"minimum": 1
 		},
 		{
 			"id": "ABzJdb2PJNQadaFX",
@@ -72,7 +82,8 @@
 			"name": "Min Search Size",
 			"param_name": "min_search_size",
 			"type": "text",
-			"value_type": "number"
+			"value_type": "number",
+			"default_value": "400"
 		},
 		{
 			"id": "vhzNvEGXyrUSVPXv",
@@ -80,7 +91,8 @@
 			"name": "Step Size",
 			"param_name": "step_size",
 			"type": "text",
-			"value_type": "number"
+			"value_type": "number",
+			"default_value": "40"
 		},
 		{
 			"id": "CVE1GEj8qCLQIiPl",
@@ -89,7 +101,7 @@
 			"param_name": "threshold",
 			"type": "text",
 			"value_type": "number",
-			"default_value": "0.2",
+			"default_value": "0.3",
 			"minimum": 0,
 			"maximum": 1
 		},
