@@ -148,7 +148,7 @@ class BrainDataset:
     def __getitem__(self, idx):
         node, label = self.get_site(idx)
         subgraph = self.rooted_subgraph(node, self.subgraph_depth)
-        patches = self.patch_loader(node)
+        _, patches = self.patch_loader(node)
         return patches, subgraph, label
 
     def get_site(self, idx):
@@ -162,8 +162,12 @@ class BrainDataset:
             return self.get_random_nonmerge_site()
 
     def get_random_nonmerge_site(self):
+        # Set sample space
         use_br = np.random.random() < self.random_branching_site_probability
         nodes = self.branching_nodes() if use_br else self.nodes
+        nodes = nodes or self.nodes
+
+        # Sample node
         n_attempts = 0
         while True:
             # Sample node
@@ -648,7 +652,8 @@ def create_dataset_collection(
         if dataset_mode == "Val":
             num_target_neg = val_neg_multiplier * len(dataset.merge_sites)
             num_added_neg = num_target_neg - len(dataset.nonmerge_sites)
-            dataset.add_nonmerge_sites(num_added_neg)
+            if num_added_neg > 0:
+                dataset.add_nonmerge_sites(num_added_neg)
 
         # Add dataset to collection
         datasets.append(dataset)
