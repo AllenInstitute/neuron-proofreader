@@ -113,7 +113,7 @@ class Trainer:
         self.model = model.to(device)
         self.optimizer = optim.AdamW(self.model.parameters(), lr=lr)
         self.scaler = torch.cuda.amp.GradScaler(enabled=True)
-        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=25)
+        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=max_epochs)
         self.writer = SummaryWriter(log_dir=log_dir)
 
     # --- Core Routines ---
