@@ -43,11 +43,11 @@ def main():
 
     # Extract models to evaluate
     print("\nStep 3: Evaluate Model Families")
-    experiment_names = util.list_dir(root_dir)
+    experiment_names = util.listdir(root_dir)
     print(f"Found {len(experiment_names)} model directories in {root_dir}")
 
     # Evaluate models
-    for experiment_name in experiment_names:
+    for experiment_name in [e for e in experiment_names if "convnext" not in e]:
         # Create results directory for model family
         print("\nModel Family:", experiment_name)
         input_dir = f"{root_dir}/{experiment_name}"
@@ -71,6 +71,7 @@ def main():
             # Compute batch size
             input_shape = config["input_shape"]
             batch_size = ml_util.find_max_eval_batch_size(model, input_shape)
+            batch_size = int(batch_size * 0.85)
             print("Batch Size:", batch_size)
 
             # Evaluate model by search type
@@ -142,12 +143,14 @@ def load_datasets(gt_names):
         graph,
         img_config,
         min_search_size=min_search_size,
+        prefetch=prefetch,
     )
     datasets["Dense"] = DenseSearchDataset(
         graph,
         img_config,
         min_search_size=min_search_size,
         step_size=step_size,
+        prefetch=prefetch,
     )
     return datasets
 
@@ -223,6 +226,7 @@ if __name__ == "__main__":
     top_k_ckpts = args.top_k_ckpts
 
     min_search_size = args.min_search_size
+    prefetch = 16
     step_size = args.step_size
     threshold = args.threshold
 
