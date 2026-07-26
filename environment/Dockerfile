@@ -19,6 +19,10 @@ RUN code-server --extensions-dir="/.vscode/extensions" --install-extension ms-py
     && code-server --extensions-dir="/.vscode/extensions" --install-extension reditorsupport.r@2.8.6 \
     && code-server --extensions-dir="/.vscode/extensions" --install-extension saoudrizwan.claude-dev@3.35.1
 
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && npm install -g @anthropic-ai/claude-code
+
 COPY postInstall /
 RUN --mount=type=secret,id=secrets . /run/secrets/secrets \
     && /postInstall

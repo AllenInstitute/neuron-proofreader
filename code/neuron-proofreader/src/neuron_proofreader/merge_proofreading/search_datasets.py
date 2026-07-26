@@ -1,0 +1,315 @@
+"""
+Created on Wed August 4 16:00:00 2025
+
+@author: Anna Grim
+@email: anna.grim@alleninstitute.org
+
+Code for detecting merge mistakes on skeletons generated from an automated
+image segmentation.
+
+"""
+
+from abc import ABC, abstractmethod
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from queue import Queue
+from threading import Thread
+from torch.utils.data import IterableDataset
+
+import networkx as nx
+import numpy as np
+import torch
+
+from neuron_proofreader.machine_learning.image_dataloader import (
+    DetectionBatchLoader,
+    DetectionPatchLoader,
+)
+from neuron_proofreader.utils import img_util, util
+
+
+# --- Datasets ---
+class SearchDataset(IterableDataset, ABC):
+
+    def __init__(
+        self,
+        graph,
+        img_config,
+        is_multimodal=False,
+        min_search_size=0,
+        prefetch=32,
+        subgraph_radius=100,
+    ):
+        # Call parent class
+        super().__init__()
+
+        # Instance attributes
+        self.graph = graph
+        self.is_multimodal = is_multimodal
+        self.min_size = min_search_size
+        self.patch_shape = img_config.patch_shape
+        self.prefetch = prefetch
+        self.subgraph_radius = subgraph_radius
+
+        # Input getter
+        if is_multimodal:
+            self.get_input = self.get_patch_and_pointcloud
+        else:
+            self.get_input = self.get_patch
+
+    # --- Core routines ---
+    def __iter__(self):
+        patch_queue = Queue(maxsize=self.prefetch)
+        sentinel = object()
+
+        def producer():
+            sites = self._all_sites()
+            with ThreadPoolExecutor(max_workers=self.prefetch) as executor:
+                futures = set()
+
+                def fill():
+                    while len(futures) < self.prefetch:
+                        try:
+                            site = next(sites)
+                            futures.add(executor.submit(self.patch_loader, site))
+                        except StopIteration:
+                            break
+
+                fill()    
+                while futures:
+                    done, _ = wait(futures, return_when=FIRST_COMPLETED)
+                    for f in done:
+                        futures.remove(f)
+                        patch_queue.put(f.result())
+
+                    fill()
+
+            patch_queue.put(sentinel)
+
+        Thread(target=producer, daemon=True).start()
+        while True:
+            item = patch_queue.get()
+            if item is sentinel:
+                break
+
+            yield from self.get_input(*item)
+
+    def _all_sites(self):
+        visited_ids = set()
+        valid_ids = self.find_fragments_to_search()
+        for u in self.graph.leaf_nodes():
+            component_id = self.node_component_id[u]
+            if component_id not in visited_ids and component_id in valid_ids:
+                visited_ids.add(component_id)
+                yield from self.generate_component_sites(u)
+
+    @abstractmethod
+    def generate_component_sites(self, root):
+        """
+        Abstract method to be implemented by subclasses.
+        """
+        pass
+
+    # --- Helpers ---
+    def __getattr__(self, name):
+        return getattr(self.graph, name)
+
+    @abstractmethod
+    def estimate_iterations(self):
+        pass
+
+    def _compute_fragment_stats(self):
+        if not hasattr(self, "_fragment_stats_cache"):
+            stats = {}
+            for nodes in nx.connected_components(self.graph):
+                node = util.sample_once(list(nodes))
+                cable_length = self.graph.cable_length(root=node)
+                if cable_length > self.min_size:
+                    stats[self.node_component_id[node]] = cable_length
+            self._fragment_stats_cache = stats
+        return self._fragment_stats_cache
+
+    def find_fragments_to_search(self):
+        return set(self._compute_fragment_stats().keys())
+
+    def is_contained(self, node):
+        voxel = self.node_voxel(node)
+        shape = self.patch_loader.img.shape()[2::]
+        buffer = np.max(self.patch_shape) + 1
+        return img_util.is_contained(voxel, shape, buffer=buffer)
+
+    def compute_near_leaf_nodes(self, root, threshold=32):
+        component = nx.node_connected_component(self.graph, root)
+        leaves = [n for n in component if self.degree[n] == 1]
+        near_leaf = set()
+        visited = set(leaves)
+        queue = [(leaf, 0) for leaf in leaves]
+        while queue:
+            i, dist_i = queue.pop(0)
+            if self.degree[i] <= 2:
+                near_leaf.add(i)
+            for j in self.neighbors(i):
+                dist_j = dist_i + self.dist(i, j)
+                if j not in visited and dist_j < threshold:
+                    visited.add(j)
+                    queue.append((j, dist_j))
+        return near_leaf
+
+    def is_node_valid(self, node, near_leaf_nodes=None):
+        is_contained = self.is_contained(node)
+        if near_leaf_nodes is not None:
+            is_nonleaf = node not in near_leaf_nodes
+        else:
+            is_nonleaf = self.degree[node] > 2 or not self._is_near_leaf_slow(node)
+        return is_contained and is_nonleaf
+
+    def _is_near_leaf_slow(self, node, threshold=32):
+        queue = [(node, 0)]
+        visited = {node}
+        while queue:
+            i, dist_i = queue.pop()
+            if self.degree[i] == 1:
+                return True
+            for j in self.neighbors(i):
+                dist_j = dist_i + self.dist(i, j)
+                if j not in visited and dist_j < threshold:
+                    queue.append((j, dist_j))
+                    visited.add(j)
+        return False
+
+
+class DenseSearchDataset(SearchDataset):
+
+    max_batch_span = 512
+
+    def __init__(
+        self,
+        graph,
+        img_config,
+        is_multimodal=False,
+        min_search_size=0,
+        prefetch=64,
+        step_size=40,
+        subgraph_radius=100,
+    ):
+        # Call parent class
+        super().__init__(
+            graph,
+            img_config,
+            is_multimodal=is_multimodal,
+            min_search_size=min_search_size,
+            prefetch=prefetch,
+            subgraph_radius=subgraph_radius,
+        )
+
+        # Instance attributes
+        self.patch_loader = DetectionBatchLoader(self.graph, img_config)
+        self.search_mode = "dense"
+        self.step_size = step_size
+
+    def generate_component_sites(self, root):
+        """
+        Generates batches of nodes from the connected component that contains
+        the given root node.
+
+        Returns
+        -------
+        Iterator[numpy.ndarray]
+            Generator that yields batches of nodes from the connected
+            component containing the given root node.
+        """
+        near_leaf_nodes = self.compute_near_leaf_nodes(root)
+        nodes = list()
+        for i, j in nx.dfs_edges(self.graph, source=root):
+            # Check if starting new batch
+            if len(nodes) == 0:
+                if self.is_node_valid(i, near_leaf_nodes):
+                    root = i
+                    last_node = i
+                    nodes.append(i)
+                else:
+                    continue
+
+            # Check whether to yield batch
+            if self.dist(root, j) > self.max_batch_span:
+                yield np.array(nodes, dtype=int)
+                nodes = list()
+
+            # Visit j
+            is_branching = self.degree[j] >= 3
+            is_next = self.dist(last_node, j) >= self.step_size - 2
+            is_valid = self.is_node_valid(j, near_leaf_nodes)
+            if (is_next or is_branching) and is_valid:
+                last_node = j
+                nodes.append(j)
+                if len(nodes) == 1:
+                    root = j
+
+        # Yield any remaining nodes after the loop
+        if nodes:
+            yield np.array(nodes, dtype=int)
+
+    def get_patch(self, nodes, img, offset):
+        img = torch.from_numpy(img).float()
+        voxels = np.array([self.node_voxel(i) for i in nodes], dtype=int)
+        for node, center in zip(nodes, voxels - offset):
+            s = img_util.get_slices(center, self.patch_shape)
+            yield node, img[(slice(0, 2), *s)]
+
+    def generate_patch_and_pc(self, nodes, img, offset):
+        pass
+
+    # --- Helpers ---
+    def estimate_iterations(self):
+        """
+        Estimates the number of iterations required to search graph.
+
+        Returns
+        -------
+        int
+            Estimated number of iterations required to search graph.
+        """
+        stats = self._compute_fragment_stats()
+        n_fragments = len(stats)
+        total_cable_length = sum(stats.values())
+        print("# Fragments:", n_fragments)
+        print(f"Total Cable Length: {total_cable_length / 10**5:.2f}cm")
+        return int(total_cable_length / self.step_size)
+
+
+class SparseSearchDataset(SearchDataset):
+
+    def __init__(
+        self,
+        graph,
+        img_config,
+        is_multimodal=False,
+        min_search_size=0,
+        prefetch=64,
+        step_size=10,
+        subgraph_radius=100,
+    ):
+        # Call parent class
+        super().__init__(
+            graph,
+            img_config,
+            is_multimodal=is_multimodal,
+            min_search_size=min_search_size,
+            prefetch=prefetch,
+            subgraph_radius=subgraph_radius,
+        )
+
+        # Instance attributes
+        self.patch_loader = DetectionPatchLoader(self.graph, img_config)
+        self.search_mode = "sparse"
+
+    def estimate_iterations(self):
+        return len(self.branching_nodes())
+
+    def generate_component_sites(self, root):
+        visited = set()
+        for i, j in nx.dfs_edges(self.graph, source=root):
+            if self.degree[i] >= 3 and i not in visited:
+                visited.add(i)
+                yield i
+
+    def get_patch(self, node, img):
+        yield node, torch.from_numpy(img).float()

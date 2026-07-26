@@ -1,0 +1,52 @@
+# Workflow runs only once when the template is first used.
+# File can be safely deleted after repo is initialized.
+name: Initialize repository
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  initialize-package:
+    name: Initialize the package
+    if: ${{github.event.repository.name != 'aind-library-template'}}
+    runs-on: ubuntu-latest
+    env:
+      REPO_NAME: ${{ github.event.repository.name }}
+      GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+    - name: Rename package
+      run: |
+        pkg_name=$(echo "${REPO_NAME}" | tr - _)
+        current_description='description = "Prints messages to stdout. Simple boilerplate for libraries."'
+        new_description='description = "Generated from aind-library-template"'
+        readme_description='Template for a minimal, basic repository for an AIND library.'
+        new_readme_description='Generated from aind-library-template'
+        echo "Package Name ${pkg_name}"
+        mkdir src/${pkg_name}
+        touch src/${pkg_name}/__init__.py
+        echo '"""Init package"""' >> src/${pkg_name}/__init__.py
+        echo '__version__ = "0.0.0"' >> src/${pkg_name}/__init__.py
+        sed -i "s/aind_library_template/${pkg_name}/" pyproject.toml
+        sed -i "s/aind-library-template/${REPO_NAME}/" pyproject.toml
+        sed -i "s/aind_library_template/${pkg_name}/" doc_template/source/conf.py
+        sed -i "s/${current_description}/${new_description}/" pyproject.toml
+        sed -i "/pandas/d" pyproject.toml
+        sed -i "s/aind-library-template/${REPO_NAME}/" README.md
+        sed -i "s/${readme_description}/${new_readme_description}/" README.md
+    - name: Commit changes
+      uses: EndBug/add-and-commit@v9
+      with:
+        default_author: github_actions
+        message: "ci: version bump [skip actions]"
+        add: '["pyproject.toml", "README.md", "src/*", "doc_template/source/conf.py"]'
+        remove: '["-r src/aind_library_template", "tests/test_message_handler.py"]'
+    - name: Add first tag
+      run: |
+        git tag v0.0.0
+        git push origin v0.0.0
+    - name: Disable workflow
+      run: |
+        gh workflow disable -R $GITHUB_REPOSITORY "${{ github.workflow }}"

@@ -146,9 +146,7 @@
 			"value_type": "string",
 			"extra_data": [
 				"conv",
-				"res",
-				"se_res",
-				"convnext"
+				"res"
 			]
 		},
 		{

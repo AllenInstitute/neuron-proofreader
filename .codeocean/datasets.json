@@ -3,11 +3,15 @@
 	"attached_datasets": [
 		{
 			"id": "06570486-ac52-49c8-828e-b80820691d7c",
-			"mount": "v1"
+			"mount": "train_v1"
+		},
+		{
+			"id": "06a5c660-fad3-42f7-a18b-85c7442fbde4",
+			"mount": "evaluation_v2"
 		},
 		{
 			"id": "1d5c6839-1cc1-4e39-949e-a259fcff3b0e",
-			"mount": "v2"
+			"mount": "train_v2"
 		}
 	]
 }
