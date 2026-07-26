@@ -234,9 +234,10 @@ class DenseSearchDataset(SearchDataset):
                 nodes = list()
 
             # Visit j
-            is_next = self.dist(last_node, j) >= self.step_size - 2
             is_branching = self.degree[j] >= 3
-            if (is_next or is_branching) and self.is_node_valid(j, near_leaf_nodes):
+            is_next = self.dist(last_node, j) >= self.step_size - 2
+            is_valid = self.is_node_valid(j, near_leaf_nodes)
+            if (is_next or is_branching) and is_valid:
                 last_node = j
                 nodes.append(j)
                 if len(nodes) == 1:
