@@ -35,6 +35,11 @@ import os
 import pandas as pd
 import torch
 
+from neuron_proofreader.geometric_learning.graph_datamodules import (
+    path_features,
+    topological_decomposition,
+    TopoGraphInput,
+)
 from neuron_proofreader.machine_learning.image_dataloader import (
     DetectionPatchLoader as PatchLoader,
 )
@@ -149,7 +154,16 @@ class BrainDataset:
         node, label = self.get_site(idx)
         subgraph = self.rooted_subgraph(node, self.subgraph_depth)
         patches = self.patch_loader(node)
-        return patches, subgraph, label
+        topo_nodes, paths, edge_index = topological_decomposition(subgraph)
+        topo_graph = TopoGraphInput(
+            path_feats=[path_features(subgraph, p) for p in paths],
+            edge_index=edge_index,
+            node_feats=np.concatenate([
+                subgraph.node_xyz[topo_nodes] - subgraph.node_xyz[0],
+                subgraph.node_radius[topo_nodes, None],
+            ], axis=1),
+        )
+        return patches, topo_graph, label
 
     def get_site(self, idx):
         if idx > 0:

@@ -11,6 +11,8 @@ Created on Mon June 8 17:00:00 2026
 from copy import deepcopy
 from torch.utils.data import Dataset, DataLoader, Sampler
 
+from neuron_proofreader.geometric_learning.graph_datamodules import curve_to_diffs
+
 import networkx as nx
 import numpy as np
 import pandas as pd
@@ -67,10 +69,7 @@ class PathsDataset(Dataset):
         if self.transform:
             curve = self.transform(curve)
 
-        # Normalize
-        curve -= curve[0]
-        curve[1:] -= curve[:-1]
-        return curve
+        return curve_to_diffs(curve)
 
     # --- Helpers ---
     def path_lengths(self):
