@@ -240,7 +240,7 @@ if __name__ == "__main__":
     # Paths
     fragments_prefix = f"gs://allen-nd-goog/anna.grim/intersecting_neuron_fragments/{brain_id}/{segmentation_id}"
     gt_sites_path = f"/data/{brain_id}-{segmentation_id}.csv"
-    root_dir = f"/data/{version}"
+    root_dir = f"/data/train_{version}"
 
     # Run evaluation
     main()

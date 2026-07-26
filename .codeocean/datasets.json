@@ -12,6 +12,10 @@
 		{
 			"id": "1d5c6839-1cc1-4e39-949e-a259fcff3b0e",
 			"mount": "train_v2"
+		},
+		{
+			"id": "7c8d1d36-320d-4d19-a7a4-55fbabb3ea6f",
+			"mount": "train_v2b"
 		}
 	]
 }

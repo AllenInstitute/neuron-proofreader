@@ -92,6 +92,7 @@ def init_trainer():
         model_name,
         output_dir,
         device="cuda",
+        max_epochs=150,
         min_recall=args.min_recall,
         lr=lr,
         verbose=False,
@@ -128,6 +129,7 @@ if __name__ == "__main__":
     # Parameters
     is_multimodal = False
     lr = 1e-4
+    max_epochs = max_epochs
     modality = None
     model_name = "NewCNN3D"
     prefetch = 32
