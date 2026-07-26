@@ -113,7 +113,7 @@ class Trainer:
         self.model = model.to(device)
         self.optimizer = optim.AdamW(self.model.parameters(), lr=lr)
         self.scaler = torch.cuda.amp.GradScaler(enabled=True)
-        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=25)
+        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=max_epochs)
         self.writer = SummaryWriter(log_dir=log_dir)
 
     # --- Core Routines ---
@@ -370,7 +370,7 @@ class Trainer:
         date = datetime.today().strftime("%Y%m%d")
         filename = f"{self.model_name}-{date}-{epoch}-{self.best_f1:.4f}.pth"
         path = os.path.join(self.log_dir, filename)
-        torch.save(self.model.state_dict(), path)
+        torch.save({"config": self.model.config, "state_dict": self.model.state_dict()}, path)
 
     def update_tensorboard(self, stats, epoch, prefix):
         """

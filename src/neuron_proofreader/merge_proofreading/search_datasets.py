@@ -116,19 +116,19 @@ class SearchDataset(IterableDataset, ABC):
     def estimate_iterations(self):
         pass
 
-    def find_fragments_to_search(self):
-        component_ids = set()
-        for nodes in nx.connected_components(self.graph):
-            # Compute path length
-            node = util.sample_once(list(nodes))
-            length = self.graph.cable_length(
-                max_depth=self.min_size, root=node
-            )
+    def _compute_fragment_stats(self):
+        if not hasattr(self, "_fragment_stats_cache"):
+            stats = {}
+            for nodes in nx.connected_components(self.graph):
+                node = util.sample_once(list(nodes))
+                cable_length = self.graph.cable_length(root=node)
+                if cable_length > self.min_size:
+                    stats[self.node_component_id[node]] = cable_length
+            self._fragment_stats_cache = stats
+        return self._fragment_stats_cache
 
-            # Check if path length satisfies threshold
-            if length > self.min_size:
-                component_ids.add(self.node_component_id[node])
-        return component_ids
+    def find_fragments_to_search(self):
+        return set(self._compute_fragment_stats().keys())
 
     def is_contained(self, node):
         voxel = self.node_voxel(node)
@@ -136,32 +136,44 @@ class SearchDataset(IterableDataset, ABC):
         buffer = np.max(self.patch_shape) + 1
         return img_util.is_contained(voxel, shape, buffer=buffer)
 
-    def is_near_leaf(self, node, threshold=32):
-        # Check if node is branching
-        if self.degree[node] > 2:
-            return False
+    def compute_near_leaf_nodes(self, root, threshold=32):
+        component = nx.node_connected_component(self.graph, root)
+        leaves = [n for n in component if self.degree[n] == 1]
+        near_leaf = set()
+        visited = set(leaves)
+        queue = [(leaf, 0) for leaf in leaves]
+        while queue:
+            i, dist_i = queue.pop(0)
+            if self.degree[i] <= 2:
+                near_leaf.add(i)
+            for j in self.neighbors(i):
+                dist_j = dist_i + self.dist(i, j)
+                if j not in visited and dist_j < threshold:
+                    visited.add(j)
+                    queue.append((j, dist_j))
+        return near_leaf
 
-        # Search neighborhood
+    def is_node_valid(self, node, near_leaf_nodes=None):
+        is_contained = self.is_contained(node)
+        if near_leaf_nodes is not None:
+            is_nonleaf = node not in near_leaf_nodes
+        else:
+            is_nonleaf = self.degree[node] > 2 or not self._is_near_leaf_slow(node)
+        return is_contained and is_nonleaf
+
+    def _is_near_leaf_slow(self, node, threshold=32):
         queue = [(node, 0)]
         visited = {node}
-        while len(queue) > 0:
-            # Visit node
+        while queue:
             i, dist_i = queue.pop()
             if self.degree[i] == 1:
                 return True
-
-            # Update queue
             for j in self.neighbors(i):
                 dist_j = dist_i + self.dist(i, j)
                 if j not in visited and dist_j < threshold:
                     queue.append((j, dist_j))
                     visited.add(j)
         return False
-
-    def is_node_valid(self, node):
-        is_contained = self.is_contained(node)
-        is_nonleaf = not self.is_near_leaf(node)
-        return is_contained and is_nonleaf
 
 
 class DenseSearchDataset(SearchDataset):
@@ -204,11 +216,12 @@ class DenseSearchDataset(SearchDataset):
             Generator that yields batches of nodes from the connected
             component containing the given root node.
         """
+        near_leaf_nodes = self.compute_near_leaf_nodes(root)
         nodes = list()
         for i, j in nx.dfs_edges(self.graph, source=root):
             # Check if starting new batch
             if len(nodes) == 0:
-                if self.is_node_valid(i):
+                if self.is_node_valid(i, near_leaf_nodes):
                     root = i
                     last_node = i
                     nodes.append(i)
@@ -223,7 +236,7 @@ class DenseSearchDataset(SearchDataset):
             # Visit j
             is_next = self.dist(last_node, j) >= self.step_size - 2
             is_branching = self.degree[j] >= 3
-            if (is_next or is_branching) and self.is_node_valid(j):
+            if (is_next or is_branching) and self.is_node_valid(j, near_leaf_nodes):
                 last_node = j
                 nodes.append(j)
                 if len(nodes) == 1:
@@ -253,16 +266,9 @@ class DenseSearchDataset(SearchDataset):
         int
             Estimated number of iterations required to search graph.
         """
-        # Search graph
-        total_cable_length = 0
-        n_fragments = 0
-        for nodes in map(list, nx.connected_components(self.graph)):
-            cable_length = self.cable_length(root=nodes[0])
-            if cable_length > self.min_size:
-                total_cable_length += cable_length
-                n_fragments += 1
-
-        # Report results
+        stats = self._compute_fragment_stats()
+        n_fragments = len(stats)
+        total_cable_length = sum(stats.values())
         print("# Fragments:", n_fragments)
         print(f"Total Cable Length: {total_cable_length / 10**5:.2f}cm")
         return int(total_cable_length / self.step_size)

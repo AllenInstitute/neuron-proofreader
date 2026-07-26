@@ -31,15 +31,13 @@ class NewCNN3D(nn.Module):
         input_shape,
         base_channels=16,
         block_type=None,
-        center_pool_sigma=0.4,
         channel_multiplier=2,
         depth=5,
         dropout=0.1,
-        learnable_center_sigma=True,
         max_channels=256,
         num_single_blocks=2,
         output_dim=1,
-        pool_stage_idxs=(2, -1),
+        pool_stage_idxs=(-3, -2, -1),
         use_double=True,
     ):
         # Call parent class
@@ -58,11 +56,9 @@ class NewCNN3D(nn.Module):
             "input_shape": tuple(input_shape),
             "base_channels": base_channels,
             "block_type": block_name,
-            "center_pool_sigma": center_pool_sigma,
             "channel_multiplier": channel_multiplier,
             "depth": depth,
             "dropout": dropout,
-            "learnable_center_sigma": learnable_center_sigma,
             "max_channels": max_channels,
             "num_single_blocks": num_single_blocks,
             "output_dim": output_dim,
@@ -84,11 +80,6 @@ class NewCNN3D(nn.Module):
         # Output
         self.pool_stage_idxs = pool_stage_idxs
         stage_channels = [self.encode.blocks[i].out_channels for i in pool_stage_idxs]
-        self.center_pools = nn.ModuleList([
-            CenterWeightedPool3D(sigma=center_pool_sigma, learnable=learnable_center_sigma)
-            for _ in stage_channels
-        ])
-
         total_dim = sum(c * 2 for c in stage_channels)
         self.output = FeedForwardNet(total_dim, output_dim, 3)
         self.apply(self.init_weights)
@@ -178,11 +169,11 @@ class NewCNN3D(nn.Module):
         """
         stages = self.encode(x)
         feats = []
-        for idx, pool in zip(self.pool_stage_idxs, self.center_pools):
+        for idx in self.pool_stage_idxs:
             s = stages[idx]
-            center = pool(s)
+            avg = F.adaptive_avg_pool3d(s, 1).flatten(1)
             mx = F.adaptive_max_pool3d(s, 1).flatten(1)
-            feats.append(torch.cat([center, mx], dim=1))
+            feats.append(torch.cat([avg, mx], dim=1))
         x = torch.cat(feats, dim=1)
         x = self.drop(x)
         return self.output(x)
@@ -353,22 +344,6 @@ class ResConvBlock3D(nn.Module):
         kernel_size=3,
         use_double=True,
     ):
-        """
-        Instantiates a ResConvBlock3D object.
-
-        Parameters
-        ----------
-        in_channels : int
-            Number of input channels to this block.
-        out_channels : int
-            Number of output channels from this block.
-        kernel_size : int, optional
-            Size of kernel used on convolutional layers. Default is 3.
-        use_double : bool, optional
-            Indication of whether to apply a second conv+norm before the
-            residual add. Default is True.
-        """
-        # Call parent class
         super().__init__()
 
         self.out_channels = out_channels
@@ -411,161 +386,6 @@ class ResConvBlock3D(nn.Module):
         x = self.act(x)
         return self.pool(x)
 
-
-@register_block("se_res")
-class SEResConvBlock3D(ResConvBlock3D):
-    """
-    ResConvBlock3D with squeeze-excitation applied to the residual branch
-    before the skip add.
-    """
-
-    def __init__(
-        self,
-        in_channels,
-        out_channels,
-        kernel_size=3,
-        use_double=True,
-        reduction=8,
-    ):
-        super().__init__(in_channels, out_channels, kernel_size, use_double)
-        self.se = SqueezeExcite3D(out_channels, reduction)
-
-    def forward(self, x):
-        x = self.se(self.main(x)) + self.skip(x)
-        x = self.act(x)
-        return self.pool(x)
-
-
-class SqueezeExcite3D(nn.Module):
-    """
-    Channel attention: squeeze via global average pooling, excite via a
-    small bottleneck MLP gate.
-    """
-
-    def __init__(self, channels, reduction=8):
-        super().__init__()
-        hidden = max(channels // reduction, 4)
-        self.fc = nn.Sequential(
-            nn.Linear(channels, hidden),
-            nn.GELU(),
-            nn.Linear(hidden, channels),
-            nn.Sigmoid(),
-        )
-
-    def forward(self, x):
-        b, c = x.shape[:2]
-        gate = F.adaptive_avg_pool3d(x, 1).view(b, c)
-        gate = self.fc(gate).view(b, c, 1, 1, 1)
-        return x * gate
-
-
-@register_block("convnext")
-class ConvNeXtDownBlock3D(nn.Module):
-    """
-    Adapts ConvNeXtBlock3D (fixed channels, no downsampling) to the
-    Encoder3D block interface via a 1x1 channel projection and pooling.
-    """
-
-    def __init__(
-        self,
-        in_channels,
-        out_channels,
-        kernel_size=3,
-        use_double=True,
-        expansion=4,
-    ):
-        super().__init__()
-        self.out_channels = out_channels
-        self.proj = (
-            nn.Identity()
-            if in_channels == out_channels
-            else nn.Conv3d(in_channels, out_channels, kernel_size=1, bias=False)
-        )
-        self.block = ConvNeXtBlock3D(out_channels, expansion=expansion)
-        self.pool = nn.MaxPool3d(2)
-
-    def forward(self, x):
-        x = self.proj(x)
-        x = self.block(x)
-        return self.pool(x)
-
-
-class ConvNeXtBlock3D(nn.Module):
-
-    def __init__(self, channels, expansion=4):
-        # Call parent class
-        super().__init__()
-
-        # Create block
-        hidden = expansion * channels
-        self.block = nn.Sequential(
-            # Depthwise convolution
-            nn.Conv3d(
-                channels,
-                channels,
-                kernel_size=7,
-                padding=3,
-                groups=channels,
-                bias=False,
-            ),
-            nn.GroupNorm(1, channels),
-
-            # Pointwise expansion
-            nn.Conv3d(channels, hidden, kernel_size=1),
-            nn.GELU(),
-
-            # Pointwise projection
-            nn.Conv3d(hidden, channels, kernel_size=1),
-        )
-
-    def forward(self, x):
-        return x + self.block(x)
-
-
-class CenterWeightedPool3D(nn.Module):
-    """
-    Global pooling with a Gaussian weight centered on the patch, so voxels
-    near the center (e.g. the candidate merge/split point) contribute more
-    than voxels near the border. Weights are per-spatial-position only
-    (shared across channels) and normalize to sum to 1.
-    """
-
-    def __init__(self, sigma=0.4, learnable=True):
-        """
-        Parameters
-        ----------
-        sigma : float, optional
-            Gaussian std, as a fraction of the half-extent along each axis
-            (coords run -1..1, so 0.4 means weight falls to ~1/e at 40% of
-            the way to the edge). Smaller = tighter focus on center.
-            Default is 0.4.
-        learnable : bool, optional
-            If True, sigma is a learned scalar so the model can widen or
-            narrow the focus during training. Default is True.
-        """
-        super().__init__()
-        self._dist_cache = {}
-        init = torch.log(torch.tensor(float(sigma)))
-        if learnable:
-            self.log_sigma = nn.Parameter(init)
-        else:
-            self.register_buffer("log_sigma", init, persistent=False)
-
-    def _dist_sq(self, shape, device, dtype):
-        key = (shape, device)
-        if key not in self._dist_cache:
-            coords = [torch.linspace(-1, 1, s, device=device, dtype=dtype) for s in shape]
-            grid = torch.stack(torch.meshgrid(*coords, indexing="ij"), dim=0)
-            self._dist_cache[key] = (grid ** 2).sum(0)
-        return self._dist_cache[key]
-
-    def forward(self, x):
-        b, c, d, h, w = x.shape
-        dist_sq = self._dist_sq((d, h, w), x.device, x.dtype)
-        sigma = self.log_sigma.exp().clamp(min=1e-3)
-        weights = torch.exp(-dist_sq / (2 * sigma ** 2))
-        weights = (weights / weights.sum()).view(1, 1, d, h, w)
-        return (x * weights).sum(dim=(2, 3, 4))
 
 
 # --- Vision Transformers ---
