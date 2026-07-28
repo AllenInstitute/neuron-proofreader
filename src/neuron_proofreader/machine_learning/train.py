@@ -10,6 +10,7 @@ proofreading classification tasks.
 """
 
 from datetime import datetime
+from torch.nn.functional import sigmoid
 from torch.nn.parallel import DistributedDataParallel
 from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import CosineAnnealingLR
@@ -69,6 +70,7 @@ class Trainer:
         max_epochs=200,
         min_recall=0,
         save_mistake_mips=False,
+        threshold_metrics=0.5,
         verbose=False,
     ):
         """
@@ -107,6 +109,7 @@ class Trainer:
         self.mistakes_dir = os.path.join(log_dir, "mistakes")
         self.model_name = model_name
         self.save_mistake_mips = save_mistake_mips
+        self.threshold_metrics = threshold_metrics
         self.verbose = verbose
 
         self.criterion = nn.BCEWithLogitsLoss()
@@ -172,7 +175,7 @@ class Trainer:
         for x, y in dataloader:
             # Forward and backward pass
             self.optimizer.zero_grad(set_to_none=True)
-            y, hat_y, loss = self.forward_pass(x, y)
+            y, y_pred, loss = self.forward_pass(x, y)
             self.scaler.scale(loss).backward()
 
             # Step optimizer
@@ -182,8 +185,8 @@ class Trainer:
             self.scaler.update()
 
             # Compute metrics
-            hat_y = hat_y > 0
-            metrics.update(hat_y, y, loss)
+            y_pred = sigmoid(y_pred) >= self.threshold_metrics
+            metrics.update(y_pred, y, loss)
 
             # Update progress bar
             if self.verbose:
@@ -227,14 +230,14 @@ class Trainer:
         for x, y in dataloader:
             # Run model
             with torch.inference_mode():
-                y, hat_y, loss = self.forward_pass(x, y)
+                y, y_pred, loss = self.forward_pass(x, y)
 
             # Compute metrics
-            hat_y = hat_y > 0
-            metrics.update(hat_y, y, loss)
+            y_pred = sigmoid(y_pred) >= self.threshold_metrics
+            metrics.update(y_pred, y, loss)
 
             # Save MIPs of mistakes
-            self._save_mistake_mips(x, y, hat_y, idx_offset)
+            self._save_mistake_mips(x, y, y_pred, idx_offset)
             idx_offset += len(y)
 
             # Update progress bar
@@ -259,7 +262,7 @@ class Trainer:
 
         Returns
         -------
-        hat_y : torch.Tensor
+        y_pred : torch.Tensor
             Model predictions.
         loss : torch.Tensor
             Computed loss value.
@@ -267,9 +270,9 @@ class Trainer:
         x = x.to(self.device, non_blocking=True)
         y = y.to(self.device, non_blocking=True)
         with torch.autocast(device_type="cuda", dtype=torch.float16):
-            hat_y = self.model(x)
-            loss = self.criterion(hat_y, y)
-        return y, hat_y, loss
+            y_pred = self.model(x)
+            loss = self.criterion(y_pred, y)
+        return y, y_pred, loss
 
     # --- Helpers ---
     @staticmethod
@@ -328,7 +331,7 @@ class Trainer:
             torch.load(model_path, map_location=self.device)
         )
 
-    def _save_mistake_mips(self, x, y, hat_y, idx_offset):
+    def _save_mistake_mips(self, x, y, y_pred, idx_offset):
         """
         Saves MIPs of each false negative and false positive.
 
@@ -338,7 +341,7 @@ class Trainer:
             Input tensor with shape (B, 2, D, H, W).
         y : numpy.ndarray
             Ground truth labels with shape (B, 1).
-        hat_y : numpy.ndarray
+        y_pred : numpy.ndarray
             Predicted labels with shape (B, 1).
         """
         if self.save_mistake_mips:
@@ -349,8 +352,8 @@ class Trainer:
                 x = ml_util.to_cpu(x, True)
 
             # Save MIPs
-            for i, (y_i, hat_y_i) in enumerate(zip(y, hat_y)):
-                mistake_type = classify_mistake(y_i, hat_y_i)
+            for i, (y_i, y_pred_i) in enumerate(zip(y, y_pred)):
+                mistake_type = classify_mistake(y_i, y_pred_i)
                 if mistake_type:
                     filename = f"{mistake_type}{i + idx_offset}.png"
                     output_path = os.path.join(self.mistakes_dir, filename)
@@ -521,7 +524,7 @@ class DistributedTrainer(Trainer):
 
 
 # --- Helpers ---
-def classify_mistake(y_i, hat_y_i):
+def classify_mistake(y_i, y_pred_i):
     """
     Classify a prediction mistake for a single example.
 
@@ -529,7 +532,7 @@ def classify_mistake(y_i, hat_y_i):
     ----------
     y_i : int
         Ground truth label.
-    hat_y_i : float
+    y_pred_i : float
         Predicted label.
 
     Returns
@@ -537,8 +540,8 @@ def classify_mistake(y_i, hat_y_i):
     str or None
         Name of mistake or None if prediction is correct.
     """
-    if y_i == 1 and hat_y_i < 0:
+    if y_i == 1 and y_pred_i < 0:
         return "false_negative"
-    if y_i == 0 and hat_y_i > 0:
+    if y_i == 0 and y_pred_i > 0:
         return "false_positive"
     return None
