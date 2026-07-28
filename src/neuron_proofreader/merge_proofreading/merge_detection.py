@@ -23,7 +23,7 @@ import os
 import pandas as pd
 import torch
 
-from neuron_proofreader.utils import img_util, ml_util, swc_util, util
+from neuron_proofreader.utils import img_util, swc_util, util
 
 
 class MergeDetector:
@@ -176,7 +176,7 @@ class MergeDetector:
                             visited.add(node)
                     except nx.exception.NetworkXNoPath:
                         pass
-    
+
                 # Add site to list
                 xyz_arr = np.array([self.dataset.node_xyz[i] for i in hits])
                 xyz_avg = xyz_arr.mean(axis=0)

@@ -73,7 +73,7 @@ class SearchDataset(IterableDataset, ABC):
                         except StopIteration:
                             break
 
-                fill()    
+                fill()
                 while futures:
                     done, _ = wait(futures, return_when=FIRST_COMPLETED)
                     for f in done:

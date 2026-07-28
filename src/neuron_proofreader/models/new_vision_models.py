@@ -17,7 +17,7 @@ from neuron_proofreader.utils.ml_util import FeedForwardNet
 
 
 # --- Convolutional Neural Networks ---
-class NewCNN3D(nn.Module):
+class CNN3D(nn.Module):
     """
     Convolutional neural network for 3D images.
     """
@@ -76,9 +76,7 @@ class NewCNN3D(nn.Module):
         self.pool_stage_idxs = pool_stage_idxs
         self.center_pools = nn.ModuleList(
             [
-                CenterWeightedPool3D(
-                    sigma=center_pool_sigma, learnable=learnable_center_sigma
-                )
+                CenterWeightedPool3D(sigma=center_pool_sigma)
                 for _ in stage_channels
             ]
         )
