@@ -152,7 +152,7 @@ class BrainDataset:
         return patches, subgraph, label
 
     def get_site(self, idx):
-        if idx > 0:
+        if idx >= 0:
             return self.merge_sites["node"][idx], 1
         elif np.random.random() < self.random_nonmerge_site_prob:
             return self.get_random_nonmerge_site()
@@ -264,7 +264,12 @@ class BrainDataset:
         int
             Number of examples in the dataset.
         """
-        return len(self._list_indices())
+        n_pos = len(self.merge_sites)
+        n_neg = len(self.nonmerge_sites) or n_pos
+        pos_ratio, neg_ratio = self.class_ratios
+        n_target_neg = min(int(n_pos * neg_ratio / pos_ratio), n_neg)
+        size = n_target_neg if self.rebalance_classes else n_neg
+        return n_pos + size
 
     def __repr__(self):
         return (
