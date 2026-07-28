@@ -9,15 +9,11 @@ NeuronProofreader pipelines.
 
 """
 
-from functools import partial
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from neuron_proofreader.utils.ml_util import FeedForwardNet
-
-BLOCK_REGISTRY = {}
 
 
 # --- Convolutional Neural Networks ---
@@ -30,73 +26,61 @@ class NewCNN3D(nn.Module):
         self,
         input_shape,
         base_channels=16,
-        block_type=None,
+        center_pool_sigma=0.4,
         channel_multiplier=2,
         depth=5,
         dropout=0.1,
+        learnable_center_sigma=True,
         max_channels=256,
-        num_single_blocks=2,
+        num_single_conv_blocks=2,
         output_dim=1,
-        pool_stage_idxs=(-3, -2, -1),
+        pool_stage_idxs=(-2, -1),
         use_double=True,
+        use_se=True,
     ):
         # Call parent class
         nn.Module.__init__(self)
-
-        # Set block type
-        if isinstance(block_type, str):
-            block_name = block_type
-            block_type = BLOCK_REGISTRY[block_name]
-        else:
-            block_type = block_type or ConvBlock3D
-            block_name = self._block_name(block_type)
 
         # Save model config
         self.config = {
             "input_shape": tuple(input_shape),
             "base_channels": base_channels,
-            "block_type": block_name,
+            "center_pool_sigma": center_pool_sigma,
             "channel_multiplier": channel_multiplier,
             "depth": depth,
             "dropout": dropout,
+            "learnable_center_sigma": learnable_center_sigma,
             "max_channels": max_channels,
-            "num_single_blocks": num_single_blocks,
+            "num_single_conv_blocks": num_single_conv_blocks,
             "output_dim": output_dim,
             "pool_stage_idxs": tuple(pool_stage_idxs),
             "use_double": use_double,
+            "use_se": use_se,
         }
 
         # Encoder
         self.drop = nn.Dropout(dropout)
         self.encode = Encoder3D(
             input_shape[0], base_channels, depth,
-            block_type=block_type,
             channel_multiplier=channel_multiplier,
             max_channels=max_channels,
-            num_single_blocks=num_single_blocks,
+            num_single_conv_blocks=num_single_conv_blocks,
             use_double=use_double,
+            use_se=use_se,
         )
 
         # Output
-        self.pool_stage_idxs = pool_stage_idxs
         stage_channels = [self.encode.blocks[i].out_channels for i in pool_stage_idxs]
+        self.pool_stage_idxs = pool_stage_idxs
+        self.center_pools = nn.ModuleList([
+            CenterWeightedPool3D(sigma=center_pool_sigma, learnable=learnable_center_sigma)
+            for _ in stage_channels
+        ])
+
+
         total_dim = sum(c * 2 for c in stage_channels)
         self.output = FeedForwardNet(total_dim, output_dim, 3)
         self.apply(self.init_weights)
-
-    @staticmethod
-    def _block_name(block_type):
-        """
-        Reverse-lookup a block class/partial against BLOCK_REGISTRY.
-        """
-        target = block_type.func if isinstance(block_type, partial) else block_type
-        for name, cls in BLOCK_REGISTRY.items():
-            if cls is target:
-                return name
-        raise ValueError(
-            f"block_type {target} isn't in BLOCK_REGISTRY, so it can't be "
-            f"saved/reloaded from config. Add it to BLOCK_REGISTRY first."
-        )
 
     def save(self, path):
         """
@@ -169,14 +153,15 @@ class NewCNN3D(nn.Module):
         """
         stages = self.encode(x)
         feats = []
-        for idx in self.pool_stage_idxs:
+        for i, idx in enumerate(self.pool_stage_idxs):
             s = stages[idx]
-            avg = F.adaptive_avg_pool3d(s, 1).flatten(1)
+            cwp = self.center_pools[i](s)
             mx = F.adaptive_max_pool3d(s, 1).flatten(1)
-            feats.append(torch.cat([avg, mx], dim=1))
+            feats.append(torch.cat([cwp, mx], dim=1))
         x = torch.cat(feats, dim=1)
         x = self.drop(x)
         return self.output(x)
+
 
 class Encoder3D(nn.Module):
     """
@@ -188,13 +173,13 @@ class Encoder3D(nn.Module):
         in_channels,
         out_channels,
         depth,
-        block_type=None,
         channel_multiplier=2,
         max_channels=256,
-        num_single_blocks=2,
+        num_single_conv_blocks=2,
         stem_depth=0,
         stem_dilations=None,
         use_double=True,
+        use_se=True,
     ):
         """
         Instantiates an Encoder3D object.
@@ -219,11 +204,10 @@ class Encoder3D(nn.Module):
 
         # Create convolutional blocks
         blocks = list()
-        block_type = block_type or ConvBlock3D
         for i in range(depth):
             # Add block
-            use_double_i = i > num_single_blocks
-            block = block_type(in_channels, out_channels, use_double=use_double_i)
+            use_double_i = use_double and (i > num_single_conv_blocks)
+            block = ConvBlock3D(in_channels, out_channels, use_double=use_double_i, use_se=use_se)
             blocks.append(block)
 
             # Update channel dimensions
@@ -242,6 +226,29 @@ class Encoder3D(nn.Module):
 
 
 # --- Convolutional Blocks ---
+class SEBlock3D(nn.Module):
+    """
+    Squeeze-and-Excitation block: recalibrates channel responses by learning
+    which feature maps are most informative for the current task.
+    """
+
+    def __init__(self, channels, reduction=4):
+        super().__init__()
+        mid = max(channels // reduction, 4)
+        self.fc = nn.Sequential(
+            nn.Linear(channels, mid, bias=False),
+            nn.ReLU(),
+            nn.Linear(mid, channels, bias=False),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, x):
+        b, c = x.shape[:2]
+        w = x.mean(dim=(2, 3, 4))
+        w = self.fc(w).view(b, c, 1, 1, 1)
+        return x * w
+
+
 class ConvUnit3D(nn.Sequential):
     """
     Conv -> GroupNorm -> (optional) GELU
@@ -282,14 +289,6 @@ class ConvUnit3D(nn.Sequential):
         return 1
 
 
-def register_block(name):
-    def wrap(cls):
-        BLOCK_REGISTRY[name] = cls
-        return cls
-    return wrap
-
-
-@register_block("conv")
 class ConvBlock3D(nn.Module):
 
     def __init__(
@@ -298,94 +297,75 @@ class ConvBlock3D(nn.Module):
         out_channels,
         kernel_size=3,
         use_double=True,
+        use_se=True,
     ):
+        # Call parent class    
         super().__init__()
 
-        self.out_channels = out_channels
-
-        layers = [
-            ConvUnit3D(
-                in_channels,
-                out_channels,
-                kernel_size,
-            )
-        ]
-
+        # Create convolutional layers
+        layers = [ConvUnit3D(in_channels, out_channels, kernel_size)]
         if use_double:
-            layers.append(
-                ConvUnit3D(
-                    out_channels,
-                    out_channels,
-                    kernel_size,
-                )
-            )
+            layers.append(ConvUnit3D(out_channels, out_channels, kernel_size))
 
+        # Instance attributes
+        self.out_channels = out_channels
         self.conv = nn.Sequential(*layers)
-        self.pool = nn.MaxPool3d(2)
+        self.se = SEBlock3D(out_channels) if use_se else nn.Identity()
+        self.pool = nn.Conv3d(
+            out_channels, out_channels, kernel_size=2, stride=2, bias=False
+            )
 
     def forward(self, x):
-        x = self.conv(x)
-        return self.pool(x)
+        x = self.se(self.conv(x))
+        if min(x.shape[2:]) > 4:
+            x = self.pool(x)
+        return x
 
 
-@register_block("res")
-class ResConvBlock3D(nn.Module):
+class CenterWeightedPool3D(nn.Module):
     """
-    3D convolutional block with a residual connection around the conv unit(s),
-    followed by downsampling. The skip path projects channels via a 1x1 conv
-    when in_channels != out_channels (or is an identity otherwise), so the
-    residual add is always shape-compatible.
+    Global pooling with a Gaussian weight centered on the patch, so voxels
+    near the center (e.g. the candidate merge/split point) contribute more
+    than voxels near the border. Weights are per-spatial-position only
+    (shared across channels) and normalize to sum to 1.
     """
 
-    def __init__(
-        self,
-        in_channels,
-        out_channels,
-        kernel_size=3,
-        use_double=True,
-    ):
+    def __init__(self, sigma=0.4, learnable=True):
+        """
+        Parameters
+        ----------
+        sigma : float, optional
+            Gaussian std, as a fraction of the half-extent along each axis
+            (coords run -1..1, so 0.4 means weight falls to ~1/e at 40% of
+            the way to the edge). Smaller = tighter focus on center.
+            Default is 0.4.
+        learnable : bool, optional
+            If True, sigma is a learned scalar so the model can widen or
+            narrow the focus during training. Default is True.
+        """
         super().__init__()
+        self._dist_cache = {}
+        init = torch.log(torch.tensor(float(sigma)))
+        if learnable:
+            self.log_sigma = nn.Parameter(init)
+        else:
+            self.register_buffer("log_sigma", init, persistent=False)
 
-        self.out_channels = out_channels
-
-        layers = [
-            ConvUnit3D(
-                in_channels,
-                out_channels,
-                kernel_size,
-            )
-        ]
-
-        if use_double:
-            layers.append(
-                ConvUnit3D(
-                    out_channels,
-                    out_channels,
-                    kernel_size,
-                    activation=False,
-                )
-            )
-
-        self.main = nn.Sequential(*layers)
-        self.skip = (
-            nn.Identity()
-            if in_channels == out_channels
-            else nn.Conv3d(
-                in_channels,
-                out_channels,
-                kernel_size=1,
-                bias=False,
-            )
-        )
-
-        self.act = nn.GELU()
-        self.pool = nn.MaxPool3d(2)
+    def _dist_sq(self, shape, device, dtype):
+        key = (shape, device)
+        if key not in self._dist_cache:
+            coords = [torch.linspace(-1, 1, s, device=device, dtype=dtype) for s in shape]
+            grid = torch.stack(torch.meshgrid(*coords, indexing="ij"), dim=0)
+            self._dist_cache[key] = (grid ** 2).sum(0)
+        return self._dist_cache[key]
 
     def forward(self, x):
-        x = self.main(x) + self.skip(x)
-        x = self.act(x)
-        return self.pool(x)
-
+        b, c, d, h, w = x.shape
+        dist_sq = self._dist_sq((d, h, w), x.device, x.dtype)
+        sigma = self.log_sigma.exp().clamp(min=1e-3)
+        weights = torch.exp(-dist_sq / (2 * sigma ** 2))
+        weights = (weights / weights.sum()).view(1, 1, d, h, w)
+        return (x * weights).sum(dim=(2, 3, 4))
 
 
 # --- Vision Transformers ---
@@ -394,27 +374,58 @@ class ViT3D(nn.Module):
     def __init__(
         self,
         input_shape,
-        patch_size=8,
-        embed_dim=128,
+        patch_size=16,
+        embed_dim=256,
         depth=6,
         num_heads=4,
         mlp_ratio=4.0,
         dropout=0.1,
         output_dim=1,
+        stem_channels=32,
+        stem_depth=2,
     ):
-        # Call parent class
         super().__init__()
         in_channels, d, h, w = input_shape
         assert d % patch_size == 0 and h % patch_size == 0 and w % patch_size == 0, (
             f"input_shape spatial dims must be divisible by patch_size={patch_size}"
         )
-        num_patches = (d // patch_size) * (h // patch_size) * (w // patch_size)
 
-        self.patch_embed = PatchEmbed3D(in_channels, embed_dim, patch_size)
+        # Save model config
+        self.config = {
+            "input_shape": tuple(input_shape),
+            "patch_size": patch_size,
+            "embed_dim": embed_dim,
+            "depth": depth,
+            "num_heads": num_heads,
+            "mlp_ratio": mlp_ratio,
+            "dropout": dropout,
+            "output_dim": output_dim,
+            "stem_channels": stem_channels,
+            "stem_depth": stem_depth,
+        }
+
+        self.embed_dim = embed_dim
+        self.num_d = d // patch_size
+        self.num_h = h // patch_size
+        self.num_w = w // patch_size
+
+        # Patch embedding with conv stem
+        self.patch_embed = PatchEmbed3D(
+            in_channels, embed_dim, patch_size,
+            stem_channels=stem_channels,
+            stem_depth=stem_depth,
+        )
+
+        # CLS token with its own learned positional embedding
         self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
-        self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, embed_dim))
+        self.cls_pos = nn.Parameter(torch.zeros(1, 1, embed_dim))
+
+        # Fixed sinusoidal positional embeddings in spherical coordinates
+        patch_pe = self._build_spherical_pe(self.num_d, self.num_h, self.num_w, embed_dim)
+        self.register_buffer('patch_pos_embed', patch_pe, persistent=False)
         self.pos_drop = nn.Dropout(dropout)
 
+        # Transformer
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=embed_dim,
             nhead=num_heads,
@@ -426,33 +437,93 @@ class ViT3D(nn.Module):
         )
         self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=depth)
         self.norm = nn.LayerNorm(embed_dim)
-        self.head = FeedForwardNet(embed_dim, output_dim, 3)
 
+        # Head receives CLS token concatenated with mean-pooled patch tokens
+        self.head = FeedForwardNet(2 * embed_dim, output_dim, 3)
+
+        self.apply(self.init_weights)
         nn.init.trunc_normal_(self.cls_token, std=0.02)
-        nn.init.trunc_normal_(self.pos_embed, std=0.02)
+        nn.init.trunc_normal_(self.cls_pos, std=0.02)
+
+    def save(self, path):
+        torch.save({"config": self.config, "state_dict": self.state_dict()}, path)
+
+    @classmethod
+    def load(cls, path, map_location=None):
+        ckpt = torch.load(path, map_location=map_location)
+        model = cls(**ckpt["config"])
+        model.load_state_dict(ckpt["state_dict"])
+        return model
+
+    @staticmethod
+    def init_weights(m):
+        if isinstance(m, nn.Linear):
+            nn.init.trunc_normal_(m.weight, std=0.02)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.weight, 1)
+            nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.Conv3d):
+            nn.init.trunc_normal_(m.weight, std=0.02)
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+
+    @staticmethod
+    def _build_spherical_pe(num_d, num_h, num_w, embed_dim):
+        """
+        Fixed sinusoidal positional encoding in spherical coordinates centered
+        on the patch grid. Each of r, theta, phi is independently encoded with
+        the same frequency bank and the results are summed.
+        Returns (1, num_d * num_h * num_w, embed_dim).
+        """
+        d_c = torch.arange(num_d, dtype=torch.float32) - (num_d - 1) / 2
+        h_c = torch.arange(num_h, dtype=torch.float32) - (num_h - 1) / 2
+        w_c = torch.arange(num_w, dtype=torch.float32) - (num_w - 1) / 2
+        dg, hg, wg = torch.meshgrid(d_c, h_c, w_c, indexing='ij')
+
+        r = (dg**2 + hg**2 + wg**2).sqrt().clamp(min=1e-6)
+        theta = (dg / r).clamp(-1 + 1e-6, 1 - 1e-6).acos()  # [0, pi]
+        phi = wg.atan2(hg) + torch.pi                         # [0, 2*pi]
+
+        # Scale r to [0, 2*pi] so all three coordinates share the same frequency base
+        r_scaled = r / r.amax() * (2 * torch.pi)
+
+        half = embed_dim // 2
+        denom = 10000.0 ** (2 * torch.arange(half, dtype=torch.float32) / embed_dim)
+
+        def encode(v):
+            args = v.reshape(-1, 1) / denom
+            return torch.cat([args.sin(), args.cos()], dim=1)  # (N, embed_dim)
+
+        pe = encode(r_scaled) + encode(theta) + encode(phi)
+        return pe.unsqueeze(0)  # (1, num_patches, embed_dim)
 
     def forward(self, x):
         b = x.shape[0]
         x = self.patch_embed(x)
         cls = self.cls_token.expand(b, -1, -1)
         x = torch.cat([cls, x], dim=1)
-        x = self.pos_drop(x + self.pos_embed)
-        x = self.encoder(x)
-        return self.head(self.norm(x[:, 0]))
+        x = self.pos_drop(x + torch.cat([self.cls_pos, self.patch_pos_embed], dim=1))
+        x = self.norm(self.encoder(x))
+        feat = torch.cat([x[:, 0], x[:, 1:].mean(dim=1)], dim=1)
+        return self.head(feat)
 
 
 class PatchEmbed3D(nn.Module):
     """
-    Splits a volume into non-overlapping cubic patches, linearly embeds
-    each as a token.
+    Optional conv stem for local feature extraction followed by a strided
+    conv that maps spatial patches to token embeddings.
     """
 
-    def __init__(self, in_channels, embed_dim, patch_size=4):
+    def __init__(self, in_channels, embed_dim, patch_size=4, stem_channels=32, stem_depth=2):
         super().__init__()
-        self.proj = nn.Conv3d(
-            in_channels, embed_dim, kernel_size=patch_size, stride=patch_size
-        )
+        layers, c = [], in_channels
+        for _ in range(stem_depth):
+            layers.append(ConvUnit3D(c, stem_channels, kernel_size=3))
+            c = stem_channels
+        self.stem = nn.Sequential(*layers) if layers else nn.Identity()
+        self.proj = nn.Conv3d(c, embed_dim, kernel_size=patch_size, stride=patch_size)
 
     def forward(self, x):
-        x = self.proj(x)
-        return x.flatten(2).transpose(1, 2)
+        return self.proj(self.stem(x)).flatten(2).transpose(1, 2)

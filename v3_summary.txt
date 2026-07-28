@@ -1,0 +1,67 @@
+Architecture Changes Summary
+============================
+
+NewCNN3D
+--------
+
+CenterWeightedPool3D — bug fix and activation
+center_pool_sigma and learnable_center_sigma were referenced in __init__ but never defined,
+causing a NameError at instantiation, and the module was never called in forward. Both are now
+constructor parameters, and center-weighted pooling replaces plain average pooling in the
+multi-scale readout. Per-stage features are now [center_weighted_pool, max_pool], giving the
+model an explicit prior that voxels near the candidate merge/split point matter more.
+
+Squeeze-and-Excitation blocks
+A new SEBlock3D is inserted after each ConvBlock3D's convolutions. It globally average-pools
+the feature map, passes it through a two-layer FC bottleneck (reduction factor 4), and rescales
+channels by the resulting sigmoid weights. Controlled by use_se (threaded through
+NewCNN3D -> Encoder3D -> ConvBlock3D), so use_se=False gives a clean ablation baseline.
+
+Learned strided convolution downsampling
+MaxPool3d(2) in each ConvBlock3D is replaced by Conv3d(out_channels, out_channels,
+kernel_size=2, stride=2), letting the model learn its own spatial downsampling.
+
+Spatial collapse guard
+ConvBlock3D.forward skips the downsampling step if any spatial dimension is already smaller
+than 2, preventing a runtime error when small inputs reach the later encoder stages.
+
+use_double dead code fix
+Encoder3D accepted use_double as a parameter but computed use_double_i independently from
+num_single_conv_blocks, making the parameter a no-op. Fixed to
+use_double and (i > num_single_conv_blocks) so use_double=False correctly forces all blocks
+to single convolution.
+
+Rename num_single_blocks -> num_single_conv_blocks
+Renamed throughout for clarity.
+
+
+ViT3D
+-----
+
+Convolutional stem in PatchEmbed3D
+Replaces the single large-kernel patch projection with stem_depth (default 2) layers of
+3x3x3 conv -> GroupNorm -> GELU at stem_channels width before the strided projection. Gives
+the transformer locally extracted features rather than raw voxel patches.
+
+CLS + mean patch token aggregation
+forward previously discarded all patch tokens, returning only the CLS token. It now
+concatenates the CLS token with the mean of all patch tokens after the final LayerNorm,
+doubling the head input to 2 * embed_dim.
+
+Spherical sinusoidal positional embeddings
+Replaces the flat learned positional table with a fixed, parameter-free encoding in spherical
+coordinates (r, theta, phi) centered on the patch grid. r is scaled to [0, 2*pi], phi is
+shifted to [0, 2*pi], and all three coordinates are independently sinusoidally encoded with
+the same frequency bank and summed. Patches equidistant from center differ only in direction,
+encoding the inductive bias that radial distance from the candidate point is the primary
+spatial axis. Registered as a non-persistent buffer — placed on the correct device
+automatically, not saved to disk, recomputed from config on load.
+
+Save / load / config / init_weights
+Added to match NewCNN3D's checkpoint interface. ViT3D.load(path) fully reconstructs
+architecture and weights from a single file.
+
+Default parameter updates
+- patch_size: 8 -> 16  (reduces token count from 4096 to 512 for 128^3 input, making
+                         attention tractable)
+- embed_dim:  128 -> 256 (brings attention head dimension to the standard 64 (256 / 4 heads))

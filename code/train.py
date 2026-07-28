@@ -106,7 +106,7 @@ if __name__ == "__main__":
     # Parse arguments
     parser = argparse.ArgumentParser(description="Process named arguments")
     parser.add_argument("--base_channels", type=int, required=True)
-    parser.add_argument("--block_type", type=str, required=True)
+
     parser.add_argument("--depth", type=int, required=True)
     parser.add_argument("--max_channels", type=int, required=True)
     parser.add_argument("--min_recall", type=float, required=True)
@@ -152,7 +152,7 @@ if __name__ == "__main__":
     model = NewCNN3D(
         input_shape,
         base_channels=args.base_channels,
-        block_type=args.block_type,
+
         depth=args.depth,
         max_channels=args.max_channels,
     )

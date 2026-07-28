@@ -62,14 +62,11 @@ def main():
             print(f"{'='*(len(model_path.name) + 4)}")
 
             # Create model
-            config_path = os.path.join(input_dir, "model_config.json")
-            config = util.read_json(config_path)
-
-            model = NewCNN3D(**config)
-            ml_util.load_model(model, model_path)
+            model = NewCNN3D.load(model_path, map_location="cuda")
+            model = model.to("cuda")
 
             # Compute batch size
-            input_shape = config["input_shape"]
+            input_shape = model.config["input_shape"]
             batch_size = ml_util.find_max_eval_batch_size(model, input_shape)
             batch_size = int(batch_size * 0.85)
             print("Batch Size:", batch_size)
