@@ -31,9 +31,8 @@ class CNN3D(nn.Module):
         depth=5,
         dropout=0.1,
         max_channels=256,
-        num_single_conv_blocks=2,
         output_dim=1,
-        pool_stage_idxs=(-2, -1),
+        pool_stage_idxs=(0, 2, -1),
         use_double=True,
         use_se=True,
     ):
@@ -49,7 +48,6 @@ class CNN3D(nn.Module):
             "depth": depth,
             "dropout": dropout,
             "max_channels": max_channels,
-            "num_single_conv_blocks": num_single_conv_blocks,
             "output_dim": output_dim,
             "pool_stage_idxs": tuple(pool_stage_idxs),
             "use_double": use_double,
@@ -64,7 +62,6 @@ class CNN3D(nn.Module):
             depth,
             channel_multiplier=channel_multiplier,
             max_channels=max_channels,
-            num_single_conv_blocks=num_single_conv_blocks,
             use_double=use_double,
             use_se=use_se,
         )
@@ -116,7 +113,10 @@ class CNN3D(nn.Module):
             Model with architecture and weights matching the checkpoint.
         """
         ckpt = torch.load(path, map_location=map_location)
-        model = cls(**ckpt["config"])
+        config = ckpt["config"]
+        config.pop("num_single_conv_blocks", None)
+        config.pop("num_single_blocks", None)
+        model = cls(**config)
         model.load_state_dict(ckpt["state_dict"])
         return model
 
@@ -180,7 +180,6 @@ class Encoder3D(nn.Module):
         depth,
         channel_multiplier=2,
         max_channels=256,
-        num_single_conv_blocks=2,
         stem_depth=0,
         stem_dilations=None,
         use_double=True,
@@ -209,13 +208,12 @@ class Encoder3D(nn.Module):
 
         # Create convolutional blocks
         blocks = list()
-        for i in range(depth):
+        for _ in range(depth):
             # Add block
-            use_double_i = use_double and (i > num_single_conv_blocks)
             block = ConvBlock3D(
                 in_channels,
                 out_channels,
-                use_double=use_double_i,
+                use_double=use_double,
                 use_se=use_se,
             )
             blocks.append(block)
@@ -342,7 +340,7 @@ class CenterWeightedPool3D(nn.Module):
     (shared across channels) and normalize to sum to 1.
     """
 
-    def __init__(self, sigma=0.4, learnable=True):
+    def __init__(self, sigma=0.4):
         """
         Parameters
         ----------
@@ -351,17 +349,11 @@ class CenterWeightedPool3D(nn.Module):
             (coords run -1..1, so 0.4 means weight falls to ~1/e at 40% of
             the way to the edge). Smaller = tighter focus on center.
             Default is 0.4.
-        learnable : bool, optional
-            If True, sigma is a learned scalar so the model can widen or
-            narrow the focus during training. Default is True.
         """
         super().__init__()
         self._dist_cache = {}
         init = torch.log(torch.tensor(float(sigma)))
-        if learnable:
-            self.log_sigma = nn.Parameter(init)
-        else:
-            self.register_buffer("log_sigma", init, persistent=False)
+        self.log_sigma = nn.Parameter(init)
 
     def _dist_sq(self, shape, device, dtype):
         key = (shape, device)
@@ -396,8 +388,8 @@ class ViT3D(nn.Module):
         mlp_ratio=4.0,
         dropout=0.1,
         output_dim=1,
-        stem_channels=32,
-        stem_depth=2,
+        stem_channels=64,
+        stem_depth=4,
     ):
         super().__init__()
         in_channels, d, h, w = input_shape
@@ -457,7 +449,10 @@ class ViT3D(nn.Module):
         self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=depth)
         self.norm = nn.LayerNorm(embed_dim)
 
-        # Head receives CLS token concatenated with mean-pooled patch tokens
+        # Center-weighted pooling over spatial patch tokens
+        self.center_pool = CenterWeightedPool3D()
+
+        # Head receives CLS token concatenated with center-pooled patch tokens
         self.head = FeedForwardNet(2 * embed_dim, output_dim, 3)
 
         self.apply(self.init_weights)
@@ -531,7 +526,10 @@ class ViT3D(nn.Module):
             x + torch.cat([self.cls_pos, self.patch_pos_embed], dim=1)
         )
         x = self.norm(self.encoder(x))
-        feat = torch.cat([x[:, 0], x[:, 1:].mean(dim=1)], dim=1)
+        patches = x[:, 1:].transpose(1, 2).view(
+            b, self.embed_dim, self.num_d, self.num_h, self.num_w
+        )
+        feat = torch.cat([x[:, 0], self.center_pool(patches)], dim=1)
         return self.head(feat)
 
 
