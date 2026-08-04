@@ -21,7 +21,8 @@ import torch
 from neuron_proofreader.machine_learning.image_dataloader import (
     TensorStoreImage,
 )
-from neuron_proofreader.utils import geometry_util, graph_util, img_util, util
+from arborist.utils.graph_utils import edges_to_line_graph
+from neuron_proofreader.utils import geometry_util, img_util, util
 from neuron_proofreader.utils.ml_util import TensorDict
 
 
@@ -811,7 +812,7 @@ class HeteroGraphData(HeteroData):
         """
         # Build edge index
         edge_index = []
-        line_graph = graph_util.edges_to_line_graph(edges)
+        line_graph = edges_to_line_graph(edges)
         for e1, e2 in line_graph.edges:
             v1 = index_mapping.id_to_idx[frozenset(e1)]
             v2 = index_mapping.id_to_idx[frozenset(e2)]

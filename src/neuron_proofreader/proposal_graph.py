@@ -16,7 +16,7 @@ from collections import defaultdict
 import networkx as nx
 import numpy as np
 
-from neuron_proofreader.skeleton_graph import SkeletonGraph
+from neuron_proofreader.fragments_graph import FragmentsGraph
 from neuron_proofreader.split_proofreading import groundtruth_generation
 from neuron_proofreader.split_proofreading.proposal_generation import (
     ProposalGenerator,
@@ -25,9 +25,9 @@ from neuron_proofreader.split_proofreading.proposal_generation import (
 from neuron_proofreader.utils import geometry_util
 
 
-class ProposalGraph(SkeletonGraph):
+class ProposalGraph(FragmentsGraph):
     """
-    Custom subclass of SkeletonGraph constructed from neuron fragments. This
+    Custom subclass of FragmentsGraph constructed from neuron fragments. This
     graph has an attribute called "proposals", which is a set of potential
     connections between pairs of neuron fragments. This class has subroutines
     for generating, processing, and operating on proposals.
@@ -79,6 +79,72 @@ class ProposalGraph(SkeletonGraph):
         self.n_proposals_blocked = 0
         self.reset_proposals()
 
+    # --- Conversions ---
+    @classmethod
+    def from_fragments_graph(cls, graph):
+        """
+        Creates a ProposalGraph from an existing FragmentsGraph, copying all
+        graph structure and node attributes and initializing proposal state.
+
+        Parameters
+        ----------
+        graph : FragmentsGraph
+            Source graph to convert.
+
+        Returns
+        -------
+        ProposalGraph
+            New ProposalGraph with the same structure as the source.
+        """
+        pg = cls.__new__(cls)
+        nx.Graph.__init__(pg)
+        pg.update(graph)
+        pg.anisotropy = graph.anisotropy
+        pg.node_spacing = graph.node_spacing
+        pg.verbose = graph.verbose
+        pg.node_xyz = graph.node_xyz.copy()
+        pg.node_radius = graph.node_radius.copy()
+        pg.node_component_id = graph.node_component_id.copy()
+        pg.component_id_to_swc_id = graph.component_id_to_swc_id.copy()
+        pg.kdtree = graph.kdtree
+        pg.soma_centroids = list(graph.soma_centroids)
+        pg.soma_component_ids = list(graph.soma_component_ids)
+        pg.graph_loader = graph.graph_loader
+        pg.accepts = set()
+        pg.gt_accepts = set()
+        pg.gt_path = None
+        pg.merged_ids = set()
+        pg.n_merges_blocked = 0
+        pg.n_proposals_blocked = 0
+        pg.reset_proposals()
+        return pg
+
+    def to_fragments_graph(self):
+        """
+        Returns a FragmentsGraph with the same structure and node attributes,
+        with all proposal state stripped.
+
+        Returns
+        -------
+        FragmentsGraph
+            New FragmentsGraph derived from this ProposalGraph.
+        """
+        fg = FragmentsGraph.__new__(FragmentsGraph)
+        nx.Graph.__init__(fg)
+        fg.update(self)
+        fg.anisotropy = self.anisotropy
+        fg.node_spacing = self.node_spacing
+        fg.verbose = self.verbose
+        fg.node_xyz = self.node_xyz.copy()
+        fg.node_radius = self.node_radius.copy()
+        fg.node_component_id = self.node_component_id.copy()
+        fg.component_id_to_swc_id = self.component_id_to_swc_id.copy()
+        fg.kdtree = self.kdtree
+        fg.soma_centroids = list(self.soma_centroids)
+        fg.soma_component_ids = list(self.soma_component_ids)
+        fg.graph_loader = self.graph_loader
+        return fg
+
     # --- Update Structure ---
     def relabel_nodes(self):
         """
@@ -92,12 +158,6 @@ class ProposalGraph(SkeletonGraph):
         self.reset_proposals()
         for i, j in old_proposals:
             self.add_proposal(int(old_to_new[i]), int(old_to_new[j]))
-
-    def resize_node_attr(self, new_shape, attr_name):
-        node_attr = getattr(self, attr_name)
-        new_node_attr = np.empty(new_shape, dtype=node_attr.dtype)
-        new_node_attr[: len(node_attr)] = node_attr
-        setattr(self, attr_name, new_node_attr)
 
     # --- Proposal Operations ---
     def add_proposal(self, i, j):
@@ -153,7 +213,7 @@ class ProposalGraph(SkeletonGraph):
 
         # Set groundtruth (if applicable)
         if self.gt_path:
-            gt_graph = SkeletonGraph(anisotropy=self.anisotropy)
+            gt_graph = FragmentsGraph(anisotropy=self.anisotropy)
             gt_graph.load(self.gt_path)
             self.gt_accepts = groundtruth_generation.run(gt_graph, self)
 

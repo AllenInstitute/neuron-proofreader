@@ -113,7 +113,7 @@ class CNN3D(nn.Module):
             Model with architecture and weights matching the checkpoint.
         """
         ckpt = torch.load(path, map_location=map_location)
-        config = ckpt["config"]
+        config = ckpt["config"] if "config" in ckpt else ckpt
         config.pop("num_single_conv_blocks", None)
         config.pop("num_single_blocks", None)
         model = cls(**config)

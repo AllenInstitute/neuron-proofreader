@@ -14,11 +14,16 @@ from time import time
 import numpy as np
 import os
 
+from neuron_proofreader.merge_proofreading.merge_inference import (
+    HighRiskMergeProofreader,
+    MLMergeProofreader,
+    SomaMergeProofreader,
+)
 from neuron_proofreader.proposal_graph import ProposalGraph
 from neuron_proofreader.split_proofreading.split_inference import (
     SplitProofreader,
 )
-from neuron_proofreader.utils import geometry_util, swc_util, util
+from neuron_proofreader.utils import geometry_util, util
 
 
 class ProofreadPipeline:
@@ -97,7 +102,7 @@ class ProofreadPipeline:
             geometry_util.remove_doubles(self.graph, 200)
 
         # Save original graph state
-        self.save_graph("original_swcs")
+        self.save_graph("original")
         self.log("\nInitial Graph...")
         self.log(self.graph.__repr__())
 
@@ -142,7 +147,7 @@ class ProofreadPipeline:
             self.log("Final Graph...")
             self.log(self.graph.__repr__())
             self.reconfigure_node_radius()
-            self.save_graph("corrected_swcs")
+            self.save_graph("learned_split")
 
     def connect_soma_fragments(self, max_dist=25):
         self.step_cnt += 1
@@ -153,28 +158,90 @@ class ProofreadPipeline:
         self.log(summary)
 
     # --- Merge Proofreading ---
-    def merge_proofreading(self, mode):
-        # Report step
+    def merge_proofreading(self, mode, save_result=True):
+        """
+        Runs rule-based merge proofreading.
+
+        Parameters
+        ----------
+        mode : str
+            Detection strategy. Options are "heuristic" and "connected_somas".
+        save_result : bool, optional
+            Indication of whether to save detected sites to disk. Default is
+            True.
+        """
         self.step_cnt += 1
-        self.log(
-            f"\nStep {self.step_cnt}: Merge Proofreading with mode={mode}"
-        )
+        self.log(f"\nStep {self.step_cnt}: Merge Proofreading ({mode})")
 
-        # Detect merges
         if mode == "heuristic":
-            merge_sites, summary = self.graph.remove_high_risk_merges()
+            ProofreaderClass = HighRiskMergeProofreader
         elif mode == "connected_somas":
-            merge_sites, summary = self.graph.remove_soma_merges()
+            ProofreaderClass = SomaMergeProofreader
+        else:
+            raise ValueError(f"Unknown merge proofreading mode: {mode!r}")
 
-        # Report results
-        self.log(summary)
-
-        # Save sites
-        color = "# COLOR 1.0 0.0 0.0"
-        zip_path = os.path.join(self.output_dir, f"{mode}_merge_sites.zip")
-        swc_util.write_points(
-            zip_path, merge_sites, color=color, prefix="merge_site", radius=10
+        step_output = self._step_dir(f"{mode}_merge")
+        proofreader = ProofreaderClass(
+            self.graph, step_output, log_handle=self.log_handle
         )
+        merge_sites = proofreader()
+        self.log(f"# Merge Sites: {len(merge_sites)}")
+
+        if save_result:
+            proofreader.save_sites(merge_sites)
+            proofreader.save_parameters()
+
+    def learned_merge_detection(
+        self,
+        mode,
+        model,
+        batch_size=16,
+        threshold=0.5,
+        min_search_size=0,
+        prefetch=64,
+        save_result=True,
+    ):
+        """
+        Runs learned merge detection using a trained CNN.
+
+        Parameters
+        ----------
+        mode : str
+            Search strategy. "dense" scores every node along each fragment;
+            "sparse" restricts scoring to branching nodes.
+        model : torch.nn.Module
+            Trained model used to score candidate merge sites.
+        batch_size : int, optional
+            Number of patches per forward pass. Default is 16.
+        threshold : float, optional
+            Confidence threshold above which a site is flagged as a merge.
+            Default is 0.5.
+        min_search_size : float, optional
+            Minimum fragment cable length (in microns) to include in the
+            search. Default is 0.
+        prefetch : int, optional
+            Number of patches to prefetch. Default is 64.
+        save_result : bool, optional
+            If True, saves detection results to output_dir. Default is True.
+        """
+        self.step_cnt += 1
+        self.log(f"\nStep {self.step_cnt}: Learned Merge Detection ({mode})")
+        step_output = self._step_dir("learned_merge")
+        proofreader = MLMergeProofreader(
+            self.graph,
+            model,
+            self.img_config,
+            step_output,
+            mode=mode,
+            batch_size=batch_size,
+            device=self.device,
+            min_search_size=min_search_size,
+            prefetch=prefetch,
+            threshold=threshold,
+            save_result=save_result,
+            log_handle=self.log_handle,
+        )
+        proofreader()
 
     # --- Helpers ---
     def log(self, txt):
@@ -202,14 +269,16 @@ class ProofreadPipeline:
         segment_ids = list(self.graph.component_id_to_swc_id.values())
         util.write_list(path, segment_ids)
 
-    def save_graph(self, dirname):
-        # Save graph across set of ZIPs
-        temp_dir = os.path.join(self.output_dir, "temp")
+    def _step_dir(self, mode):
+        path = os.path.join(self.output_dir, f"step{self.step_cnt}_{mode}_swcs")
+        util.mkdir(path)
+        return path
+
+    def save_graph(self, mode):
+        step_dir = self._step_dir(mode)
+        temp_dir = os.path.join(step_dir, "temp")
         self.graph.to_zipped_swcs_multithreaded(temp_dir)
 
-        # Combine ZIPs into single ZIP
         zip_paths = util.list_paths(temp_dir, extension=".zip")
-        final_zip_path = os.path.join(self.output_dir, dirname, "swcs.zip")
-        util.mkdir(os.path.join(self.output_dir, dirname))
-        util.combine_zips(zip_paths, final_zip_path)
+        util.combine_zips(zip_paths, os.path.join(step_dir, "swcs.zip"))
         util.rmdir(temp_dir)
