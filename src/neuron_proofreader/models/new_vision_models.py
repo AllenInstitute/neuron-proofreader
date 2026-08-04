@@ -25,14 +25,14 @@ class CNN3D(nn.Module):
     def __init__(
         self,
         input_shape,
-        base_channels=16,
+        base_channels=32,
         center_pool_sigma=0.4,
         channel_multiplier=2,
         depth=5,
         dropout=0.1,
         max_channels=256,
         output_dim=1,
-        pool_stage_idxs=(0, 2, -1),
+        pool_stage_idxs=(-3, -2, -1),
         use_double=True,
         use_se=True,
     ):
@@ -356,7 +356,7 @@ class CenterWeightedPool3D(nn.Module):
         self.log_sigma = nn.Parameter(init)
 
     def _dist_sq(self, shape, device, dtype):
-        key = (shape, device)
+        key = (shape, device, dtype)
         if key not in self._dist_cache:
             coords = [
                 torch.linspace(-1, 1, s, device=device, dtype=dtype)
@@ -452,8 +452,8 @@ class ViT3D(nn.Module):
         # Center-weighted pooling over spatial patch tokens
         self.center_pool = CenterWeightedPool3D()
 
-        # Head receives CLS token concatenated with center-pooled patch tokens
-        self.head = FeedForwardNet(2 * embed_dim, output_dim, 3)
+        # Head receives CLS token, center-pooled patch tokens, and max-pooled patch tokens
+        self.head = FeedForwardNet(3 * embed_dim, output_dim, 3)
 
         self.apply(self.init_weights)
         nn.init.trunc_normal_(self.cls_token, std=0.02)
@@ -502,7 +502,7 @@ class ViT3D(nn.Module):
         theta = (dg / r).clamp(-1 + 1e-6, 1 - 1e-6).acos()  # [0, pi]
         phi = wg.atan2(hg) + torch.pi  # [0, 2*pi]
 
-        # Scale r to [0, 2*pi] so all three coordinates share the same frequency base
+        # Scale r to [0, 2*pi] so coordinates share the same frequency base
         r_scaled = r / r.amax() * (2 * torch.pi)
 
         half = embed_dim // 2
@@ -529,7 +529,8 @@ class ViT3D(nn.Module):
         patches = x[:, 1:].transpose(1, 2).view(
             b, self.embed_dim, self.num_d, self.num_h, self.num_w
         )
-        feat = torch.cat([x[:, 0], self.center_pool(patches)], dim=1)
+        max_pool = patches.amax(dim=(2, 3, 4))
+        feat = torch.cat([x[:, 0], self.center_pool(patches), max_pool], dim=1)
         return self.head(feat)
 
 
