@@ -86,8 +86,7 @@ class ProofreadPipeline:
         """
         # Load data
         t0 = time()
-        self.step_cnt += 1
-        self.log(f"Step {self.step_cnt}: Build Graph")
+        self.log("Build Graph")
         self.graph = ProposalGraph(
             anisotropy=config.anisotropy,
             min_cable_length=config.min_cable_length,
@@ -102,7 +101,7 @@ class ProofreadPipeline:
             geometry_util.remove_doubles(self.graph, 200)
 
         # Save original graph state
-        self.save_graph("original")
+        self.save_graph("original_swcs")
         self.log("\nInitial Graph...")
         self.log(self.graph.__repr__())
 
@@ -121,20 +120,19 @@ class ProofreadPipeline:
         removal_threshold=0.3,
         save_result=True,
     ):
-        # Create proofreader
+        # Run inference
+        self.step_cnt += 1
+        self.log(f"\nStep {self.step_cnt}: Split Proofreading")
+        step_output = self._step_dir(SplitProofreader.step_name)
         proofreader = SplitProofreader(
             self.graph,
             model,
             self.img_config,
-            self.output_dir,
+            step_output,
             batch_size=batch_size,
             device=self.device,
             log_handle=self.log_handle,
         )
-
-        # Run inference
-        self.step_cnt += 1
-        self.log(f"\nStep {self.step_cnt}: Split Proofreading")
         proofreader(
             proposals_config,
             dt=dt,
@@ -147,18 +145,15 @@ class ProofreadPipeline:
             self.log("Final Graph...")
             self.log(self.graph.__repr__())
             self.reconfigure_node_radius()
-            self.save_graph("learned_split")
+            self.save_graph("final_swcs")
 
     def connect_soma_fragments(self, max_dist=25):
-        self.step_cnt += 1
-        self.log(
-            f"\nStep {self.step_cnt}: Connect Soma Fragments with dist={max_dist}"
-        )
+        self.log(f"\nConnect Soma Fragments with dist={max_dist}")
         summary = self.graph.connect_soma_fragments(max_dist=max_dist)
         self.log(summary)
 
     # --- Merge Proofreading ---
-    def merge_proofreading(self, mode, save_result=True):
+    def merge_proofreading(self, mode, save_result=True, save_swcs=False):
         """
         Runs rule-based merge proofreading.
 
@@ -169,6 +164,9 @@ class ProofreadPipeline:
         save_result : bool, optional
             Indication of whether to save detected sites to disk. Default is
             True.
+        save_swcs : bool, optional
+            If True, saves the corrected graph SWCs into the step directory.
+            Default is False.
         """
         self.step_cnt += 1
         self.log(f"\nStep {self.step_cnt}: Merge Proofreading ({mode})")
@@ -180,7 +178,7 @@ class ProofreadPipeline:
         else:
             raise ValueError(f"Unknown merge proofreading mode: {mode!r}")
 
-        step_output = self._step_dir(f"{mode}_merge")
+        step_output = self._step_dir(ProofreaderClass.step_name)
         proofreader = ProofreaderClass(
             self.graph, step_output, log_handle=self.log_handle
         )
@@ -189,6 +187,8 @@ class ProofreadPipeline:
 
         if save_result:
             proofreader.save_sites(merge_sites)
+        if save_swcs:
+            self._save_graph_to(step_output)
             proofreader.save_parameters()
 
     def learned_merge_detection(
@@ -226,7 +226,7 @@ class ProofreadPipeline:
         """
         self.step_cnt += 1
         self.log(f"\nStep {self.step_cnt}: Learned Merge Detection ({mode})")
-        step_output = self._step_dir("learned_merge")
+        step_output = self._step_dir(MLMergeProofreader.step_name)
         proofreader = MLMergeProofreader(
             self.graph,
             model,
@@ -269,16 +269,18 @@ class ProofreadPipeline:
         segment_ids = list(self.graph.component_id_to_swc_id.values())
         util.write_list(path, segment_ids)
 
-    def _step_dir(self, mode):
-        path = os.path.join(self.output_dir, f"step{self.step_cnt}_{mode}_swcs")
+    def _step_dir(self, name):
+        path = os.path.join(self.output_dir, f"step{self.step_cnt}_{name}")
         util.mkdir(path)
         return path
 
-    def save_graph(self, mode):
-        step_dir = self._step_dir(mode)
-        temp_dir = os.path.join(step_dir, "temp")
-        self.graph.to_zipped_swcs_multithreaded(temp_dir)
+    def save_graph(self, dirname):
+        self._save_graph_to(os.path.join(self.output_dir, dirname))
 
+    def _save_graph_to(self, dirpath):
+        util.mkdir(dirpath)
+        temp_dir = os.path.join(dirpath, "temp")
+        self.graph.to_zipped_swcs_multithreaded(temp_dir)
         zip_paths = util.list_paths(temp_dir, extension=".zip")
-        util.combine_zips(zip_paths, os.path.join(step_dir, "swcs.zip"))
+        util.combine_zips(zip_paths, os.path.join(dirpath, "swcs.zip"))
         util.rmdir(temp_dir)

@@ -63,7 +63,7 @@ class MergeProofreader(ABC):
 
         Returns
         -------
-        list[int]
+        List[int]
             Node IDs of detected merge site representatives.
         """
         pass
@@ -116,6 +116,8 @@ class MLMergeProofreader(MergeProofreader):
     applies graph-aware NMS and spatial averaging to consolidate detections,
     and optionally removes detected sites.
     """
+
+    step_name = "learned_merge_correction"
 
     def __init__(
         self,
@@ -198,13 +200,16 @@ class MLMergeProofreader(MergeProofreader):
 
     # --- Core ---
     def __call__(self):
+        # Search graph
         t0 = time()
         self.log("Search Graph...")
         merge_sites = self.search()
 
+        # Remove detected merge errors (if applicable)
         if self.delete_merges:
             self.graph.remove_merge_sites(merge_sites)
 
+        # Report results
         t, unit = util.time_writer(time() - t0)
         self.log(f"# Detected Merges: {len(merge_sites)}")
         self.log(f"Module Runtime: {t:.2f} {unit}\n")
@@ -212,7 +217,7 @@ class MLMergeProofreader(MergeProofreader):
             self.save(inplace=False)
 
     def search(self):
-        # Detect merge errors
+        # Detect merge errors with classification
         t0 = time()
         self.model.eval()
         dataloader = DataLoader(self.dataset, batch_size=self.batch_size)
@@ -238,7 +243,7 @@ class MLMergeProofreader(MergeProofreader):
         # Report results
         rate = len(self.visited_sites) / (time() - t0)
         print("\n# Detected Merges:", len(merge_sites))
-        print(f"Proofreading Rate: {rate:.2f} site/s")
+        print(f"Proofreading Rate: {rate:.2f} sites/s")
         return merge_sites
 
     def predict(self, x):
@@ -422,6 +427,8 @@ class HighRiskMergeProofreader(MergeProofreader):
     and branching nodes with degree >= 4, both indicators of merge errors.
     """
 
+    step_name = "heuristic_merge_correction"
+
     def __init__(self, graph, output_dir, max_dist=7, log_handle=None):
         """
         Initializes a HighRiskMergeProofreader.
@@ -485,6 +492,8 @@ class SomaMergeProofreader(MergeProofreader):
     Heuristic merge proofreader that detects merge errors on paths connecting
     multiple somas within the same connected component.
     """
+
+    step_name = "somas_merge_correction"
 
     def __init__(self, graph, output_dir, log_handle=None):
         """
