@@ -223,6 +223,9 @@ class ProofreadPipeline:
         min_search_size : float, optional
             Minimum fragment cable length (in microns) to include in the
             search. Default is 0.
+        patch_shape : Tuple[int], optional
+            Patch shape to use for image sampling, overriding img_config.
+            Default is None (uses img_config.patch_shape).
         prefetch : int, optional
             Number of patches to prefetch. Default is 64.
         save_result : bool, optional
