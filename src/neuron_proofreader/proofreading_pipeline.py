@@ -9,6 +9,7 @@ merge detection and correction.
 
 """
 
+from copy import copy
 from time import time
 
 import numpy as np
@@ -118,16 +119,18 @@ class ProofreadPipeline:
         dt=0.05,
         min_threshold=0.8,
         removal_threshold=0.3,
+        patch_shape=None,
         save_result=True,
     ):
         # Run inference
         self.step_cnt += 1
         self.log(f"\nStep {self.step_cnt}: Split Proofreading")
+        img_config = self._img_config(patch_shape)
         step_output = self._step_dir(SplitProofreader.step_name)
         proofreader = SplitProofreader(
             self.graph,
             model,
-            self.img_config,
+            img_config,
             step_output,
             batch_size=batch_size,
             device=self.device,
@@ -198,6 +201,7 @@ class ProofreadPipeline:
         batch_size=16,
         threshold=0.5,
         min_search_size=0,
+        patch_shape=None,
         prefetch=64,
         save_result=True,
     ):
@@ -226,11 +230,12 @@ class ProofreadPipeline:
         """
         self.step_cnt += 1
         self.log(f"\nStep {self.step_cnt}: Learned Merge Detection ({mode})")
+        img_config = self._img_config(patch_shape)
         step_output = self._step_dir(MLMergeProofreader.step_name)
         proofreader = MLMergeProofreader(
             self.graph,
             model,
-            self.img_config,
+            img_config,
             step_output,
             mode=mode,
             batch_size=batch_size,
@@ -268,6 +273,13 @@ class ProofreadPipeline:
         path = f"{self.output_dir}/segment_ids.txt"
         segment_ids = list(self.graph.component_id_to_swc_id.values())
         util.write_list(path, segment_ids)
+
+    def _img_config(self, patch_shape):
+        if patch_shape is None:
+            return self.img_config
+        cfg = copy(self.img_config)
+        cfg.patch_shape = patch_shape
+        return cfg
 
     def _step_dir(self, name):
         path = os.path.join(self.output_dir, f"step{self.step_cnt}_{name}")
