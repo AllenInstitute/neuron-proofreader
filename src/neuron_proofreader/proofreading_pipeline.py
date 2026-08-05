@@ -202,7 +202,7 @@ class ProofreadPipeline:
         save_result=True,
     ):
         """
-        Runs learned merge detection using a trained CNN.
+        Runs learned merge detection using a CNN.
 
         Parameters
         ----------
