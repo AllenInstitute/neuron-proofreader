@@ -491,7 +491,6 @@ class ViT3D(nn.Module):
         Fixed sinusoidal positional encoding in spherical coordinates centered
         on the patch grid. Each of r, theta, phi is independently encoded with
         the same frequency bank and the results are summed.
-        Returns (1, num_d * num_h * num_w, embed_dim).
         """
         d_c = torch.arange(num_d, dtype=torch.float32) - (num_d - 1) / 2
         h_c = torch.arange(num_h, dtype=torch.float32) - (num_h - 1) / 2
