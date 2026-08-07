@@ -110,7 +110,7 @@ class ImageConfig(Config):
         self.img_path = img_path
 
     def set_train_mode(self):
-        self.transform = ImageTransforms()
+        self.transform = ImageTransforms(normalization=self.normalization)
 
     def set_val_mode(self):
         self.transform = None
