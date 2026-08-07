@@ -32,7 +32,7 @@ class CNN3D(nn.Module):
         dropout=0.1,
         max_channels=256,
         output_dim=1,
-        pool_stage_idxs=(-3, -2, -1),
+        pool_stage_idxs=(2, 3, 4),
         use_double=True,
         use_se=True,
     ):
