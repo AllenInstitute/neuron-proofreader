@@ -38,9 +38,7 @@ import torch
 from neuron_proofreader.machine_learning.image_dataloader import (
     DetectionPatchLoader as PatchLoader,
 )
-from neuron_proofreader.models.geometric_gnn_models import (
-    subgraph_to_data,
-)
+# TODO: import subgraph_to_data from arborist once installed
 from neuron_proofreader.models.point_cloud_models import (
     subgraph_to_point_cloud,
 )
