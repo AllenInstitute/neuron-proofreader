@@ -432,6 +432,10 @@ class ThreadedDataLoader(DataLoader):
         self.prefetch = prefetch
         self.img_shape = (2,) + dataset.datasets[0].patch_loader.patch_shape
 
+        # Pre-allocated buffers (reused each batch to avoid repeated malloc)
+        self._x_buf = np.empty((batch_size,) + self.img_shape, dtype=np.float32)
+        self._y_buf = np.empty((batch_size, 1), dtype=np.float32)
+
     def __iter__(self):
         # Subroutines
         def submit_batch(executor, batch_idxs):
@@ -449,7 +453,7 @@ class ThreadedDataLoader(DataLoader):
                 return self._assemble_image_batch(futures)
 
         # Main
-        with ThreadPoolExecutor(max_workers=2*self.prefetch) as executor:
+        with ThreadPoolExecutor(max_workers=min(32, self.prefetch)) as executor:
             # Start prefetching
             batch_iter = self.create_batch_iter()
             pending_batches = deque()
@@ -477,11 +481,14 @@ class ThreadedDataLoader(DataLoader):
                 yield assemble_batch(futures)
 
     def _assemble_image_batch(self, futures):
-        x = np.zeros((len(futures),) + self.img_shape, dtype=np.float32)
-        y = np.zeros((len(futures), 1), dtype=np.float32)
-        for i, future in enumerate(futures):
+        n = len(futures)
+        x = self._x_buf[:n]
+        y = self._y_buf[:n]
+        future_to_idx = {f: i for i, f in enumerate(futures)}
+        for future in as_completed(futures):
+            i = future_to_idx[future]
             x[i], _, y[i] = future.result()
-        return torch.from_numpy(x), torch.from_numpy(y)
+        return torch.from_numpy(x).pin_memory(), torch.from_numpy(y).pin_memory()
 
     def _load_image_pc_batch(self, batch_idxs):
         """
