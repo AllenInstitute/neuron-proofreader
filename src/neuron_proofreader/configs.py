@@ -97,9 +97,11 @@ class ImageConfig(Config):
         Indication of whether to use image augmentation.
     """
 
+    asinh_scale: float = 100.0
     brightness_clip: int = 400
     img_path: str = None
     name: str = "image_config"
+    normalization: str = "percentile"
     percentiles: Tuple[float, float] = (1, 99.5)
     patch_shape: Tuple[int, int, int] = (128, 128, 128)
     transform = None
