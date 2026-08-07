@@ -23,6 +23,7 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 import torch.optim as optim
+import wandb
 
 from neuron_proofreader.utils import img_util, ml_util, util
 
@@ -71,6 +72,7 @@ class Trainer:
         min_recall=0,
         save_mistake_mips=False,
         threshold_metrics=0.5,
+        use_wandb=False,
         verbose=False,
     ):
         """
@@ -118,6 +120,9 @@ class Trainer:
         self.scaler = torch.cuda.amp.GradScaler(enabled=True)
         self.scheduler = CosineAnnealingLR(self.optimizer, T_max=max_epochs)
         self.writer = SummaryWriter(log_dir=log_dir)
+        self.use_wandb = use_wandb
+        if use_wandb:
+            wandb.init(project="neuron-proofreader", name=exp_name, dir=log_dir)
 
     # --- Core Routines ---
     def run(self, train_dataloader, val_dataloader):
@@ -389,7 +394,9 @@ class Trainer:
             Prefix to prepend to each metric name when logging.
         """
         for key, value in stats.items():
-            self.writer.add_scalar(prefix + key, stats[key], epoch)
+            self.writer.add_scalar(prefix + key, value, epoch)
+        if self.use_wandb:
+            wandb.log({prefix + k: v for k, v in stats.items()}, step=epoch)
 
 
 class DistributedTrainer(Trainer):
