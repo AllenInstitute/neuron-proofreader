@@ -35,7 +35,6 @@ dependencies = [
     'scipy',
     'smartsheet-python-sdk',
     'tensorboard',
-    'wandb',
     'tensorstore==0.1.71',
     'torch',
     'torcheval',
