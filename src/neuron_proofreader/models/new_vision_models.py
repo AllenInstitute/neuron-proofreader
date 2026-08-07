@@ -26,7 +26,6 @@ class CNN3D(nn.Module):
         self,
         input_shape,
         base_channels=32,
-        center_pool_sigma=0.4,
         channel_multiplier=2,
         depth=5,
         dropout=0.1,
@@ -43,7 +42,6 @@ class CNN3D(nn.Module):
         self.config = {
             "input_shape": tuple(input_shape),
             "base_channels": base_channels,
-            "center_pool_sigma": center_pool_sigma,
             "channel_multiplier": channel_multiplier,
             "depth": depth,
             "dropout": dropout,
@@ -67,18 +65,10 @@ class CNN3D(nn.Module):
         )
 
         # Output
-        stage_channels = [
-            self.encode.blocks[i].out_channels for i in pool_stage_idxs
-        ]
         self.pool_stage_idxs = pool_stage_idxs
-        self.center_pools = nn.ModuleList(
-            [
-                CenterWeightedPool3D(sigma=center_pool_sigma)
-                for _ in stage_channels
-            ]
+        total_dim = sum(
+            self.encode.blocks[i].out_channels for i in pool_stage_idxs
         )
-
-        total_dim = sum(c * 2 for c in stage_channels)
         self.output = FeedForwardNet(total_dim, output_dim, 3)
         self.apply(self.init_weights)
 
@@ -116,6 +106,7 @@ class CNN3D(nn.Module):
         config = ckpt["config"]
         config.pop("num_single_conv_blocks", None)
         config.pop("num_single_blocks", None)
+        config.pop("center_pool_sigma", None)
         model = cls(**config)
         model.load_state_dict(ckpt["state_dict"])
         return model
@@ -157,14 +148,11 @@ class CNN3D(nn.Module):
             Output of the neural network.
         """
         stages = self.encode(x)
-        feats = []
-        for i, idx in enumerate(self.pool_stage_idxs):
-            s = stages[idx]
-            cwp = self.center_pools[i](s)
-            mx = F.adaptive_max_pool3d(s, 1).flatten(1)
-            feats.append(torch.cat([cwp, mx], dim=1))
-        x = torch.cat(feats, dim=1)
-        x = self.drop(x)
+        feats = [
+            F.adaptive_avg_pool3d(stages[i], 1).flatten(1)
+            for i in self.pool_stage_idxs
+        ]
+        x = self.drop(torch.cat(feats, dim=1))
         return self.output(x)
 
 
@@ -327,7 +315,7 @@ class ConvBlock3D(nn.Module):
 
     def forward(self, x):
         x = self.se(self.conv(x))
-        if min(x.shape[2:]) > 4:
+        if min(x.shape[2:]) > 2:
             x = self.pool(x)
         return x
 
