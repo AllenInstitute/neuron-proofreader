@@ -8,7 +8,7 @@ Routines for applying image augmentation during training.
 
 """
 
-from scipy.ndimage import gaussian_filter, rotate, zoom
+from scipy.ndimage import gaussian_filter, zoom
 
 import numpy as np
 import random
@@ -21,14 +21,18 @@ class ImageTransforms:
     patch.
     """
 
-    def __init__(self):
+    _NOISE_SCALE = {"percentile": 0.2, "asinh": 0.6}
+
+    def __init__(self, normalization="percentile"):
         """
         Initializes an ImageTransforms instance that applies augmentation to
         an image and segmentation patch.
         """
         # Instance attributes
+        self.normalization = normalization
+        noise_std = self._NOISE_SCALE.get(normalization, 0.2)
         self.geometric_transform = [RandomFlip3D(), RandomRotation3D()]
-        self.intensity1_transform = [RandomNoise3D(), RandomContrast3D()]
+        self.intensity1_transform = [RandomNoise3D(noise_std), RandomContrast3D()]
         self.intensity2_transform = [RandomSmooth3D(), RandomContrast3D()]
 
     def __call__(self, patches):
@@ -53,8 +57,9 @@ class ImageTransforms:
             ]
         )
         patches = self.apply(patches, transform)
-        patches = np.clip(patches, 0, 1)
-        return patches
+        if self.normalization == "percentile":
+            patches = np.clip(patches, 0, 1)
+        return np.ascontiguousarray(patches)
 
     def apply(self, patches, transforms):
         for transform in transforms:
@@ -98,21 +103,10 @@ class RandomFlip3D:
 
 class RandomRotation3D:
     """
-    Applies random rotation along a randomly chosen axis.
+    Applies random 90-degree rotations along each axis pair.
     """
 
-    def __init__(self, angles=(-90, 90), axes=((0, 1), (0, 2), (1, 2))):
-        """
-        Initializes a RandomRotation3D transformer.
-
-        Parameters
-        ----------
-        angles : Tuple[int], optional
-            Maximum angle of rotation. Default is (-90, 90).
-        axis : Tuple[Tuple[int]], optional
-            Axes to apply rotation. Default is ((0, 1), (0, 2), (1, 2))
-        """
-        self.angles = angles
+    def __init__(self, axes=((0, 1), (0, 2), (1, 2))):
         self.axes = axes
 
     def __call__(self, patches):
@@ -127,39 +121,10 @@ class RandomRotation3D:
         """
         for axes in self.axes:
             if random.random() < 0.5:
-                angle = random.uniform(*self.angles)
-                patches[0] = self.rotate3d(patches[0], angle, axes, False)
-                patches[1] = self.rotate3d(patches[1], angle, axes, True)
+                k = random.randint(1, 3)
+                patches[0] = np.rot90(patches[0], k=k, axes=axes)
+                patches[1] = np.rot90(patches[1], k=k, axes=axes)
         return patches
-
-    @staticmethod
-    def rotate3d(img, angle, axes, is_mask=False):
-        """
-        Rotates a 3D image patch around the specified axes by a given angle.
-
-        Parameters
-        ----------
-        img : numpy.ndarray
-            Image to be rotated.
-        angle : float
-            Angle (in degrees) by which to rotate the image patch around the
-            specified axes.
-        axes : Tuple[int]
-            Two axes of rotation.
-        is_mask : bool, optional
-            True if the image is a mask.
-        """
-        multipler = 4 if is_mask else 1
-        img = rotate(
-            multipler * img,
-            angle,
-            axes=axes,
-            mode="grid-mirror",
-            reshape=False,
-            order=0,
-        )
-        img /= multipler
-        return img
 
 
 class RandomScale3D:

@@ -113,7 +113,7 @@ class Trainer:
         self.verbose = verbose
 
         self.criterion = nn.BCEWithLogitsLoss()
-        self.model = model.to(device)
+        self.model = torch.compile(model.to(device))
         self.optimizer = optim.AdamW(self.model.parameters(), lr=lr)
         self.scaler = torch.cuda.amp.GradScaler(enabled=True)
         self.scheduler = CosineAnnealingLR(self.optimizer, T_max=max_epochs)
@@ -389,7 +389,7 @@ class Trainer:
             Prefix to prepend to each metric name when logging.
         """
         for key, value in stats.items():
-            self.writer.add_scalar(prefix + key, stats[key], epoch)
+            self.writer.add_scalar(prefix + key, value, epoch)
 
 
 class DistributedTrainer(Trainer):
