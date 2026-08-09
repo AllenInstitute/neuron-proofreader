@@ -97,7 +97,6 @@ class ImageConfig(Config):
         Indication of whether to use image augmentation.
     """
 
-    asinh_scale: float = 100.0
     brightness_clip: int = 400
     img_path: str = None
     name: str = "image_config"

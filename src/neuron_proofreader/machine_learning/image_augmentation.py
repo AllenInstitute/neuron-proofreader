@@ -21,7 +21,7 @@ class ImageTransforms:
     patch.
     """
 
-    _NOISE_SCALE = {"percentile": 0.2, "asinh": 0.6}
+    _NOISE_SCALE = {"percentile": 0.2}
 
     def __init__(self, normalization="percentile"):
         """

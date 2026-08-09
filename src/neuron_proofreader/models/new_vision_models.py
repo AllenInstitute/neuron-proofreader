@@ -196,13 +196,14 @@ class Encoder3D(nn.Module):
 
         # Create convolutional blocks
         blocks = list()
-        for _ in range(depth):
+        for i in range(depth):
             # Add block
             block = ConvBlock3D(
                 in_channels,
                 out_channels,
                 use_double=use_double,
                 use_se=use_se,
+                learned_pool=(i == 0),
             )
             blocks.append(block)
 
@@ -296,6 +297,7 @@ class ConvBlock3D(nn.Module):
         kernel_size=3,
         use_double=True,
         use_se=True,
+        learned_pool=False,
     ):
         # Call parent class
         super().__init__()
@@ -309,8 +311,9 @@ class ConvBlock3D(nn.Module):
         self.out_channels = out_channels
         self.conv = nn.Sequential(*layers)
         self.se = SEBlock3D(out_channels) if use_se else nn.Identity()
-        self.pool = nn.Conv3d(
-            out_channels, out_channels, kernel_size=2, stride=2, bias=False
+        self.pool = (
+            nn.Conv3d(out_channels, out_channels, kernel_size=2, stride=2, bias=False)
+            if learned_pool else nn.MaxPool3d(kernel_size=2)
         )
 
     def forward(self, x):

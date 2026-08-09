@@ -198,11 +198,8 @@ class PatchLoader(ABC):
             Preprocessed image patch.
         """
         patch = self.img.read(center, shape)
-        if self.normalization == "asinh":
-            return np.arcsinh(patch / self.asinh_scale).astype(np.float32)
-        else:
-            patch = np.minimum(patch, self.brightness_clip)
-            return img_util.normalize(patch, percentiles=self.percentiles).astype(np.float32)
+        patch = np.minimum(patch, self.brightness_clip)
+        return img_util.normalize(patch, percentiles=self.percentiles).astype(np.float32)
 
     # --- Helpers ---
     def __getattr__(self, name):
