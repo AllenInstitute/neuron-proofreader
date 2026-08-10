@@ -9,11 +9,15 @@ NeuronProofreader pipelines.
 
 """
 
+from functools import partial
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from neuron_proofreader.utils.ml_util import FeedForwardNet
+
+BLOCK_REGISTRY = {}
 
 
 # --- Convolutional Neural Networks ---
@@ -26,61 +30,82 @@ class CNN3D(nn.Module):
         self,
         input_shape,
         base_channels=16,
+        block_type=None,
         center_pool_sigma=0.4,
         channel_multiplier=2,
         depth=5,
         dropout=0.1,
+        learnable_center_sigma=True,
         max_channels=256,
+        num_single_blocks=2,
         output_dim=1,
-        pool_stage_idxs=(0, 2, -1),
+        pool_stage_idxs=(2, -1),
         use_double=True,
-        use_se=True,
     ):
         # Call parent class
         nn.Module.__init__(self)
+
+        # Set block type
+        if isinstance(block_type, str):
+            block_name = block_type
+            block_type = BLOCK_REGISTRY[block_name]
+        else:
+            block_type = block_type or ConvBlock3D
+            block_name = self._block_name(block_type)
 
         # Save model config
         self.config = {
             "input_shape": tuple(input_shape),
             "base_channels": base_channels,
+            "block_type": block_name,
             "center_pool_sigma": center_pool_sigma,
             "channel_multiplier": channel_multiplier,
             "depth": depth,
             "dropout": dropout,
+            "learnable_center_sigma": learnable_center_sigma,
             "max_channels": max_channels,
+            "num_single_blocks": num_single_blocks,
             "output_dim": output_dim,
             "pool_stage_idxs": tuple(pool_stage_idxs),
             "use_double": use_double,
-            "use_se": use_se,
         }
 
         # Encoder
         self.drop = nn.Dropout(dropout)
         self.encode = Encoder3D(
-            input_shape[0],
-            base_channels,
-            depth,
+            input_shape[0], base_channels, depth,
+            block_type=block_type,
             channel_multiplier=channel_multiplier,
             max_channels=max_channels,
+            num_single_blocks=num_single_blocks,
             use_double=use_double,
-            use_se=use_se,
         )
 
         # Output
-        stage_channels = [
-            self.encode.blocks[i].out_channels for i in pool_stage_idxs
-        ]
         self.pool_stage_idxs = pool_stage_idxs
-        self.center_pools = nn.ModuleList(
-            [
-                CenterWeightedPool3D(sigma=center_pool_sigma)
-                for _ in stage_channels
-            ]
-        )
+        stage_channels = [self.encode.blocks[i].out_channels for i in pool_stage_idxs]
+        self.center_pools = nn.ModuleList([
+            CenterWeightedPool3D(sigma=center_pool_sigma, learnable=learnable_center_sigma)
+            for _ in stage_channels
+        ])
 
         total_dim = sum(c * 2 for c in stage_channels)
         self.output = FeedForwardNet(total_dim, output_dim, 3)
         self.apply(self.init_weights)
+
+    @staticmethod
+    def _block_name(block_type):
+        """
+        Reverse-lookup a block class/partial against BLOCK_REGISTRY.
+        """
+        target = block_type.func if isinstance(block_type, partial) else block_type
+        for name, cls in BLOCK_REGISTRY.items():
+            if cls is target:
+                return name
+        raise ValueError(
+            f"block_type {target} isn't in BLOCK_REGISTRY, so it can't be "
+            f"saved/reloaded from config. Add it to BLOCK_REGISTRY first."
+        )
 
     def save(self, path):
         """
@@ -91,33 +116,49 @@ class CNN3D(nn.Module):
         path : str
             Destination path, e.g. "model.pt".
         """
-        torch.save(
-            {"config": self.config, "state_dict": self.state_dict()}, path
-        )
+        torch.save({"config": self.config, "state_dict": self.state_dict()}, path)
 
     @classmethod
-    def load(cls, path, map_location=None):
+    def load(cls, path, map_location=None, config=None):
         """
-        Reconstructs a NewCNN3D from a checkpoint saved with `save`.
+        Reconstructs a CNN3D from a checkpoint.
+
+        Supports two formats:
+        - Dict with "config" and "state_dict" keys (saved via `save()`).
+        - Raw state_dict (OrderedDict). In this case `config` must be provided
+          as a dict of constructor kwargs, or as a path to a model_config.json.
 
         Parameters
         ----------
         path : str
-            Path to a checkpoint written by `save`.
+            Path to a checkpoint written by `save` or a raw state_dict.
         map_location : str or torch.device, optional
             Passed through to `torch.load`.
+        config : dict or str, optional
+            Constructor kwargs (or path to model_config.json) used when the
+            checkpoint is a raw state_dict with no embedded config.
 
         Returns
         -------
-        NewCNN3D
+        CNN3D
             Model with architecture and weights matching the checkpoint.
         """
+        import json, os
+
         ckpt = torch.load(path, map_location=map_location)
-        config = ckpt["config"] if "config" in ckpt else ckpt
-        config.pop("num_single_conv_blocks", None)
-        config.pop("num_single_blocks", None)
-        model = cls(**config)
-        model.load_state_dict(ckpt["state_dict"])
+        if isinstance(ckpt, dict) and "config" in ckpt:
+            model = cls(**ckpt["config"])
+            model.load_state_dict(ckpt["state_dict"])
+        else:
+            if config is None:
+                config_path = os.path.join(os.path.dirname(os.path.dirname(path)), "model_config.json")
+                with open(config_path) as f:
+                    config = json.load(f)
+            elif isinstance(config, str):
+                with open(config) as f:
+                    config = json.load(f)
+            model = cls(**config)
+            model.load_state_dict(ckpt)
         return model
 
     @staticmethod
@@ -158,11 +199,11 @@ class CNN3D(nn.Module):
         """
         stages = self.encode(x)
         feats = []
-        for i, idx in enumerate(self.pool_stage_idxs):
+        for idx, pool in zip(self.pool_stage_idxs, self.center_pools):
             s = stages[idx]
-            cwp = self.center_pools[i](s)
+            center = pool(s)
             mx = F.adaptive_max_pool3d(s, 1).flatten(1)
-            feats.append(torch.cat([cwp, mx], dim=1))
+            feats.append(torch.cat([center, mx], dim=1))
         x = torch.cat(feats, dim=1)
         x = self.drop(x)
         return self.output(x)
@@ -178,12 +219,13 @@ class Encoder3D(nn.Module):
         in_channels,
         out_channels,
         depth,
+        block_type=None,
         channel_multiplier=2,
         max_channels=256,
+        num_single_blocks=2,
         stem_depth=0,
         stem_dilations=None,
         use_double=True,
-        use_se=True,
     ):
         """
         Instantiates an Encoder3D object.
@@ -208,21 +250,16 @@ class Encoder3D(nn.Module):
 
         # Create convolutional blocks
         blocks = list()
-        for _ in range(depth):
+        block_type = block_type or ConvBlock3D
+        for i in range(depth):
             # Add block
-            block = ConvBlock3D(
-                in_channels,
-                out_channels,
-                use_double=use_double,
-                use_se=use_se,
-            )
+            use_double_i = i > num_single_blocks
+            block = block_type(in_channels, out_channels, use_double=use_double_i)
             blocks.append(block)
 
             # Update channel dimensions
             in_channels = block.out_channels
-            out_channels = int(
-                min(out_channels * channel_multiplier, max_channels)
-            )
+            out_channels = int(min(out_channels * channel_multiplier, max_channels))
 
         self.blocks = nn.ModuleList(blocks)
         self.out_channels = self.blocks[-1].out_channels
@@ -236,29 +273,6 @@ class Encoder3D(nn.Module):
 
 
 # --- Convolutional Blocks ---
-class SEBlock3D(nn.Module):
-    """
-    Squeeze-and-Excitation block: recalibrates channel responses by learning
-    which feature maps are most informative for the current task.
-    """
-
-    def __init__(self, channels, reduction=4):
-        super().__init__()
-        mid = max(channels // reduction, 4)
-        self.fc = nn.Sequential(
-            nn.Linear(channels, mid, bias=False),
-            nn.ReLU(),
-            nn.Linear(mid, channels, bias=False),
-            nn.Sigmoid(),
-        )
-
-    def forward(self, x):
-        b, c = x.shape[:2]
-        w = x.mean(dim=(2, 3, 4))
-        w = self.fc(w).view(b, c, 1, 1, 1)
-        return x * w
-
-
 class ConvUnit3D(nn.Sequential):
     """
     Conv -> GroupNorm -> (optional) GELU
@@ -299,6 +313,14 @@ class ConvUnit3D(nn.Sequential):
         return 1
 
 
+def register_block(name):
+    def wrap(cls):
+        BLOCK_REGISTRY[name] = cls
+        return cls
+    return wrap
+
+
+@register_block("conv")
 class ConvBlock3D(nn.Module):
 
     def __init__(
@@ -307,29 +329,109 @@ class ConvBlock3D(nn.Module):
         out_channels,
         kernel_size=3,
         use_double=True,
-        use_se=True,
     ):
+        super().__init__()
+
+        self.out_channels = out_channels
+
+        layers = [
+            ConvUnit3D(
+                in_channels,
+                out_channels,
+                kernel_size,
+            )
+        ]
+
+        if use_double:
+            layers.append(
+                ConvUnit3D(
+                    out_channels,
+                    out_channels,
+                    kernel_size,
+                )
+            )
+
+        self.conv = nn.Sequential(*layers)
+        self.pool = nn.MaxPool3d(2)
+
+    def forward(self, x):
+        x = self.conv(x)
+        return self.pool(x)
+
+
+@register_block("res")
+class ResConvBlock3D(nn.Module):
+    """
+    3D convolutional block with a residual connection around the conv unit(s),
+    followed by downsampling. The skip path projects channels via a 1x1 conv
+    when in_channels != out_channels (or is an identity otherwise), so the
+    residual add is always shape-compatible.
+    """
+
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        kernel_size=3,
+        use_double=True,
+    ):
+        """
+        Instantiates a ResConvBlock3D object.
+
+        Parameters
+        ----------
+        in_channels : int
+            Number of input channels to this block.
+        out_channels : int
+            Number of output channels from this block.
+        kernel_size : int, optional
+            Size of kernel used on convolutional layers. Default is 3.
+        use_double : bool, optional
+            Indication of whether to apply a second conv+norm before the
+            residual add. Default is True.
+        """
         # Call parent class
         super().__init__()
 
-        # Create convolutional layers
-        layers = [ConvUnit3D(in_channels, out_channels, kernel_size)]
-        if use_double:
-            layers.append(ConvUnit3D(out_channels, out_channels, kernel_size))
-
-        # Instance attributes
         self.out_channels = out_channels
-        self.conv = nn.Sequential(*layers)
-        self.se = SEBlock3D(out_channels) if use_se else nn.Identity()
-        self.pool = nn.Conv3d(
-            out_channels, out_channels, kernel_size=2, stride=2, bias=False
+
+        layers = [
+            ConvUnit3D(
+                in_channels,
+                out_channels,
+                kernel_size,
+            )
+        ]
+
+        if use_double:
+            layers.append(
+                ConvUnit3D(
+                    out_channels,
+                    out_channels,
+                    kernel_size,
+                    activation=False,
+                )
+            )
+
+        self.main = nn.Sequential(*layers)
+        self.skip = (
+            nn.Identity()
+            if in_channels == out_channels
+            else nn.Conv3d(
+                in_channels,
+                out_channels,
+                kernel_size=1,
+                bias=False,
+            )
         )
 
+        self.act = nn.GELU()
+        self.pool = nn.MaxPool3d(2)
+
     def forward(self, x):
-        x = self.se(self.conv(x))
-        if min(x.shape[2:]) > 4:
-            x = self.pool(x)
-        return x
+        x = self.main(x) + self.skip(x)
+        x = self.act(x)
+        return self.pool(x)
 
 
 class CenterWeightedPool3D(nn.Module):
@@ -340,7 +442,7 @@ class CenterWeightedPool3D(nn.Module):
     (shared across channels) and normalize to sum to 1.
     """
 
-    def __init__(self, sigma=0.4):
+    def __init__(self, sigma=0.4, learnable=True):
         """
         Parameters
         ----------
@@ -349,28 +451,31 @@ class CenterWeightedPool3D(nn.Module):
             (coords run -1..1, so 0.4 means weight falls to ~1/e at 40% of
             the way to the edge). Smaller = tighter focus on center.
             Default is 0.4.
+        learnable : bool, optional
+            If True, sigma is a learned scalar so the model can widen or
+            narrow the focus during training. Default is True.
         """
         super().__init__()
         self._dist_cache = {}
         init = torch.log(torch.tensor(float(sigma)))
-        self.log_sigma = nn.Parameter(init)
+        if learnable:
+            self.log_sigma = nn.Parameter(init)
+        else:
+            self.register_buffer("log_sigma", init, persistent=False)
 
     def _dist_sq(self, shape, device, dtype):
         key = (shape, device)
         if key not in self._dist_cache:
-            coords = [
-                torch.linspace(-1, 1, s, device=device, dtype=dtype)
-                for s in shape
-            ]
+            coords = [torch.linspace(-1, 1, s, device=device, dtype=dtype) for s in shape]
             grid = torch.stack(torch.meshgrid(*coords, indexing="ij"), dim=0)
-            self._dist_cache[key] = (grid**2).sum(0)
+            self._dist_cache[key] = (grid ** 2).sum(0)
         return self._dist_cache[key]
 
     def forward(self, x):
         b, c, d, h, w = x.shape
         dist_sq = self._dist_sq((d, h, w), x.device, x.dtype)
         sigma = self.log_sigma.exp().clamp(min=1e-3)
-        weights = torch.exp(-dist_sq / (2 * sigma**2))
+        weights = torch.exp(-dist_sq / (2 * sigma ** 2))
         weights = (weights / weights.sum()).view(1, 1, d, h, w)
         return (x * weights).sum(dim=(2, 3, 4))
 
@@ -452,8 +557,8 @@ class ViT3D(nn.Module):
         # Center-weighted pooling over spatial patch tokens
         self.center_pool = CenterWeightedPool3D()
 
-        # Head receives CLS token concatenated with center-pooled patch tokens
-        self.head = FeedForwardNet(2 * embed_dim, output_dim, 3)
+        # Head receives CLS token, center-pooled patch tokens, and max-pooled patch tokens
+        self.head = FeedForwardNet(3 * embed_dim, output_dim, 3)
 
         self.apply(self.init_weights)
         nn.init.trunc_normal_(self.cls_token, std=0.02)
@@ -502,7 +607,7 @@ class ViT3D(nn.Module):
         theta = (dg / r).clamp(-1 + 1e-6, 1 - 1e-6).acos()  # [0, pi]
         phi = wg.atan2(hg) + torch.pi  # [0, 2*pi]
 
-        # Scale r to [0, 2*pi] so all three coordinates share the same frequency base
+        # Scale r to [0, 2*pi] so coordinates share the same frequency base
         r_scaled = r / r.amax() * (2 * torch.pi)
 
         half = embed_dim // 2
@@ -529,7 +634,8 @@ class ViT3D(nn.Module):
         patches = x[:, 1:].transpose(1, 2).view(
             b, self.embed_dim, self.num_d, self.num_h, self.num_w
         )
-        feat = torch.cat([x[:, 0], self.center_pool(patches)], dim=1)
+        max_pool = patches.amax(dim=(2, 3, 4))
+        feat = torch.cat([x[:, 0], self.center_pool(patches), max_pool], dim=1)
         return self.head(feat)
 
 

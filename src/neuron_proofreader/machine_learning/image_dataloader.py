@@ -199,8 +199,7 @@ class PatchLoader(ABC):
         """
         patch = self.img.read(center, shape)
         patch = np.minimum(patch, self.brightness_clip)
-        patch = img_util.normalize(patch, percentiles=self.percentiles)
-        return patch.astype(np.float32)
+        return img_util.normalize(patch, percentiles=self.percentiles).astype(np.float32)
 
     # --- Helpers ---
     def __getattr__(self, name):

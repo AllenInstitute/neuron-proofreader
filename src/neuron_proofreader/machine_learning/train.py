@@ -13,7 +13,7 @@ from datetime import datetime
 from torch.nn.functional import sigmoid
 from torch.nn.parallel import DistributedDataParallel
 from torch.nn.utils import clip_grad_norm_
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
@@ -113,10 +113,10 @@ class Trainer:
         self.verbose = verbose
 
         self.criterion = nn.BCEWithLogitsLoss()
-        self.model = model.to(device)
+        self.model = torch.compile(model.to(device), backend="eager")
         self.optimizer = optim.AdamW(self.model.parameters(), lr=lr)
         self.scaler = torch.cuda.amp.GradScaler(enabled=True)
-        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=max_epochs)
+        self.scheduler = CosineAnnealingWarmRestarts(self.optimizer, T_0=20, T_mult=2)
         self.writer = SummaryWriter(log_dir=log_dir)
 
     # --- Core Routines ---
@@ -389,7 +389,7 @@ class Trainer:
             Prefix to prepend to each metric name when logging.
         """
         for key, value in stats.items():
-            self.writer.add_scalar(prefix + key, stats[key], epoch)
+            self.writer.add_scalar(prefix + key, value, epoch)
 
 
 class DistributedTrainer(Trainer):
