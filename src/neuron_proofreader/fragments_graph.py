@@ -70,7 +70,6 @@ class FragmentsGraph(SkeletonGraph):
         self.graph_loader = GraphLoader(
             anisotropy=anisotropy_actual,
             min_cable_length=min_cable_length,
-            min_swc_pts=min_swc_pts,
             node_spacing=node_spacing,
             prune_depth=prune_depth,
             verbose=verbose,
