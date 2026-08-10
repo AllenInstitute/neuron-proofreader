@@ -35,7 +35,7 @@ import os
 import pandas as pd
 import torch
 
-from arborist.utils.swc_loading import write_points
+from arborist.utils.swc_loading import to_zipped_points
 from neuron_proofreader.merge_proofreading.search_datasets import (
     DenseSearchDataset,
     SparseSearchDataset,
@@ -93,7 +93,7 @@ class MergeProofreader(ABC):
             Physical coordinates of detected merge sites.
         """
         zip_path = os.path.join(self.output_dir, "detected_sites.zip")
-        write_points(
+        to_zipped_points(
             zip_path,
             merge_site_xyz,
             color="1.0 0.0 0.0",
