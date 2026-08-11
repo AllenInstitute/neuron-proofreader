@@ -198,6 +198,7 @@ class MLMergeProofreader(MergeProofreader):
         t0 = time()
         self.log("Search Graph...")
         merge_sites = self.search()
+        self.graph.remove_merge_sites(merge_sites)
 
         # Report results
         t, unit = util.time_writer(time() - t0)
