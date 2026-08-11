@@ -12,85 +12,10 @@ from collections import defaultdict
 from scipy.interpolate import UnivariateSpline
 from scipy.linalg import svd
 from scipy.spatial.distance import euclidean
-from sklearn.decomposition import PCA
 from tqdm import tqdm
 
 import networkx as nx
 import numpy as np
-import torch
-
-
-# --- Curve Utils ---
-def max_l2_error(curve1, curve2):
-    """
-    Computes maximum pointwise L2 error.
-
-    Parameters
-    ----------
-    curve1 : numpy.ndarray
-        Ground truth curve.
-    curve2 : numpy.ndarray
-        Reconstruction curve.
-
-    Returns
-    -------
-    float
-        Maximum Euclidean error.
-    """
-    assert curve1.shape == curve2.shape, "Curves have different number of pts"
-    return np.linalg.norm(curve1 - curve2, axis=1).max()
-
-
-def curves_pca_projection(curve1, curve2):
-    """
-    Projects two 3D curves into a shared PCA coordinate system.
-
-    Parameters
-    ----------
-    curve1 : numpy.ndarray
-        First curve with shape ``(N, 3)``.
-    curve2 : numpy.ndarray
-        Second curve with shape ``(M, 3)``.
-
-    Returns
-    -------
-    tuple
-        Two projected curves with shape ``(N, 2)`` and ``(M, 2)``.
-    """
-    # Compute PCA components
-    pts = np.vstack([curve1, curve2])
-    center = pts.mean(axis=0)
-
-    pca = PCA(n_components=3)
-    pca.fit(pts - center)
-
-    # Compute projections
-    curve1_proj = pca.transform(curve1 - center)
-    curve2_proj = pca.transform(curve2 - center)
-    return curve1_proj[:, :2], curve2_proj[:, :2]
-
-
-def curve_principal_direction(curve):
-    """
-    Computes the principal direction of a 3D curve using PCA.
-
-    Parameters
-    ----------
-    curve : numpy.ndarray
-        Array with shape (N, 3) containing the 3D coordinates of the curve.
-
-    Returns
-    -------
-    numpy.ndarray
-        Unit vector of shape (3,) representing the principal direction of the
-        curve.
-    """
-    curve_pca = PCA(n_components=1)
-    curve_pca.fit(curve)
-    direction = curve_pca.components_[0]
-    if direction[2] < 0:
-        direction = -direction
-    return direction / np.linalg.norm(direction)
 
 
 def fit_spline_1d(pts, k=3, s=None):
@@ -231,42 +156,6 @@ def resample_curve_3d(pts, n_pts=None, s=None):
         )
     )
     return pts
-
-
-def reconstruct_diffs(diffs):
-    """
-    Reconstructs a curve from a sequence of offset vectors.
-
-    Parameters
-    ----------
-    diffs : numpy.ndarray or torch.Tensor
-        Array representing the differences between consecutive points.
-
-    Returns
-    -------
-    numpy.ndarray
-        Reconstructed curve.
-    """
-    if isinstance(diffs, torch.Tensor):
-        start = torch.zeros(1, 3, device=diffs.device, dtype=diffs.dtype)
-        return torch.cat([start, start + torch.cumsum(diffs, dim=0)], dim=0)
-    else:
-        start = np.zeros((1, 3))
-        return np.concatenate(
-            [start, start + np.cumsum(diffs, axis=0)], axis=0
-        )
-
-
-def rmse(curve1, curve2):
-    """
-    Computes Root Mean Squared Error (RMSE) between two curves.
-
-    Parameters
-    ----------
-    curve1 : numpy.ndarray
-
-    """
-    return np.sqrt(np.mean(np.sum((curve1 - curve2) ** 2, axis=1)))
 
 
 # --- Fragment Filtering ---

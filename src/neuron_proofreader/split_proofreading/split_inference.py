@@ -42,6 +42,8 @@ class SplitProofreader:
     Class that executes the full split proofreader inference pipeline.
     """
 
+    step_name = "learned_split_correction"
+
     def __init__(
         self,
         graph,

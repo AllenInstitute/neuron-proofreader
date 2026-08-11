@@ -42,8 +42,9 @@ from neuron_proofreader.machine_learning.image_dataloader import (
 from neuron_proofreader.models.point_cloud_models import (
     subgraph_to_point_cloud,
 )
-from neuron_proofreader.skeleton_graph import SkeletonGraph
-from neuron_proofreader.utils import ml_util, swc_util, util
+from neuron_proofreader.fragments_graph import FragmentsGraph
+from arborist.utils.swc_loading import Reader
+from neuron_proofreader.utils import ml_util, util
 
 
 # -- Datasets ---
@@ -97,7 +98,7 @@ class BrainDataset:
         self.set_merge_site_info()
 
     def load_fragments(self, config, swcs_path):
-        graph = SkeletonGraph(
+        graph = FragmentsGraph(
             anisotropy=config.anisotropy,
             min_cable_length=config.min_cable_length,
             min_swc_pts=config.min_swc_pts,
@@ -110,7 +111,7 @@ class BrainDataset:
 
     def load_sites(self, sites_prefix):
         sites = list()
-        swc_reader = swc_util.Reader(verbose=False)
+        swc_reader = Reader(verbose=False)
         for swc_dict in swc_reader(sites_prefix):
             xyz = swc_dict["xyz"][0]
             dd, ii = self.kdtree.query(xyz)
