@@ -78,29 +78,28 @@ class MergeProofreader(ABC):
         list
             Physical coordinates (xyz) of detected merge sites.
         """
-        merge_site_nodes = self.search()
-        merge_site_xyz = list(self.graph.node_xyz[merge_site_nodes])
-        self.graph.remove_merge_sites(merge_site_nodes)
-        return merge_site_xyz
+        merge_nodes = self.search()
+        self.graph.remove_merge_sites(merge_nodes)
+        return merge_nodes
 
-    def save_sites(self, merge_site_xyz):
+    def save_sites(self, merge_xyz_list):
         """
         Saves detected merge site coordinates to a zip file.
 
         Parameters
         ----------
-        merge_site_xyz : list
+        merge_xyz_list : list
             Physical coordinates of detected merge sites.
         """
         zip_path = os.path.join(self.output_dir, "detected_sites.zip")
         to_zipped_points(
             zip_path,
-            merge_site_xyz,
+            merge_xyz_list,
             color="1.0 0.0 0.0",
             prefix="merge-site",
             radius=10,
         )
-        print("# Sites Saved:", len(merge_site_xyz))
+        print("# Sites Saved:", len(merge_xyz_list))
 
     def save_parameters(self):
         pass
@@ -127,7 +126,6 @@ class MLMergeProofreader(MergeProofreader):
         output_dir,
         mode="dense",
         batch_size=16,
-        delete_merges=False,
         device="cuda",
         save_result=True,
         min_search_size=0,
@@ -153,9 +151,6 @@ class MLMergeProofreader(MergeProofreader):
             "sparse" restricts scoring to branching nodes. Default is "dense".
         batch_size : int, optional
             Number of patches per forward pass. Default is 16.
-        delete_merges : bool, optional
-            If True, removes detected merge sites from the graph after
-            detection. Default is False.
         device : str, optional
             Device on which to run inference. Default is "cuda".
         save_result : bool, optional
@@ -188,7 +183,6 @@ class MLMergeProofreader(MergeProofreader):
 
         # Instance attributes
         self.batch_size = batch_size
-        self.delete_merges = delete_merges
         self.device = device
         self.model = model
         self.mode = mode
@@ -205,16 +199,14 @@ class MLMergeProofreader(MergeProofreader):
         self.log("Search Graph...")
         merge_sites = self.search()
 
-        # Remove detected merge errors (if applicable)
-        if self.delete_merges:
-            self.graph.remove_merge_sites(merge_sites)
-
         # Report results
         t, unit = util.time_writer(time() - t0)
         self.log(f"# Detected Merges: {len(merge_sites)}")
         self.log(f"Module Runtime: {t:.2f} {unit}\n")
         if self.save_result:
             self.save(inplace=False)
+
+        return.merge_sites
 
     def search(self):
         # Detect merge errors with classification
@@ -456,7 +448,7 @@ class HighRiskMergeProofreader(MergeProofreader):
             somas_kdtree = KDTree(self.graph.node_xyz[soma_nodes])
 
         # Search branching nodes
-        merge_site_nodes = list()
+        merge_nodes = list()
         while branching_nodes:
             # Check if too close to soma
             root = branching_nodes.pop()
@@ -481,10 +473,10 @@ class HighRiskMergeProofreader(MergeProofreader):
 
             # Determine if likely merge and remove nbhd
             if hit_branching_nodes or self.graph.degree(root) > 3:
-                merge_site_nodes.append(root)
+                merge_nodes.append(root)
                 branching_nodes -= hit_branching_nodes
 
-        return merge_site_nodes
+        return merge_nodes
 
 
 class SomaMergeProofreader(MergeProofreader):
@@ -519,17 +511,17 @@ class SomaMergeProofreader(MergeProofreader):
         for i in self.graph.soma_nodes():
             component_id_to_soma_nodes[self.graph.node_component_id[i]].add(i)
 
-        merge_site_nodes = list()
+        merge_nodes = list()
         for soma_nodes in component_id_to_soma_nodes.values():
             if 1 < len(soma_nodes) < 20:
                 for i in self.graph.find_connecting_path(list(soma_nodes)):
                     dist, _ = somas_kdtree.query(self.graph.node_xyz[i])
                     if self.graph.degree[i] > 2 and dist > 25:
-                        merge_site_nodes.append(i)
+                        merge_nodes.append(i)
 
-        return merge_site_nodes
+        return merge_nodes
 
     def __call__(self):
-        xyz = super().__call__()
+        merge_nodes = super().__call__()
         self.graph.remove_small_components()
-        return xyz
+        return merge_nodes
