@@ -254,8 +254,7 @@ class ProofreadPipeline:
         self.log(f"# Merges Detected: {len(merge_nodes)}")
 
         if save_detections:
-            merge_sites = [self.graph.node_xyz[i] for i in merge_nodes]
-            proofreader.save_sites(merge_sites)
+            proofreader.save_sites(proofreader.merge_sites_xyz)
         if save_fragments:
             self._save_graph_to(step_output)
             proofreader.save_parameters()
