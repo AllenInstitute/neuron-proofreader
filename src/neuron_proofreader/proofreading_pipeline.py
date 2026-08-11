@@ -120,7 +120,7 @@ class ProofreadPipeline:
         min_threshold=0.8,
         removal_threshold=0.3,
         patch_shape=None,
-        save_result=True,
+        save_detections=True,
     ):
         # Run inference
         self.step_cnt += 1
@@ -144,7 +144,7 @@ class ProofreadPipeline:
         )
 
         # Save final graph
-        if save_result:
+        if save_detections:
             self.log("Final Graph...")
             self.log(self.graph.__repr__())
             self.reconfigure_node_radius()
@@ -156,7 +156,7 @@ class ProofreadPipeline:
         self.log(summary)
 
     # --- Merge Proofreading ---
-    def merge_proofreading(self, mode, save_result=True, save_swcs=False):
+    def merge_proofreading(self, mode, save_detections=True, save_fragments=False):
         """
         Runs rule-based merge proofreading.
 
@@ -164,10 +164,10 @@ class ProofreadPipeline:
         ----------
         mode : str
             Detection strategy. Options are "heuristic" and "connected_somas".
-        save_result : bool, optional
+        save_detections : bool, optional
             Indication of whether to save detected sites to disk. Default is
             True.
-        save_swcs : bool, optional
+        save_fragments : bool, optional
             If True, saves the corrected graph SWCs into the step directory.
             Default is False.
         """
@@ -188,10 +188,10 @@ class ProofreadPipeline:
         merge_nodes = proofreader()
         self.log(f"# Merges Detected: {len(merge_nodes)}")
 
-        if save_result:
+        if save_detections:
             merge_sites = [self.graph.node_xyz[i] for i in merge_nodes]
             proofreader.save_sites(merge_sites)
-        if save_swcs:
+        if save_fragments:
             self._save_graph_to(step_output)
             proofreader.save_parameters()
 
@@ -204,7 +204,7 @@ class ProofreadPipeline:
         min_search_size=0,
         patch_shape=None,
         prefetch=64,
-        save_result=True,
+        save_detections=True,
     ):
         """
         Runs learned merge detection using a CNN.
@@ -229,7 +229,7 @@ class ProofreadPipeline:
             Default is None (uses img_config.patch_shape).
         prefetch : int, optional
             Number of patches to prefetch. Default is 64.
-        save_result : bool, optional
+        save_detections : bool, optional
             If True, saves detection results to output_dir. Default is True.
         """
         self.step_cnt += 1
@@ -247,10 +247,18 @@ class ProofreadPipeline:
             min_search_size=min_search_size,
             prefetch=prefetch,
             threshold=threshold,
-            save_result=save_result,
+            save_detections=save_detections,
             log_handle=self.log_handle,
         )
-        proofreader()
+        merge_nodes = proofreader()
+        self.log(f"# Merges Detected: {len(merge_nodes)}")
+
+        if save_detections:
+            merge_sites = [self.graph.node_xyz[i] for i in merge_nodes]
+            proofreader.save_sites(merge_sites)
+        if save_fragments:
+            self._save_graph_to(step_output)
+            proofreader.save_parameters()
 
     # --- Helpers ---
     def log(self, txt):
