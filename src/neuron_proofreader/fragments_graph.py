@@ -9,8 +9,6 @@ a collection of neuron fragments and provides proofreading-specific operations.
 
 """
 
-from collections import defaultdict
-from scipy.spatial import KDTree
 from tqdm import tqdm
 
 import networkx as nx

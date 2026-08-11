@@ -206,7 +206,7 @@ class MLMergeProofreader(MergeProofreader):
         if self.save_result:
             self.save(inplace=False)
 
-        return.merge_sites
+        return merge_sites
 
     def search(self):
         # Detect merge errors with classification
