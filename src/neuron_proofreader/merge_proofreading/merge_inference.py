@@ -191,6 +191,7 @@ class MLMergeProofreader(MergeProofreader):
         self.patch_shape = self.dataset.patch_shape
         self.threshold = threshold
         self.visited_sites = list()
+        self.merge_sites_xyz = list()
 
     # --- Core ---
     def __call__(self):
@@ -198,6 +199,12 @@ class MLMergeProofreader(MergeProofreader):
         t0 = time()
         self.log("Search Graph...")
         merge_sites = self.search()
+
+        # Cache XYZ coords and save predictions before graph is modified
+        self.merge_sites_xyz = [self.graph.node_xyz[i].tolist() for i in merge_sites]
+        if self.save_result:
+            self.save_predictions()
+
         self.graph.remove_merge_sites(merge_sites)
 
         # Report results
@@ -205,7 +212,8 @@ class MLMergeProofreader(MergeProofreader):
         self.log(f"# Detected Merges: {len(merge_sites)}")
         self.log(f"Module Runtime: {t:.2f} {unit}\n")
         if self.save_result:
-            self.save(inplace=False)
+            self.save_fragment_predictions(inplace=False)
+            self.save_parameters()
 
         return merge_sites
 
