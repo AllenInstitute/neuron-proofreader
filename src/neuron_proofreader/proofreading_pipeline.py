@@ -248,7 +248,6 @@ class ProofreadPipeline:
             min_search_size=min_search_size,
             prefetch=prefetch,
             threshold=threshold,
-            save_detections=save_detections,
             log_handle=self.log_handle,
         )
         merge_nodes = proofreader()
