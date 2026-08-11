@@ -205,6 +205,7 @@ class ProofreadPipeline:
         patch_shape=None,
         prefetch=64,
         save_detections=True,
+        save_fragments=True,
     ):
         """
         Runs learned merge detection using a CNN.
