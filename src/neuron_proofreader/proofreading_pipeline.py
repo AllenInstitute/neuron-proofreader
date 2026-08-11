@@ -199,6 +199,7 @@ class ProofreadPipeline:
         mode,
         model,
         batch_size=16,
+        delete_merges=True,
         threshold=0.5,
         min_search_size=0,
         patch_shape=None,
@@ -217,6 +218,9 @@ class ProofreadPipeline:
             Trained model used to score candidate merge sites.
         batch_size : int, optional
             Number of patches per forward pass. Default is 16.
+        delete_merges : bool, optional
+            If True, removes detected merge sites from the graph after
+            detection. Default is True.
         threshold : float, optional
             Confidence threshold above which a site is flagged as a merge.
             Default is 0.5.
@@ -242,6 +246,7 @@ class ProofreadPipeline:
             step_output,
             mode=mode,
             batch_size=batch_size,
+            delete_merges=delete_merges,
             device=self.device,
             min_search_size=min_search_size,
             prefetch=prefetch,
