@@ -373,6 +373,9 @@ class ProposalGraph(FragmentsGraph):
         return np.array([dot_i, dot_j, dot_ij])
 
     def proposal_length(self, proposal):
+        """
+        Length of proposed edge.
+        """
         return self.dist(*tuple(proposal))
 
     def proposal_midpoint(self, proposal):
