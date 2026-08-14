@@ -136,15 +136,16 @@ class Trainer:
         print("\nExperiment:", exp_name)
         for epoch in range(self.max_epochs):
             # Train-Validate
-            print("\nEpoch", epoch)
+            
             train_stats = self.train_step(train_dataloader, epoch)
             val_stats = self.validate_step(val_dataloader, epoch)
             new_best = self.check_model_performance(val_stats, epoch)
 
             # Report reuslts
-            print("Results: " + ("New Best!" if new_best else " "))
+            print(f"Epoch {epoch} -", ("New Best!" if new_best else " "))
             self.report_stats(train_stats, is_train=True)
             self.report_stats(val_stats, is_train=False)
+            print()
 
             # Step scheduler
             self.scheduler.step()
@@ -515,7 +516,7 @@ class DistributedTrainer(Trainer):
             # Report results
             if rank == 0:
                 new_best = self.check_model_performance(val_stats, epoch)
-                print(f"\nEpoch {epoch}: ", "New Best!" if new_best else "")
+                print(f"Epoch {epoch}: ", "New Best!" if new_best else "")
                 self.report_stats(train_stats, is_train=True)
                 self.report_stats(val_stats, is_train=False)
 

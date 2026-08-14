@@ -150,10 +150,14 @@ class BinaryMetricAccumulator:
         precision = self.tp / (self.tp + self.fp + 1e-8)
         recall = self.tp / (self.tp + self.fn + 1e-8)
         f1 = 2 * precision * recall / (precision + recall + 1e-8)
+        tn = self.n - self.tp - self.fp - self.fn
+        specificity = tn / (tn + self.fp + 1e-8)
+        informedness = recall + specificity - 1
         return {
             "precision": precision,
             "recall": recall,
             "f1": f1,
+            "informedness": informedness,
             "loss": self.loss / max(self.n, 1),
         }
 
