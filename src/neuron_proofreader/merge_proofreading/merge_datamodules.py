@@ -61,7 +61,7 @@ class BrainDataset:
     """
 
     giant_component_cable_length = 30000
-    random_branching_site_probability = 0.25
+    random_branching_site_probability = 1.0 #0.70
 
     def __init__(
         self,
