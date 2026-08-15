@@ -128,7 +128,7 @@ class MLMergeProofreader(MergeProofreader):
         mode="dense",
         batch_size=16,
         device="cuda",
-        is_multimodal=False,
+        modality="image",
         save_result=True,
         min_search_size=0,
         prefetch=64,
@@ -179,7 +179,7 @@ class MLMergeProofreader(MergeProofreader):
         self.dataset = DatasetClass(
             graph,
             img_config,
-            is_multimodal=is_multimodal,
+            modality=modality,
             min_search_size=min_search_size,
             prefetch=prefetch,
         )
@@ -187,7 +187,7 @@ class MLMergeProofreader(MergeProofreader):
         # Instance attributes
         self.batch_size = batch_size
         self.device = device
-        self.is_multimodal = is_multimodal
+        self.modality = modality
         self.model = model
         self.mode = mode
         self.save_result = save_result
@@ -225,7 +225,7 @@ class MLMergeProofreader(MergeProofreader):
         # Detect merge errors with classification
         t0 = time()
         self.model.eval()
-        collate_fn = multimodal_collate if self.is_multimodal else None
+        collate_fn = multimodal_collate if self.modality != "image" else None
         dataloader = DataLoader(
             self.dataset, batch_size=self.batch_size, collate_fn=collate_fn
         )
@@ -396,7 +396,7 @@ class MLMergeProofreader(MergeProofreader):
         json_path = os.path.join(self.output_dir, "detection_parameters.json")
         parameters = {
             "accept_threshold": self.threshold,
-            "is_multimodal": self.dataset.is_multimodal,
+            "modality": self.dataset.modality,
             "min_search_size": self.dataset.min_size,
             "patch_shape": self.patch_shape,
             "search_mode": self.dataset.search_mode,

@@ -15,7 +15,7 @@ from neuron_proofreader.models.new_vision_models import CNN3D, ViT3D
 from neuron_proofreader.utils.ml_util import FeedForwardNet
 
 
-class MultimodalMergeModel(nn.Module):
+class ArboristVisionMergeModel(nn.Module):
     """
     Multimodal merge detector combining a 3D vision backbone with the Arborist
     morphology encoder.
@@ -38,10 +38,10 @@ class MultimodalMergeModel(nn.Module):
         input_shape,
         embed_dim=128,
         output_dim=1,
-        backbone="CNN3D",
+        vision_backbone="CNN3D",
         arborist_latent_dim=64,
         arborist_kwargs=None,
-        **backbone_kwargs,
+        **vision_backbone_kwargs,
     ):
         """
         Parameters
@@ -52,34 +52,34 @@ class MultimodalMergeModel(nn.Module):
             Output dimension of the vision backbone. Default is 128.
         output_dim : int, optional
             Output dimension of the classifier head. Default is 1.
-        backbone : str, optional
+        vision_backbone : str, optional
             Vision backbone to use: "CNN3D" or "ViT3D". Default is "CNN3D".
         arborist_latent_dim : int, optional
             Latent dimension passed to Arborist and the size of z_tree.
             Default is 64.
         arborist_kwargs : dict or None, optional
             Extra keyword arguments forwarded to Arborist.__init__.
-        **backbone_kwargs
-            Extra keyword arguments forwarded to the backbone constructor.
+        **vision_backbone_kwargs
+            Extra keyword arguments forwarded to the image backbone constructor.
         """
         super().__init__()
 
         self.config = {
-            "model_type": "MultimodalMergeModel",
+            "model_type": "ArboristVisionMergeModel",
             "input_shape": tuple(input_shape),
             "embed_dim": embed_dim,
             "output_dim": output_dim,
-            "backbone": backbone,
+            "vision_backbone": vision_backbone,
             "arborist_latent_dim": arborist_latent_dim,
             "arborist_kwargs": arborist_kwargs or {},
-            **backbone_kwargs,
+            **vision_backbone_kwargs,
         }
 
         # Vision backbone — shared image-patch encoder
-        if backbone == "ViT3D":
-            self.vision = ViT3D(input_shape, output_dim=embed_dim, **backbone_kwargs)
+        if vision_backbone == "ViT3D":
+            self.vision = ViT3D(input_shape, output_dim=embed_dim, **vision_backbone_kwargs)
         else:
-            self.vision = CNN3D(input_shape, output_dim=embed_dim, **backbone_kwargs)
+            self.vision = CNN3D(input_shape, output_dim=embed_dim, **vision_backbone_kwargs)
 
         # Arborist skeleton encoder — produces z_tree per subgraph
         self.arborist = Arborist(

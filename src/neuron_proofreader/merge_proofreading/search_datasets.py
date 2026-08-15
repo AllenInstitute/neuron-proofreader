@@ -50,7 +50,7 @@ class SearchDataset(IterableDataset, ABC):
         self,
         graph,
         img_config,
-        is_multimodal=False,
+        modality="image",
         min_search_size=0,
         prefetch=32,
         subgraph_radius=100,
@@ -60,14 +60,14 @@ class SearchDataset(IterableDataset, ABC):
 
         # Instance attributes
         self.graph = graph
-        self.is_multimodal = is_multimodal
+        self.modality = modality
         self.min_size = min_search_size
         self.patch_shape = img_config.patch_shape
         self.prefetch = prefetch
         self.subgraph_radius = subgraph_radius
 
         # Input getter
-        if is_multimodal:
+        if modality != "image":
             self.get_input = self.get_patch_and_arborist
         else:
             self.get_input = self.get_patch
@@ -201,7 +201,7 @@ class DenseSearchDataset(SearchDataset):
         self,
         graph,
         img_config,
-        is_multimodal=False,
+        modality="image",
         min_search_size=0,
         prefetch=64,
         step_size=40,
@@ -211,7 +211,7 @@ class DenseSearchDataset(SearchDataset):
         super().__init__(
             graph,
             img_config,
-            is_multimodal=is_multimodal,
+            modality=modality,
             min_search_size=min_search_size,
             prefetch=prefetch,
             subgraph_radius=subgraph_radius,
@@ -306,7 +306,7 @@ class SparseSearchDataset(SearchDataset):
         self,
         graph,
         img_config,
-        is_multimodal=False,
+        modality="image",
         min_search_size=0,
         prefetch=64,
         step_size=10,
@@ -316,7 +316,7 @@ class SparseSearchDataset(SearchDataset):
         super().__init__(
             graph,
             img_config,
-            is_multimodal=is_multimodal,
+            modality=modality,
             min_search_size=min_search_size,
             prefetch=prefetch,
             subgraph_radius=subgraph_radius,
