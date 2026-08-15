@@ -268,8 +268,8 @@ class Trainer:
         loss : torch.Tensor
             Computed loss value.
         """
-        x = x.to(self.device, non_blocking=True)
-        y = y.to(self.device, non_blocking=True)
+        x = x.to(self.device)
+        y = y.to(self.device)
         with torch.autocast(device_type="cuda", dtype=torch.float16):
             y_pred = self.model(x)
             loss = self.criterion(y_pred, y)
