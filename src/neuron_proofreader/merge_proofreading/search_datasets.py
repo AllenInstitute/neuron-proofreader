@@ -24,6 +24,23 @@ from neuron_proofreader.machine_learning.image_dataloader import (
     DetectionPatchLoader,
 )
 from neuron_proofreader.utils import img_util, util
+from neuron_proofreader.utils.graph_util import subgraph_to_tree_sample
+
+
+def multimodal_collate(batch):
+    """
+    Collate a batch of (node, img_patch, tree_sample) tuples produced by
+    get_patch_and_arborist.
+
+    Returns
+    -------
+    tuple
+        (nodes_tensor, {"img": img_batch, "tree_sample": list_of_TreeSamples})
+    """
+    nodes = torch.tensor([b[0] for b in batch])
+    imgs = torch.stack([b[1] for b in batch])
+    tree_samples = [b[2] for b in batch]
+    return nodes, {"img": imgs, "tree_sample": tree_samples}
 
 
 # --- Datasets ---
@@ -33,7 +50,7 @@ class SearchDataset(IterableDataset, ABC):
         self,
         graph,
         img_config,
-        is_multimodal=False,
+        modality="image",
         min_search_size=0,
         prefetch=32,
         subgraph_radius=100,
@@ -43,15 +60,15 @@ class SearchDataset(IterableDataset, ABC):
 
         # Instance attributes
         self.graph = graph
-        self.is_multimodal = is_multimodal
+        self.modality = modality
         self.min_size = min_search_size
         self.patch_shape = img_config.patch_shape
         self.prefetch = prefetch
         self.subgraph_radius = subgraph_radius
 
         # Input getter
-        if is_multimodal:
-            self.get_input = self.get_patch_and_pointcloud
+        if modality != "image":
+            self.get_input = self.get_patch_and_arborist
         else:
             self.get_input = self.get_patch
 
@@ -184,7 +201,7 @@ class DenseSearchDataset(SearchDataset):
         self,
         graph,
         img_config,
-        is_multimodal=False,
+        modality="image",
         min_search_size=0,
         prefetch=64,
         step_size=40,
@@ -194,7 +211,7 @@ class DenseSearchDataset(SearchDataset):
         super().__init__(
             graph,
             img_config,
-            is_multimodal=is_multimodal,
+            modality=modality,
             min_search_size=min_search_size,
             prefetch=prefetch,
             subgraph_radius=subgraph_radius,
@@ -254,8 +271,16 @@ class DenseSearchDataset(SearchDataset):
             s = img_util.get_slices(center, self.patch_shape)
             yield node, img[(slice(0, 2), *s)]
 
-    def generate_patch_and_pc(self, nodes, img, offset):
-        pass
+    def get_patch_and_arborist(self, nodes, img, offset):
+        img = torch.from_numpy(img).float()
+        voxels = np.array([self.node_voxel(i) for i in nodes], dtype=int)
+        tile_shape = np.array(img.shape[1:])
+        for node, center in zip(nodes, voxels - offset):
+            s = img_util.get_slices(center, self.patch_shape)
+            patch = img[(slice(0, 2), *s)]
+            subgraph = self.graph.rooted_subgraph(node, self.subgraph_radius)
+            tree_sample = subgraph_to_tree_sample(subgraph, node)
+            yield node, patch, tree_sample
 
     # --- Helpers ---
     def estimate_iterations(self):
@@ -281,7 +306,7 @@ class SparseSearchDataset(SearchDataset):
         self,
         graph,
         img_config,
-        is_multimodal=False,
+        modality="image",
         min_search_size=0,
         prefetch=64,
         step_size=10,
@@ -291,7 +316,7 @@ class SparseSearchDataset(SearchDataset):
         super().__init__(
             graph,
             img_config,
-            is_multimodal=is_multimodal,
+            modality=modality,
             min_search_size=min_search_size,
             prefetch=prefetch,
             subgraph_radius=subgraph_radius,
@@ -313,3 +338,9 @@ class SparseSearchDataset(SearchDataset):
 
     def get_patch(self, node, img):
         yield node, torch.from_numpy(img).float()
+
+    def get_patch_and_arborist(self, node, img):
+        patch = torch.from_numpy(img).float()
+        subgraph = self.graph.rooted_subgraph(node, self.subgraph_radius)
+        tree_sample = subgraph_to_tree_sample(subgraph, node)
+        yield node, patch, tree_sample

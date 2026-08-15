@@ -39,6 +39,7 @@ from arborist.utils.swc_loading import to_zipped_points
 from neuron_proofreader.merge_proofreading.search_datasets import (
     DenseSearchDataset,
     SparseSearchDataset,
+    multimodal_collate,
 )
 from neuron_proofreader.utils import img_util, util
 
@@ -127,6 +128,7 @@ class MLMergeProofreader(MergeProofreader):
         mode="dense",
         batch_size=16,
         device="cuda",
+        modality="image",
         save_result=True,
         min_search_size=0,
         prefetch=64,
@@ -177,6 +179,7 @@ class MLMergeProofreader(MergeProofreader):
         self.dataset = DatasetClass(
             graph,
             img_config,
+            modality=modality,
             min_search_size=min_search_size,
             prefetch=prefetch,
         )
@@ -184,6 +187,7 @@ class MLMergeProofreader(MergeProofreader):
         # Instance attributes
         self.batch_size = batch_size
         self.device = device
+        self.modality = modality
         self.model = model
         self.mode = mode
         self.save_result = save_result
@@ -221,7 +225,10 @@ class MLMergeProofreader(MergeProofreader):
         # Detect merge errors with classification
         t0 = time()
         self.model.eval()
-        dataloader = DataLoader(self.dataset, batch_size=self.batch_size)
+        collate_fn = multimodal_collate if self.modality != "image" else None
+        dataloader = DataLoader(
+            self.dataset, batch_size=self.batch_size, collate_fn=collate_fn
+        )
         pbar = tqdm(total=self.dataset.estimate_iterations())
         for nodes, x_nodes in dataloader:
             self.node_preds[np.array(nodes)] = self.predict(x_nodes)
@@ -253,9 +260,10 @@ class MLMergeProofreader(MergeProofreader):
 
         Parameters
         ----------
-        x : torch.Tensor
-            Node features with shape Nx2xMxMxM, where N is the number of nodes
-            and MxMxM is the patch shape.
+        x : torch.Tensor or dict
+            For unimodal models: tensor of shape (N, 2, M, M, M).
+            For multimodal models: dict with keys "img" (tensor) and
+            "tree_sample" (List[TreeSample]).
 
         Returns
         -------
@@ -263,7 +271,13 @@ class MLMergeProofreader(MergeProofreader):
             Predicted merge site likelihoods.
         """
         with torch.inference_mode():
-            x = x.to(self.device)
+            if isinstance(x, dict):
+                x = {
+                    k: v.to(self.device) if torch.is_tensor(v) else v
+                    for k, v in x.items()
+                }
+            else:
+                x = x.to(self.device)
             y = sigmoid(self.model(x))
             y = y.detach().cpu().numpy()
             return np.squeeze(y, axis=1)
@@ -382,7 +396,7 @@ class MLMergeProofreader(MergeProofreader):
         json_path = os.path.join(self.output_dir, "detection_parameters.json")
         parameters = {
             "accept_threshold": self.threshold,
-            "is_multimodal": self.dataset.is_multimodal,
+            "modality": self.dataset.modality,
             "min_search_size": self.dataset.min_size,
             "patch_shape": self.patch_shape,
             "search_mode": self.dataset.search_mode,

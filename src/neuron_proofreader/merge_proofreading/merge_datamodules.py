@@ -38,13 +38,13 @@ import torch
 from neuron_proofreader.machine_learning.image_dataloader import (
     DetectionPatchLoader as PatchLoader,
 )
-# TODO: import subgraph_to_data from arborist once installed
 from neuron_proofreader.models.point_cloud_models import (
     subgraph_to_point_cloud,
 )
 from neuron_proofreader.fragments_graph import FragmentsGraph
 from arborist.utils.swc_loading import Reader
 from neuron_proofreader.utils import ml_util, util
+from neuron_proofreader.utils.graph_util import subgraph_to_tree_sample
 
 
 # -- Datasets ---
@@ -402,14 +402,13 @@ class BrainDatasetCollection(Dataset):
 # --- DataLoader ---
 class ThreadedDataLoader(DataLoader):
 
-    _VALID_MODALITIES = {None, "graph", "pointcloud"}
+    _VALID_MODALITIES = {"image", "graph", "image_graph", "pointcloud"}
 
     def __init__(
         self,
         dataset,
         batch_size=32,
-        is_multimodal=False,
-        modality=None,
+        modality="image",
         sampler=None,
         shuffle=True,
         prefetch=32,
@@ -425,7 +424,6 @@ class ThreadedDataLoader(DataLoader):
         super().__init__(dataset, batch_size=batch_size, sampler=sampler)
 
         # Instance attributes
-        self.is_multimodal = is_multimodal
         self.modality = modality
         self.shuffle = shuffle
         self.prefetch = prefetch
@@ -444,9 +442,11 @@ class ThreadedDataLoader(DataLoader):
             ]
 
         def assemble_batch(futures):
-            if self.is_multimodal and self.modality == "graph":
+            if self.modality == "graph":
                 return self._assemble_graph_batch(futures)
-            elif self.is_multimodal and self.modality == "pointcloud":
+            elif self.modality == "image_graph":
+                return self._assemble_image_graph_batch(futures)
+            elif self.modality == "pointcloud":
                 return self._assemble_pointcloud_batch(futures)
             else:
                 return self._assemble_image_batch(futures)
@@ -488,6 +488,41 @@ class ThreadedDataLoader(DataLoader):
             i = future_to_idx[future]
             x[i], _, y[i] = future.result()
         return torch.from_numpy(x).pin_memory(), torch.from_numpy(y).pin_memory()
+
+    def _assemble_graph_batch(self, futures):
+        n = len(futures)
+        y = self._y_buf[:n]
+        future_to_idx = {f: i for i, f in enumerate(futures)}
+
+        subgraphs = {}
+        for future in as_completed(futures):
+            i = future_to_idx[future]
+            _, subgraphs[i], y[i] = future.result()
+
+        # rooted_subgraph always remaps the root to node 0
+        tree_samples = [subgraph_to_tree_sample(subgraphs[i], 0) for i in range(n)]
+        return tree_samples, torch.from_numpy(y).pin_memory()
+
+    def _assemble_image_graph_batch(self, futures):
+        n = len(futures)
+        imgs = self._x_buf[:n]
+        y = self._y_buf[:n]
+        future_to_idx = {f: i for i, f in enumerate(futures)}
+
+        subgraphs = {}
+        for future in as_completed(futures):
+            i = future_to_idx[future]
+            imgs[i], subgraphs[i], y[i] = future.result()
+
+        # rooted_subgraph always remaps the root to node 0
+        tree_samples = [subgraph_to_tree_sample(subgraphs[i], 0) for i in range(n)]
+        batch = ml_util.TensorDict(
+            {
+                "img": torch.from_numpy(imgs).pin_memory(),
+                "tree_sample": tree_samples,
+            }
+        )
+        return batch, torch.from_numpy(y).pin_memory()
 
     def _load_image_pc_batch(self, batch_idxs):
         """
