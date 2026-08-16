@@ -16,7 +16,6 @@ from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data.distributed import DistributedSampler
-from tqdm import tqdm
 
 import os
 import torch
@@ -66,12 +65,12 @@ class Trainer:
         output_dir,
         device="cuda",
         exp_name=None,
-        lr=1e-3,
+        lr=1e-4,
         max_epochs=200,
         min_recall=0,
+        pos_weight=None,
         save_mistake_mips=False,
         threshold_metrics=0.5,
-        verbose=False,
     ):
         """
         Instantiates a Trainer object.
@@ -85,12 +84,16 @@ class Trainer:
         output_dir : str
             Directory that tensorboard and model checkpoints are written to.
         lr : float, optional
-            Learning rate. Default is 1e-3.
+            Learning rate. Default is 1e-4.
         max_epochs : int, optional
             Maximum number of training epochs. Default is 200.
         min_recall : float, optional
             Minimum recall required for model checkpoints to be saved. Default
             is 0.
+        pos_weight : float or None, optional
+            Weight applied to the positive class in BCEWithLogitsLoss. Values
+            greater than 1 increase recall at the cost of precision. Default
+            is None (no reweighting).
         save_mistake_mips : bool, optional
             Indication of whether to save MIPs of mistakes. Default is False.
         """
@@ -110,9 +113,9 @@ class Trainer:
         self.model_name = model_name
         self.save_mistake_mips = save_mistake_mips
         self.threshold_metrics = threshold_metrics
-        self.verbose = verbose
 
-        self.criterion = nn.BCEWithLogitsLoss()
+        pw = torch.tensor([pos_weight], device=device) if pos_weight is not None else None
+        self.criterion = nn.BCEWithLogitsLoss(pos_weight=pw)
         self.model = torch.compile(model.to(device), backend="eager")
         self.optimizer = optim.AdamW(self.model.parameters(), lr=lr)
         self.scaler = torch.cuda.amp.GradScaler(enabled=True)
@@ -142,112 +145,71 @@ class Trainer:
             new_best = self.check_model_performance(val_stats, epoch)
 
             # Report reuslts
-            print(f"Epoch {epoch} -", ("New Best!" if new_best else " "))
+            print(f"\nEpoch {epoch}", ("- New Best!" if new_best else " "))
             self.report_stats(train_stats, is_train=True)
             self.report_stats(val_stats, is_train=False)
-            print()
 
             # Step scheduler
             self.scheduler.step()
 
     def train_step(self, dataloader, epoch):
-        """
-        Performs a single training epoch over the provided DataLoader.
-
-        Parameters
-        ----------
-        dataloader : torch.utils.data.DataLoader
-            DataLoader for the training dataset.
-        epoch : int
-            Current training epoch.
-
-        Returns
-        -------
-        stats : Dict[str, float]
-            Dictionary of aggregated training metrics.
-        """
-        # Create progress bar (if applicable)
-        if self.verbose:
-            pbar = tqdm(total=len(dataloader), desc="Train")
-
-        # Iterate over dataset
-        self.model.train()
-        metrics = ml_util.BinaryMetricAccumulator()
-        for x, y in dataloader:
-            # Forward and backward pass
-            self.optimizer.zero_grad(set_to_none=True)
-            y, y_pred, loss = self.forward_pass(x, y)
-            self.scaler.scale(loss).backward()
-
-            # Step optimizer
-            self.scaler.unscale_(self.optimizer)
-            clip_grad_norm_(self.model.parameters(), max_norm=5.0)
-            self.scaler.step(self.optimizer)
-            self.scaler.update()
-
-            # Compute metrics
-            y_pred = sigmoid(y_pred) >= self.threshold_metrics
-            metrics.update(y_pred, y, loss)
-
-            # Update progress bar
-            if self.verbose:
-                pbar.update(1)
-
-        # Write stats to tensorboard
-        stats = metrics.compute()
-        self.update_tensorboard(stats, epoch, "train_")
-        return stats
+        return self._run_epoch(dataloader, epoch, train=True)
 
     def validate_step(self, dataloader, epoch):
+        return self._run_epoch(dataloader, epoch, train=False)
+
+    def _run_epoch(self, dataloader, epoch, train):
         """
-        Performs a full validation loop over the given dataloader.
+        Shared train/validation loop.
 
         Parameters
         ----------
         dataloader : torch.utils.data.DataLoader
-            DataLoader for the validation dataset.
+            DataLoader for the dataset.
         epoch : int
-            Current training epoch.
+            Current epoch index.
+        train : bool
+            If True, runs in training mode with optimizer steps.
+            If False, runs in eval mode with inference_mode.
 
         Returns
         -------
         stats : Dict[str, float]
-            Dictionary of aggregated validation metrics.
-        is_best : bool
-            True if the current F1 score is the best so far.
+            Dictionary of aggregated metrics for the epoch.
         """
-        # Create progress bar (if applicable)
-        if self.verbose:
-            pbar = tqdm(total=len(dataloader), desc="Val")
-
-        # Check whether to save MIPs
+        prefix = "train_" if train else "val_"
         idx_offset = 0
-        if self.save_mistake_mips:
-            util.mkdir(self.mistakes_dir, True)
 
-        # Iterate over dataset
-        self.model.eval()
+        if train:
+            self.model.train()
+        else:
+            self.model.eval()
+            if self.save_mistake_mips:
+                util.mkdir(self.mistakes_dir, True)
+
         metrics = ml_util.BinaryMetricAccumulator()
         for x, y in dataloader:
-            # Run model
-            with torch.inference_mode():
+            if train:
+                self.optimizer.zero_grad(set_to_none=True)
                 y, y_pred, loss = self.forward_pass(x, y)
+                self.scaler.scale(loss).backward()
+                self.scaler.unscale_(self.optimizer)
+                clip_grad_norm_(self.model.parameters(), max_norm=5.0)
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                with torch.inference_mode():
+                    y, y_pred, loss = self.forward_pass(x, y)
 
-            # Compute metrics
             y_pred = sigmoid(y_pred) >= self.threshold_metrics
             metrics.update(y_pred, y, loss)
 
-            # Save MIPs of mistakes
-            self._save_mistake_mips(x, y, y_pred, idx_offset)
-            idx_offset += len(y)
+            if not train:
+                self._save_mistake_mips(x, y, y_pred, idx_offset)
+                idx_offset += len(y)
 
-            # Update progress bar
-            if self.verbose:
-                pbar.update(1)
-
-        # Write stats to tensorboard
         stats = metrics.compute()
-        self.update_tensorboard(stats, epoch, "val_")
+        self.update_tensorboard(stats, epoch, prefix)
         return stats
 
     def forward_pass(self, x, y):
@@ -406,6 +368,7 @@ class DistributedTrainer(Trainer):
         device="cuda",
         lr=1e-3,
         max_epochs=200,
+        pos_weight=None,
         save_mistake_mips=False,
     ):
         """
@@ -423,6 +386,9 @@ class DistributedTrainer(Trainer):
             Learning rate. Default is 1e-3.
         max_epochs : int, optional
             Maximum number of training epochs. Default is 200.
+        pos_weight : float or None, optional
+            Weight applied to the positive class in BCEWithLogitsLoss. Default
+            is None (no reweighting).
         """
         # Call parent class
         super().__init__(
@@ -432,6 +398,7 @@ class DistributedTrainer(Trainer):
             device=device,
             lr=lr,
             max_epochs=max_epochs,
+            pos_weight=pos_weight,
             save_mistake_mips=save_mistake_mips,
         )
 

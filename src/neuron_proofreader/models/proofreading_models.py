@@ -100,6 +100,11 @@ class ArboristVisionMergeModel(nn.Module):
         model.load_state_dict(ckpt["state_dict"])
         return model
 
+    @torch._dynamo.disable
+    def _encode_tree_samples(self, tree_samples, device):
+        z_trees = [self.arborist.encode(s)[0] for s in tree_samples]
+        return torch.stack(z_trees).to(device)
+
     def forward(self, x):
         imgs = x["img"]                  # (B, C, D, H, W)
         tree_samples = x["tree_sample"]  # List[TreeSample], length B
@@ -107,8 +112,8 @@ class ArboristVisionMergeModel(nn.Module):
         # Vision embeddings — single batched forward pass
         z_img = self.vision(imgs)        # (B, embed_dim)
 
-        # Arborist embeddings — sequential; model processes one sample at a time
-        z_trees = [self.arborist.encode(s)[0] for s in tree_samples]
-        z_tree = torch.stack(z_trees).to(z_img.device)  # (B, arborist_latent_dim)
+        # Arborist embeddings — excluded from compilation; variable-length tree
+        # samples cannot be statically shaped for torch.compile
+        z_tree = self._encode_tree_samples(tree_samples, z_img.device)
 
         return self.head(torch.cat([z_img, z_tree], dim=1))
