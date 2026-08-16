@@ -39,8 +39,10 @@ class ArboristVisionMergeModel(nn.Module):
         embed_dim=128,
         output_dim=1,
         vision_backbone="CNN3D",
-        arborist_latent_dim=64,
+        arborist_latent_dim=32,
         arborist_kwargs=None,
+        pretrained_curve_encoder_path=None,
+        freeze_curve_encoder=False,
         **vision_backbone_kwargs,
     ):
         """
@@ -56,13 +58,24 @@ class ArboristVisionMergeModel(nn.Module):
             Vision backbone to use: "CNN3D" or "ViT3D". Default is "CNN3D".
         arborist_latent_dim : int, optional
             Latent dimension passed to Arborist and the size of z_tree.
-            Default is 64.
+            Default is 32.
         arborist_kwargs : dict or None, optional
-            Extra keyword arguments forwarded to Arborist.__init__.
+            Extra keyword arguments forwarded to Arborist.__init__. Defaults
+            match the graph-only MergeDetector: d_ff_curve=512, d_ff_graph=64.
+        pretrained_curve_encoder_path : str or None, optional
+            Path to a curve autoencoder checkpoint. If given, the encoder
+            weights are extracted and loaded into Arborist.curve_encoder.
+        freeze_curve_encoder : bool, optional
+            If True, freeze the curve encoder after loading pretrained weights.
+            Default is False.
         **vision_backbone_kwargs
             Extra keyword arguments forwarded to the image backbone constructor.
         """
         super().__init__()
+
+        # Merge caller-supplied arborist kwargs on top of graph-model defaults
+        _arborist_kwargs = {"d_ff_curve": 512, "d_ff_graph": 64}
+        _arborist_kwargs.update(arborist_kwargs or {})
 
         self.config = {
             "model_type": "ArboristVisionMergeModel",
@@ -71,7 +84,7 @@ class ArboristVisionMergeModel(nn.Module):
             "output_dim": output_dim,
             "vision_backbone": vision_backbone,
             "arborist_latent_dim": arborist_latent_dim,
-            "arborist_kwargs": arborist_kwargs or {},
+            "arborist_kwargs": _arborist_kwargs,
             **vision_backbone_kwargs,
         }
 
@@ -82,12 +95,26 @@ class ArboristVisionMergeModel(nn.Module):
             self.vision = CNN3D(input_shape, output_dim=embed_dim, **vision_backbone_kwargs)
 
         # Arborist skeleton encoder — produces z_tree per subgraph
-        self.arborist = Arborist(
-            latent_dim=arborist_latent_dim, **(arborist_kwargs or {})
-        )
+        self.arborist = Arborist(latent_dim=arborist_latent_dim, **_arborist_kwargs)
+
+        # Load pre-trained curve encoder weights if provided
+        if pretrained_curve_encoder_path:
+            self._load_curve_encoder(pretrained_curve_encoder_path)
+        if freeze_curve_encoder:
+            for p in self.arborist.curve_encoder.parameters():
+                p.requires_grad_(False)
 
         # Fusion classification head
         self.head = FeedForwardNet(embed_dim + arborist_latent_dim, output_dim, 3)
+
+    def _load_curve_encoder(self, path):
+        ckpt = torch.load(path, map_location="cpu")
+        encoder_state = {
+            k[len("encoder."):]: v
+            for k, v in ckpt["model_state_dict"].items()
+            if k.startswith("encoder.")
+        }
+        self.arborist.curve_encoder.load_state_dict(encoder_state)
 
     def save(self, path):
         torch.save({"config": self.config, "state_dict": self.state_dict()}, path)

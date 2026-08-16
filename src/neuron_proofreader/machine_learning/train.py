@@ -218,8 +218,9 @@ class Trainer:
 
         Parameters
         ----------
-        x : torch.Tensor
-            Input tensor with shape (B, 2, D, H, W).
+        x : torch.Tensor or dict
+            Either a tensor of shape (B, 2, D, H, W) or a dict with at least
+            an "img" key (for multimodal models).
         y : torch.Tensor
             Ground truth labels with shape (B, 1).
 
@@ -230,7 +231,11 @@ class Trainer:
         loss : torch.Tensor
             Computed loss value.
         """
-        x = x.to(self.device)
+        if isinstance(x, dict):
+            x = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v
+                 for k, v in x.items()}
+        else:
+            x = x.to(self.device)
         y = y.to(self.device)
         with torch.autocast(device_type="cuda", dtype=torch.float16):
             y_pred = self.model(x)
