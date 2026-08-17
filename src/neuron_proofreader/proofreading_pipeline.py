@@ -156,7 +156,9 @@ class ProofreadPipeline:
         self.log(summary)
 
     # --- Merge Proofreading ---
-    def merge_proofreading(self, mode, save_detections=True, save_fragments=False):
+    def merge_proofreading(
+        self, mode, save_detections=True, save_fragments=False
+    ):
         """
         Runs rule-based merge proofreading.
 

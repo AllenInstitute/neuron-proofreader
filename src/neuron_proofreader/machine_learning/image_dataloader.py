@@ -19,10 +19,10 @@ from neuron_proofreader.machine_learning.image_augmentation import (
 )
 from neuron_proofreader.utils import geometry_util, img_util, util
 
-
 # ----------------------------------------------------------------------------
 #  Image Class
 # ----------------------------------------------------------------------------
+
 
 class TensorStoreImage:
     """
@@ -199,7 +199,9 @@ class PatchLoader(ABC):
         """
         patch = self.img.read(center, shape)
         patch = np.minimum(patch, self.brightness_clip)
-        return img_util.normalize(patch, percentiles=self.percentiles).astype(np.float32)
+        return img_util.normalize(patch, percentiles=self.percentiles).astype(
+            np.float32
+        )
 
     # --- Helpers ---
     def __getattr__(self, name):

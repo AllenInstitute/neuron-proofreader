@@ -12,6 +12,7 @@ models.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from sklearn.metrics import roc_auc_score
 
 
 # --- Architectures ---
@@ -131,9 +132,11 @@ class BinaryMetricAccumulator:
         self.fn = 0
         self.loss = 0.0
         self.n = 0
+        self.all_scores = []
+        self.all_labels = []
 
     @torch.no_grad()
-    def update(self, pred, y, loss):
+    def update(self, pred, y, loss, scores=None):
         pred = pred.bool()
         y = y.bool()
 
@@ -144,6 +147,10 @@ class BinaryMetricAccumulator:
         self.loss += loss.item()
         self.n += y.numel()
 
+        if scores is not None:
+            self.all_scores.append(scores.float().cpu().flatten())
+            self.all_labels.append(y.cpu().flatten())
+
         del pred, y, loss
 
     def compute(self):
@@ -153,13 +160,22 @@ class BinaryMetricAccumulator:
         tn = self.n - self.tp - self.fp - self.fn
         specificity = tn / (tn + self.fp + 1e-8)
         informedness = recall + specificity - 1
-        return {
+
+        stats = {
             "precision": precision,
             "recall": recall,
             "f1": f1,
             "informedness": informedness,
             "loss": self.loss / max(self.n, 1),
         }
+
+        if self.all_scores:
+            scores = torch.cat(self.all_scores).numpy()
+            labels = torch.cat(self.all_labels).numpy()
+            if labels.min() < labels.max():
+                stats["auc"] = roc_auc_score(labels, scores)
+
+        return stats
 
 
 # --- Data Structures ---
@@ -245,6 +261,7 @@ def find_max_eval_batch_size(
     max_batch_size : int
         Largest batch size that ran successfully.
     """
+
     def fits(batch_size):
         try:
             x = torch.zeros((batch_size, *input_shape), device=device)

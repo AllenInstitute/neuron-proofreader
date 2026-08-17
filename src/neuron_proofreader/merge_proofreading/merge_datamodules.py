@@ -61,7 +61,7 @@ class BrainDataset:
     """
 
     giant_component_cable_length = 30000
-    random_branching_site_probability = 1.0 #0.70
+    random_branching_site_probability = 1.0  # 0.70
 
     def __init__(
         self,
@@ -430,7 +430,9 @@ class ThreadedDataLoader(DataLoader):
         self.img_shape = (2,) + dataset.datasets[0].patch_loader.patch_shape
 
         # Pre-allocated buffers (reused each batch to avoid repeated malloc)
-        self._x_buf = np.empty((batch_size,) + self.img_shape, dtype=np.float32)
+        self._x_buf = np.empty(
+            (batch_size,) + self.img_shape, dtype=np.float32
+        )
         self._y_buf = np.empty((batch_size, 1), dtype=np.float32)
 
     def __iter__(self):
@@ -452,7 +454,9 @@ class ThreadedDataLoader(DataLoader):
                 return self._assemble_image_batch(futures)
 
         # Main
-        with ThreadPoolExecutor(max_workers=min(32, self.prefetch)) as executor:
+        with ThreadPoolExecutor(
+            max_workers=min(32, self.prefetch)
+        ) as executor:
             # Start prefetching
             batch_iter = self.create_batch_iter()
             pending_batches = deque()
@@ -471,9 +475,7 @@ class ThreadedDataLoader(DataLoader):
                 # Submit new batch
                 try:
                     batch_idxs = next(batch_iter)
-                    pending_batches.append(
-                        submit_batch(executor, batch_idxs)
-                    )
+                    pending_batches.append(submit_batch(executor, batch_idxs))
                 except StopIteration:
                     pass
 
@@ -487,7 +489,10 @@ class ThreadedDataLoader(DataLoader):
         for future in as_completed(futures):
             i = future_to_idx[future]
             x[i], _, y[i] = future.result()
-        return torch.from_numpy(x).pin_memory(), torch.from_numpy(y).pin_memory()
+        return (
+            torch.from_numpy(x).pin_memory(),
+            torch.from_numpy(y).pin_memory(),
+        )
 
     def _assemble_graph_batch(self, futures):
         n = len(futures)
@@ -500,7 +505,9 @@ class ThreadedDataLoader(DataLoader):
             _, subgraphs[i], y[i] = future.result()
 
         # rooted_subgraph always remaps the root to node 0
-        tree_samples = [subgraph_to_tree_sample(subgraphs[i], 0) for i in range(n)]
+        tree_samples = [
+            subgraph_to_tree_sample(subgraphs[i], 0) for i in range(n)
+        ]
         return tree_samples, torch.from_numpy(y).pin_memory()
 
     def _assemble_image_graph_batch(self, futures):
@@ -515,7 +522,9 @@ class ThreadedDataLoader(DataLoader):
             imgs[i], subgraphs[i], y[i] = future.result()
 
         # rooted_subgraph always remaps the root to node 0
-        tree_samples = [subgraph_to_tree_sample(subgraphs[i], 0) for i in range(n)]
+        tree_samples = [
+            subgraph_to_tree_sample(subgraphs[i], 0) for i in range(n)
+        ]
         batch = ml_util.TensorDict(
             {
                 "img": torch.from_numpy(imgs).pin_memory(),
@@ -630,7 +639,7 @@ class ThreadedDataLoader(DataLoader):
 
         # Form groups
         batch_idx_groups = [
-            idxs[start:min(start + self.batch_size, len(idxs))]
+            idxs[start : min(start + self.batch_size, len(idxs))]
             for start in range(0, len(idxs), self.batch_size)
         ]
         return iter(batch_idx_groups)
