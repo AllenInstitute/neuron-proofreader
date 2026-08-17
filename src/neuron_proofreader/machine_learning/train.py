@@ -201,8 +201,8 @@ class Trainer:
                 with torch.inference_mode():
                     y, y_pred, loss = self.forward_pass(x, y)
 
-            y_pred = sigmoid(y_pred) >= self.threshold_metrics
-            metrics.update(y_pred, y, loss)
+            scores = sigmoid(y_pred)
+            metrics.update(scores >= self.threshold_metrics, y, loss, scores=scores)
 
             if not train:
                 self._save_mistake_mips(x, y, y_pred, idx_offset)
