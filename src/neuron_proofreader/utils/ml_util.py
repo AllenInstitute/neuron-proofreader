@@ -261,6 +261,7 @@ def find_max_eval_batch_size(
     max_batch_size : int
         Largest batch size that ran successfully.
     """
+
     def fits(batch_size):
         try:
             x = torch.zeros((batch_size, *input_shape), device=device)

@@ -11,6 +11,8 @@ NeuronProofreader pipelines.
 
 from functools import partial
 
+import json
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -73,7 +75,9 @@ class CNN3D(nn.Module):
         # Encoder
         self.drop = nn.Dropout(dropout)
         self.encode = Encoder3D(
-            input_shape[0], base_channels, depth,
+            input_shape[0],
+            base_channels,
+            depth,
             block_type=block_type,
             channel_multiplier=channel_multiplier,
             max_channels=max_channels,
@@ -83,11 +87,17 @@ class CNN3D(nn.Module):
 
         # Output
         self.pool_stage_idxs = pool_stage_idxs
-        stage_channels = [self.encode.blocks[i].out_channels for i in pool_stage_idxs]
-        self.center_pools = nn.ModuleList([
-            CenterWeightedPool3D(sigma=center_pool_sigma, learnable=learnable_center_sigma)
-            for _ in stage_channels
-        ])
+        stage_channels = [
+            self.encode.blocks[i].out_channels for i in pool_stage_idxs
+        ]
+        self.center_pools = nn.ModuleList(
+            [
+                CenterWeightedPool3D(
+                    sigma=center_pool_sigma, learnable=learnable_center_sigma
+                )
+                for _ in stage_channels
+            ]
+        )
 
         total_dim = sum(c * 2 for c in stage_channels)
         self.output = FeedForwardNet(total_dim, output_dim, 3)
@@ -98,7 +108,9 @@ class CNN3D(nn.Module):
         """
         Reverse-lookup a block class/partial against BLOCK_REGISTRY.
         """
-        target = block_type.func if isinstance(block_type, partial) else block_type
+        target = (
+            block_type.func if isinstance(block_type, partial) else block_type
+        )
         for name, cls in BLOCK_REGISTRY.items():
             if cls is target:
                 return name
@@ -116,7 +128,9 @@ class CNN3D(nn.Module):
         path : str
             Destination path, e.g. "model.pt".
         """
-        torch.save({"config": self.config, "state_dict": self.state_dict()}, path)
+        torch.save(
+            {"config": self.config, "state_dict": self.state_dict()}, path
+        )
 
     @classmethod
     def load(cls, path, map_location=None, config=None):
@@ -143,15 +157,15 @@ class CNN3D(nn.Module):
         CNN3D
             Model with architecture and weights matching the checkpoint.
         """
-        import json, os
-
         ckpt = torch.load(path, map_location=map_location)
         if isinstance(ckpt, dict) and "config" in ckpt:
             model = cls(**ckpt["config"])
             model.load_state_dict(ckpt["state_dict"])
         else:
             if config is None:
-                config_path = os.path.join(os.path.dirname(os.path.dirname(path)), "model_config.json")
+                config_path = os.path.join(
+                    os.path.dirname(os.path.dirname(path)), "model_config.json"
+                )
                 with open(config_path) as f:
                     config = json.load(f)
             elif isinstance(config, str):
@@ -254,12 +268,16 @@ class Encoder3D(nn.Module):
         for i in range(depth):
             # Add block
             use_double_i = i > num_single_blocks
-            block = block_type(in_channels, out_channels, use_double=use_double_i)
+            block = block_type(
+                in_channels, out_channels, use_double=use_double_i
+            )
             blocks.append(block)
 
             # Update channel dimensions
             in_channels = block.out_channels
-            out_channels = int(min(out_channels * channel_multiplier, max_channels))
+            out_channels = int(
+                min(out_channels * channel_multiplier, max_channels)
+            )
 
         self.blocks = nn.ModuleList(blocks)
         self.out_channels = self.blocks[-1].out_channels
@@ -317,6 +335,7 @@ def register_block(name):
     def wrap(cls):
         BLOCK_REGISTRY[name] = cls
         return cls
+
     return wrap
 
 
@@ -466,16 +485,19 @@ class CenterWeightedPool3D(nn.Module):
     def _dist_sq(self, shape, device, dtype):
         key = (shape, device)
         if key not in self._dist_cache:
-            coords = [torch.linspace(-1, 1, s, device=device, dtype=dtype) for s in shape]
+            coords = [
+                torch.linspace(-1, 1, s, device=device, dtype=dtype)
+                for s in shape
+            ]
             grid = torch.stack(torch.meshgrid(*coords, indexing="ij"), dim=0)
-            self._dist_cache[key] = (grid ** 2).sum(0)
+            self._dist_cache[key] = (grid**2).sum(0)
         return self._dist_cache[key]
 
     def forward(self, x):
         b, c, d, h, w = x.shape
         dist_sq = self._dist_sq((d, h, w), x.device, x.dtype)
         sigma = self.log_sigma.exp().clamp(min=1e-3)
-        weights = torch.exp(-dist_sq / (2 * sigma ** 2))
+        weights = torch.exp(-dist_sq / (2 * sigma**2))
         weights = (weights / weights.sum()).view(1, 1, d, h, w)
         return (x * weights).sum(dim=(2, 3, 4))
 
@@ -500,7 +522,7 @@ class ViT3D(nn.Module):
         in_channels, d, h, w = input_shape
         assert (
             d % patch_size == 0 and h % patch_size == 0 and w % patch_size == 0
-        ), f"input_shape spatial dims must be divisible by patch_size={patch_size}"
+        ), f"input_shape dims must be divisible by patch_size={patch_size}"
 
         # Save model config
         self.config = {
@@ -631,8 +653,10 @@ class ViT3D(nn.Module):
             x + torch.cat([self.cls_pos, self.patch_pos_embed], dim=1)
         )
         x = self.norm(self.encoder(x))
-        patches = x[:, 1:].transpose(1, 2).view(
-            b, self.embed_dim, self.num_d, self.num_h, self.num_w
+        patches = (
+            x[:, 1:]
+            .transpose(1, 2)
+            .view(b, self.embed_dim, self.num_d, self.num_h, self.num_w)
         )
         max_pool = patches.amax(dim=(2, 3, 4))
         feat = torch.cat([x[:, 0], self.center_pool(patches), max_pool], dim=1)

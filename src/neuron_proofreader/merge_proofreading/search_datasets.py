@@ -86,7 +86,9 @@ class SearchDataset(IterableDataset, ABC):
                     while len(futures) < self.prefetch:
                         try:
                             site = next(sites)
-                            futures.add(executor.submit(self.patch_loader, site))
+                            futures.add(
+                                executor.submit(self.patch_loader, site)
+                            )
                         except StopIteration:
                             break
 
@@ -175,7 +177,9 @@ class SearchDataset(IterableDataset, ABC):
         if near_leaf_nodes is not None:
             is_nonleaf = node not in near_leaf_nodes
         else:
-            is_nonleaf = self.degree[node] > 2 or not self._is_near_leaf_slow(node)
+            is_nonleaf = self.degree[node] > 2 or not self._is_near_leaf_slow(
+                node
+            )
         return is_contained and is_nonleaf
 
     def _is_near_leaf_slow(self, node, threshold=32):
@@ -274,7 +278,6 @@ class DenseSearchDataset(SearchDataset):
     def get_patch_and_arborist(self, nodes, img, offset):
         img = torch.from_numpy(img).float()
         voxels = np.array([self.node_voxel(i) for i in nodes], dtype=int)
-        tile_shape = np.array(img.shape[1:])
         for node, center in zip(nodes, voxels - offset):
             s = img_util.get_slices(center, self.patch_shape)
             patch = img[(slice(0, 2), *s)]

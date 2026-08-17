@@ -32,7 +32,10 @@ class ImageTransforms:
         self.normalization = normalization
         noise_std = self._NOISE_SCALE.get(normalization, 0.2)
         self.geometric_transform = [RandomFlip3D(), RandomRotation3D()]
-        self.intensity1_transform = [RandomNoise3D(noise_std), RandomContrast3D()]
+        self.intensity1_transform = [
+            RandomNoise3D(noise_std),
+            RandomContrast3D(),
+        ]
         self.intensity2_transform = [RandomSmooth3D(), RandomContrast3D()]
 
     def __call__(self, patches):

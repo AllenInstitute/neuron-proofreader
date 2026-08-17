@@ -205,7 +205,9 @@ class MLMergeProofreader(MergeProofreader):
         merge_sites = self.search()
 
         # Cache XYZ coords and save predictions before graph is modified
-        self.merge_sites_xyz = [self.graph.node_xyz[i].tolist() for i in merge_sites]
+        self.merge_sites_xyz = [
+            self.graph.node_xyz[i].tolist() for i in merge_sites
+        ]
         if self.save_result:
             self.save_predictions()
 
@@ -361,7 +363,9 @@ class MLMergeProofreader(MergeProofreader):
                 xyz_avg = xyz_arr.mean(axis=0)
                 best_node = min(
                     hits,
-                    key=lambda n: np.linalg.norm(self.graph.node_xyz[n] - xyz_avg),
+                    key=lambda n: np.linalg.norm(
+                        self.graph.node_xyz[n] - xyz_avg
+                    ),
                 )
                 new_merge_sites.append(best_node)
 
@@ -383,7 +387,9 @@ class MLMergeProofreader(MergeProofreader):
         self.save_sites([self.graph.node_xyz[i] for i in nodes])
 
     def save_fragment_predictions(self, inplace=True):
-        fragments_path = os.path.join(self.output_dir, "fragment_merge_preds.zip")
+        fragments_path = os.path.join(
+            self.output_dir, "fragment_merge_preds.zip"
+        )
         if inplace:
             self.graph.node_radius = 10 * np.maximum(self.node_preds, 0.1)
             self.dataset.to_zipped_swcs(fragments_path, use_radius=True)

@@ -114,12 +114,18 @@ class Trainer:
         self.save_mistake_mips = save_mistake_mips
         self.threshold_metrics = threshold_metrics
 
-        pw = torch.tensor([pos_weight], device=device) if pos_weight is not None else None
+        pw = (
+            torch.tensor([pos_weight], device=device)
+            if pos_weight is not None
+            else None
+        )
         self.criterion = nn.BCEWithLogitsLoss(pos_weight=pw)
         self.model = torch.compile(model.to(device), backend="eager")
         self.optimizer = optim.AdamW(self.model.parameters(), lr=lr)
         self.scaler = torch.cuda.amp.GradScaler(enabled=True)
-        self.scheduler = CosineAnnealingWarmRestarts(self.optimizer, T_0=20, T_mult=2)
+        self.scheduler = CosineAnnealingWarmRestarts(
+            self.optimizer, T_0=20, T_mult=2
+        )
         self.writer = SummaryWriter(log_dir=log_dir)
 
     # --- Core Routines ---
@@ -139,7 +145,7 @@ class Trainer:
         print("\nExperiment:", exp_name)
         for epoch in range(self.max_epochs):
             # Train-Validate
-            
+
             train_stats = self.train_step(train_dataloader, epoch)
             val_stats = self.validate_step(val_dataloader, epoch)
             new_best = self.check_model_performance(val_stats, epoch)
@@ -202,7 +208,9 @@ class Trainer:
                     y, y_pred, loss = self.forward_pass(x, y)
 
             scores = sigmoid(y_pred)
-            metrics.update(scores >= self.threshold_metrics, y, loss, scores=scores)
+            metrics.update(
+                scores >= self.threshold_metrics, y, loss, scores=scores
+            )
 
             if not train:
                 self._save_mistake_mips(x, y, y_pred, idx_offset)
@@ -232,8 +240,10 @@ class Trainer:
             Computed loss value.
         """
         if isinstance(x, dict):
-            x = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v
-                 for k, v in x.items()}
+            x = {
+                k: v.to(self.device) if isinstance(v, torch.Tensor) else v
+                for k, v in x.items()
+            }
         else:
             x = x.to(self.device)
         y = y.to(self.device)
@@ -341,7 +351,13 @@ class Trainer:
         date = datetime.today().strftime("%Y%m%d")
         filename = f"{self.model_name}-{date}-{epoch}-{self.best_f1:.4f}.pth"
         path = os.path.join(self.log_dir, filename)
-        torch.save({"config": self.model.config, "state_dict": self.model.state_dict()}, path)
+        torch.save(
+            {
+                "config": self.model.config,
+                "state_dict": self.model.state_dict(),
+            },
+            path,
+        )
 
     def update_tensorboard(self, stats, epoch, prefix):
         """

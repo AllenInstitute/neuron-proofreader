@@ -19,24 +19,12 @@ class ArboristVisionMergeModel(nn.Module):
     """
     Multimodal merge detector combining a 3D vision backbone with the Arborist
     morphology encoder.
-
-    For each candidate site the vision backbone encodes its image patch and the
-    Arborist model encodes its local skeleton subgraph into a graph-level
-    embedding (z_tree). The two embeddings are concatenated and classified by a
-    small MLP head.
-
-    Inputs (forward)
-    ----------------
-    x : dict
-        "img"         : (B, C, D, H, W) — image patches, one per candidate.
-        "tree_sample" : List[TreeSample] of length B — Arborist subgraph
-                        samples built by search_datasets.subgraph_to_tree_sample.
     """
 
     def __init__(
         self,
         input_shape,
-        embed_dim=128,
+        vision_latent_dim=128,
         output_dim=1,
         vision_backbone="CNN3D",
         arborist_latent_dim=32,
@@ -48,9 +36,9 @@ class ArboristVisionMergeModel(nn.Module):
         """
         Parameters
         ----------
-        input_shape : tuple
+        input_shape : Tuple[int]
             Shape of one node's image patch: (C, D, H, W).
-        embed_dim : int, optional
+        vision_latent_dim : int, optional
             Output dimension of the vision backbone. Default is 128.
         output_dim : int, optional
             Output dimension of the classifier head. Default is 1.
@@ -80,7 +68,7 @@ class ArboristVisionMergeModel(nn.Module):
         self.config = {
             "model_type": "ArboristVisionMergeModel",
             "input_shape": tuple(input_shape),
-            "embed_dim": embed_dim,
+            "vision_latent_dim": vision_latent_dim,
             "output_dim": output_dim,
             "vision_backbone": vision_backbone,
             "arborist_latent_dim": arborist_latent_dim,
@@ -90,12 +78,22 @@ class ArboristVisionMergeModel(nn.Module):
 
         # Vision backbone — shared image-patch encoder
         if vision_backbone == "ViT3D":
-            self.vision = ViT3D(input_shape, output_dim=embed_dim, **vision_backbone_kwargs)
+            self.vision = ViT3D(
+                input_shape,
+                output_dim=vision_latent_dim,
+                **vision_backbone_kwargs,
+            )
         else:
-            self.vision = CNN3D(input_shape, output_dim=embed_dim, **vision_backbone_kwargs)
+            self.vision = CNN3D(
+                input_shape,
+                output_dim=vision_latent_dim,
+                **vision_backbone_kwargs,
+            )
 
         # Arborist skeleton encoder — produces z_tree per subgraph
-        self.arborist = Arborist(latent_dim=arborist_latent_dim, **_arborist_kwargs)
+        self.arborist = Arborist(
+            latent_dim=arborist_latent_dim, **_arborist_kwargs
+        )
 
         # Load pre-trained curve encoder weights if provided
         if pretrained_curve_encoder_path:
@@ -105,8 +103,16 @@ class ArboristVisionMergeModel(nn.Module):
                 p.requires_grad_(False)
 
         # Fusion classification head
-        self.head = FeedForwardNet(embed_dim + arborist_latent_dim, output_dim, 3)
+        self.head = FeedForwardNet(
+            vision_latent_dim + arborist_latent_dim, output_dim, 3
+        )
 
+    def forward(self, x):
+        z_img = self.vision(x["img"])
+        z_tree = self._encode_tree_samples(x["tree_sample"], z_img.device)
+        return self.head(torch.cat([z_img, z_tree], dim=1))
+
+    # --- Helpers
     def _load_curve_encoder(self, path):
         ckpt = torch.load(path, map_location="cpu")
         encoder_state = {
@@ -117,7 +123,9 @@ class ArboristVisionMergeModel(nn.Module):
         self.arborist.curve_encoder.load_state_dict(encoder_state)
 
     def save(self, path):
-        torch.save({"config": self.config, "state_dict": self.state_dict()}, path)
+        torch.save(
+            {"config": self.config, "state_dict": self.state_dict()}, path
+        )
 
     @classmethod
     def load(cls, path, map_location=None):
@@ -131,13 +139,3 @@ class ArboristVisionMergeModel(nn.Module):
     def _encode_tree_samples(self, tree_samples, device):
         z_trees = [self.arborist.encode(s)[0] for s in tree_samples]
         return torch.stack(z_trees).to(device)
-
-    def forward(self, x):
-        imgs = x["img"]
-        tree_samples = x["tree_sample"]
-
-        # Embeddings
-        z_img = self.vision(imgs)
-        z_tree = self._encode_tree_samples(tree_samples, z_img.device)
-
-        return self.head(torch.cat([z_img, z_tree], dim=1))
