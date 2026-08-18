@@ -42,6 +42,7 @@ from neuron_proofreader.models.point_cloud_models import (
     subgraph_to_point_cloud,
 )
 from neuron_proofreader.fragments_graph import FragmentsGraph
+from arborist.data.augmentation import GraphTransforms
 from arborist.utils.swc_loading import Reader
 from neuron_proofreader.utils import ml_util, util
 from neuron_proofreader.utils.graph_util import subgraph_to_tree_sample
@@ -408,6 +409,7 @@ class ThreadedDataLoader(DataLoader):
         self,
         dataset,
         batch_size=32,
+        graph_transform=None,
         modality="image",
         sampler=None,
         shuffle=True,
@@ -424,6 +426,7 @@ class ThreadedDataLoader(DataLoader):
         super().__init__(dataset, batch_size=batch_size, sampler=sampler)
 
         # Instance attributes
+        self.graph_transform = graph_transform
         self.modality = modality
         self.shuffle = shuffle
         self.prefetch = prefetch
@@ -504,6 +507,10 @@ class ThreadedDataLoader(DataLoader):
             i = future_to_idx[future]
             _, subgraphs[i], y[i] = future.result()
 
+        if self.graph_transform is not None:
+            for i in range(n):
+                subgraphs[i].node_xyz = self.graph_transform(subgraphs[i].node_xyz)
+
         # rooted_subgraph always remaps the root to node 0
         tree_samples = [
             subgraph_to_tree_sample(subgraphs[i], 0) for i in range(n)
@@ -520,6 +527,10 @@ class ThreadedDataLoader(DataLoader):
         for future in as_completed(futures):
             i = future_to_idx[future]
             imgs[i], subgraphs[i], y[i] = future.result()
+
+        if self.graph_transform is not None:
+            for i in range(n):
+                subgraphs[i].node_xyz = self.graph_transform(subgraphs[i].node_xyz)
 
         # rooted_subgraph always remaps the root to node 0
         tree_samples = [
