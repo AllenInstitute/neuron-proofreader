@@ -15,7 +15,7 @@ from neuron_proofreader.models.new_vision_models import CNN3D, ViT3D
 from neuron_proofreader.utils.ml_util import FeedForwardNet
 
 
-class ArboristVisionMergeModel(nn.Module):
+class ArboristVisionMergeDetector(nn.Module):
     """
     Multimodal merge detector combining a 3D vision backbone with the Arborist
     morphology encoder.
@@ -35,14 +35,16 @@ class ArboristVisionMergeModel(nn.Module):
         **vision_backbone_kwargs,
     ):
         """
+        Instantiates an ArboristVisionMergeDetector object.
+
         Parameters
         ----------
         vision_input_shape : Tuple[int]
             Shape of one node's image patch: (C, D, H, W).
-        vision_latent_dim : int, optional
-            Output dimension of the vision backbone. Default is 128.
         output_dim : int, optional
             Output dimension of the classifier head. Default is 1.
+        vision_latent_dim : int, optional
+            Output dimension of the vision backbone. Default is 128.
         vision_backbone : str, optional
             Vision backbone to use: "CNN3D" or "ViT3D". Default is "CNN3D".
         arborist_latent_dim : int, optional
@@ -51,12 +53,12 @@ class ArboristVisionMergeModel(nn.Module):
         arborist_kwargs : dict or None, optional
             Extra keyword arguments forwarded to Arborist.__init__. Uses
             Arborist defaults when not specified.
-        pretrained_curve_encoder_path : str or None, optional
-            Path to a curve autoencoder checkpoint. If given, the encoder
-            weights are extracted and loaded into Arborist.curve_encoder.
         freeze_curve_encoder : bool, optional
             If True, freeze the curve encoder after loading pretrained weights.
             Default is False.
+        pretrained_curve_encoder_path : str or None, optional
+            Path to a curve autoencoder checkpoint. If given, the encoder
+            weights are extracted and loaded into Arborist.curve_encoder.
         **vision_backbone_kwargs
             Extra keyword arguments forwarded to the image backbone constructor.
         """
