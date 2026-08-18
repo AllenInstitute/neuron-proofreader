@@ -29,6 +29,7 @@ class ArboristVisionMergeModel(nn.Module):
         vision_backbone="CNN3D",
         arborist_latent_dim=32,
         arborist_kwargs=None,
+        dropout=0.2,
         pretrained_curve_encoder_path=None,
         freeze_curve_encoder=False,
         **vision_backbone_kwargs,
@@ -73,6 +74,7 @@ class ArboristVisionMergeModel(nn.Module):
             "vision_backbone": vision_backbone,
             "arborist_latent_dim": arborist_latent_dim,
             "arborist_kwargs": _arborist_kwargs,
+            "dropout": dropout,
             **vision_backbone_kwargs,
         }
 
@@ -103,6 +105,7 @@ class ArboristVisionMergeModel(nn.Module):
                 p.requires_grad_(False)
 
         # Fusion classification head
+        self.drop = nn.Dropout(dropout)
         self.head = FeedForwardNet(
             vision_latent_dim + arborist_latent_dim, output_dim, 3
         )
@@ -110,7 +113,7 @@ class ArboristVisionMergeModel(nn.Module):
     def forward(self, x):
         z_img = self.vision(x["img"])
         z_tree = self._encode_tree_samples(x["tree_sample"], z_img.device)
-        return self.head(torch.cat([z_img, z_tree], dim=1))
+        return self.head(self.drop(torch.cat([z_img, z_tree], dim=1)))
 
     # --- Helpers
     def _load_curve_encoder(self, path):
@@ -137,5 +140,6 @@ class ArboristVisionMergeModel(nn.Module):
 
     @torch._dynamo.disable
     def _encode_tree_samples(self, tree_samples, device):
-        z_trees = [self.arborist.encode(s)[0] for s in tree_samples]
+        with torch.amp.autocast("cuda", enabled=False):
+            z_trees = [self.arborist.encode(s)[0] for s in tree_samples]
         return torch.stack(z_trees).to(device)
