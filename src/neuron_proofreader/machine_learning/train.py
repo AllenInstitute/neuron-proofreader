@@ -64,6 +64,7 @@ class Trainer:
         model_name,
         output_dir,
         device="cuda",
+        enforce_recall=False,
         exp_name=None,
         lr=1e-4,
         max_epochs=200,
@@ -105,7 +106,9 @@ class Trainer:
 
         # Instance attributes
         self.best_f1 = 0
+        self.best_metric = 0
         self.device = device
+        self.enforce_recall = enforce_recall
         self.log_dir = log_dir
         self.max_epochs = max_epochs
         self.min_recall = min_recall
@@ -216,7 +219,8 @@ class Trainer:
                 self._save_mistake_mips(x, y, y_pred, idx_offset)
                 idx_offset += len(y)
 
-        stats = metrics.compute()
+        min_recall = self.min_recall if self.enforce_recall else None
+        stats = metrics.compute(min_recall=min_recall)
         self.update_tensorboard(stats, epoch, prefix)
         return stats
 
@@ -289,12 +293,18 @@ class Trainer:
             True if the model achieved a new best F1 score and was saved.
             False otherwise.
         """
-        if stats["f1"] > self.best_f1 and stats["recall"] > self.min_recall:
-            self.best_f1 = stats["f1"]
-            self.save_model(epoch)
-            return True
+        if self.enforce_recall:
+            metric = stats.get("precision_at_recall", 0.0)
+            if metric > self.best_metric:
+                self.best_metric = metric
+                self.save_model(epoch)
+                return True
         else:
-            return False
+            if stats["f1"] > self.best_f1 and stats["recall"] > self.min_recall:
+                self.best_f1 = stats["f1"]
+                self.save_model(epoch)
+                return True
+        return False
 
     def load_pretrained_weights(self, model_path):
         """
@@ -349,7 +359,8 @@ class Trainer:
             Current training epoch.
         """
         date = datetime.today().strftime("%Y%m%d")
-        filename = f"{self.model_name}-{date}-{epoch}-{self.best_f1:.4f}.pth"
+        metric_val = self.best_metric if self.enforce_recall else self.best_f1
+        filename = f"{self.model_name}-{date}-{epoch}-{metric_val:.4f}.pth"
         path = os.path.join(self.log_dir, filename)
         torch.save(
             {

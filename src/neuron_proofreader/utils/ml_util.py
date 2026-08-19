@@ -12,7 +12,7 @@ models.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import precision_recall_curve
 
 
 # --- Architectures ---
@@ -153,7 +153,7 @@ class BinaryMetricAccumulator:
 
         del pred, y, loss
 
-    def compute(self):
+    def compute(self, min_recall=None):
         precision = self.tp / (self.tp + self.fp + 1e-8)
         recall = self.tp / (self.tp + self.fn + 1e-8)
         f1 = 2 * precision * recall / (precision + recall + 1e-8)
@@ -169,11 +169,13 @@ class BinaryMetricAccumulator:
             "loss": self.loss / max(self.n, 1),
         }
 
-        if self.all_scores:
+        if self.all_scores and min_recall is not None:
             scores = torch.cat(self.all_scores).numpy()
             labels = torch.cat(self.all_labels).numpy()
             if labels.min() < labels.max():
-                stats["auc"] = roc_auc_score(labels, scores)
+                prec_curve, rec_curve, _ = precision_recall_curve(labels, scores)
+                mask = rec_curve >= min_recall
+                stats["precision_at_recall"] = float(prec_curve[mask].max()) if mask.any() else 0.0
 
         return stats
 
