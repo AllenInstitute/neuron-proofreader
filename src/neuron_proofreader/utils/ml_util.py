@@ -175,7 +175,12 @@ class BinaryMetricAccumulator:
             if labels.min() < labels.max():
                 prec_curve, rec_curve, _ = precision_recall_curve(labels, scores)
                 mask = rec_curve >= min_recall
-                stats["precision_at_recall"] = float(prec_curve[mask].max()) if mask.any() else 0.0
+                if mask.any():
+                    idx = prec_curve[mask].argmax()
+                    p, r = prec_curve[mask][idx], rec_curve[mask][idx]
+                    stats["f1_at_recall"] = float(2 * p * r / (p + r + 1e-8))
+                else:
+                    stats["f1_at_recall"] = 0.0
 
         return stats
 

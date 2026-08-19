@@ -9,6 +9,8 @@ proofreading classification tasks.
 
 """
 
+import json
+
 from datetime import datetime
 from torch.nn.functional import sigmoid
 from torch.nn.parallel import DistributedDataParallel
@@ -64,14 +66,12 @@ class Trainer:
         model_name,
         output_dir,
         device="cuda",
-        enforce_recall=False,
+        enforced_min_recall=None,
         exp_name=None,
         lr=1e-4,
         max_epochs=200,
-        min_recall=0,
         pos_weight=None,
         save_mistake_mips=False,
-        threshold_metrics=0.5,
     ):
         """
         Instantiates a Trainer object.
@@ -84,13 +84,14 @@ class Trainer:
             Name of model used for logging and checkpointing.
         output_dir : str
             Directory that tensorboard and model checkpoints are written to.
+        enforced_min_recall : float or None, optional
+            If set, checkpointing optimizes precision_at_recall subject to
+            recall >= this value. If None, checkpointing optimizes F1.
+            Default is None.
         lr : float, optional
             Learning rate. Default is 1e-4.
         max_epochs : int, optional
             Maximum number of training epochs. Default is 200.
-        min_recall : float, optional
-            Minimum recall required for model checkpoints to be saved. Default
-            is 0.
         pos_weight : float or None, optional
             Weight applied to the positive class in BCEWithLogitsLoss. Values
             greater than 1 increase recall at the cost of precision. Default
@@ -106,16 +107,13 @@ class Trainer:
 
         # Instance attributes
         self.best_f1 = 0
-        self.best_metric = 0
         self.device = device
-        self.enforce_recall = enforce_recall
+        self.enforced_min_recall = enforced_min_recall
         self.log_dir = log_dir
         self.max_epochs = max_epochs
-        self.min_recall = min_recall
         self.mistakes_dir = os.path.join(log_dir, "mistakes")
         self.model_name = model_name
         self.save_mistake_mips = save_mistake_mips
-        self.threshold_metrics = threshold_metrics
 
         pw = (
             torch.tensor([pos_weight], device=device)
@@ -211,16 +209,13 @@ class Trainer:
                     y, y_pred, loss = self.forward_pass(x, y)
 
             scores = sigmoid(y_pred)
-            metrics.update(
-                scores >= self.threshold_metrics, y, loss, scores=scores
-            )
+            metrics.update(scores >= 0.5, y, loss, scores=scores)
 
             if not train:
                 self._save_mistake_mips(x, y, y_pred, idx_offset)
                 idx_offset += len(y)
 
-        min_recall = self.min_recall if self.enforce_recall else None
-        stats = metrics.compute(min_recall=min_recall)
+        stats = metrics.compute(min_recall=self.enforced_min_recall)
         self.update_tensorboard(stats, epoch, prefix)
         return stats
 
@@ -293,17 +288,11 @@ class Trainer:
             True if the model achieved a new best F1 score and was saved.
             False otherwise.
         """
-        if self.enforce_recall:
-            metric = stats.get("precision_at_recall", 0.0)
-            if metric > self.best_metric:
-                self.best_metric = metric
-                self.save_model(epoch)
-                return True
-        else:
-            if stats["f1"] > self.best_f1 and stats["recall"] > self.min_recall:
-                self.best_f1 = stats["f1"]
-                self.save_model(epoch)
-                return True
+        f1 = stats.get("f1_at_recall", stats["f1"])
+        if f1 > self.best_f1:
+            self.best_f1 = f1
+            self.save_model(epoch)
+            return True
         return False
 
     def load_pretrained_weights(self, model_path):
@@ -349,6 +338,19 @@ class Trainer:
                         x[i, 0], 2 * x[i, 1], output_path
                     )
 
+    def save_config(self):
+        """
+        Saves trainer configuration to a JSON file in the log directory.
+        """
+        config = {
+            "enforced_min_recall": self.enforced_min_recall,
+            "max_epochs": self.max_epochs,
+            "model_name": self.model_name,
+        }
+        path = os.path.join(self.log_dir, "trainer_config.json")
+        with open(path, "w") as f:
+            json.dump(config, f, indent=4)
+
     def save_model(self, epoch):
         """
         Saves the current model state to a file.
@@ -359,7 +361,7 @@ class Trainer:
             Current training epoch.
         """
         date = datetime.today().strftime("%Y%m%d")
-        metric_val = self.best_metric if self.enforce_recall else self.best_f1
+        metric_val = self.best_f1
         filename = f"{self.model_name}-{date}-{epoch}-{metric_val:.4f}.pth"
         path = os.path.join(self.log_dir, filename)
         torch.save(
