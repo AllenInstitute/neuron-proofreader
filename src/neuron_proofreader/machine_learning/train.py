@@ -66,7 +66,7 @@ class Trainer:
         model_name,
         output_dir,
         device="cuda",
-        enforced_min_recall=None,
+        enforced_recall=None,
         exp_name=None,
         lr=1e-4,
         max_epochs=200,
@@ -84,7 +84,7 @@ class Trainer:
             Name of model used for logging and checkpointing.
         output_dir : str
             Directory that tensorboard and model checkpoints are written to.
-        enforced_min_recall : float or None, optional
+        enforced_recall : float or None, optional
             If set, checkpointing optimizes precision_at_recall subject to
             recall >= this value. If None, checkpointing optimizes F1.
             Default is None.
@@ -108,7 +108,7 @@ class Trainer:
         # Instance attributes
         self.best_f1 = 0
         self.device = device
-        self.enforced_min_recall = enforced_min_recall
+        self.enforced_recall = enforced_recall
         self.log_dir = log_dir
         self.max_epochs = max_epochs
         self.mistakes_dir = os.path.join(log_dir, "mistakes")
@@ -121,7 +121,7 @@ class Trainer:
             else None
         )
         self.criterion = nn.BCEWithLogitsLoss(pos_weight=pw)
-        self.model = torch.compile(model.to(device), backend="eager")
+        self.model = model.to(device)
         self.optimizer = optim.AdamW(self.model.parameters(), lr=lr)
         self.scaler = torch.cuda.amp.GradScaler(enabled=True)
         self.scheduler = CosineAnnealingWarmRestarts(
@@ -215,7 +215,7 @@ class Trainer:
                 self._save_mistake_mips(x, y, y_pred, idx_offset)
                 idx_offset += len(y)
 
-        stats = metrics.compute(min_recall=self.enforced_min_recall)
+        stats = metrics.compute(min_recall=self.enforced_recall)
         self.update_tensorboard(stats, epoch, prefix)
         return stats
 
@@ -343,7 +343,7 @@ class Trainer:
         Saves trainer configuration to a JSON file in the log directory.
         """
         config = {
-            "enforced_min_recall": self.enforced_min_recall,
+            "enforced_recall": self.enforced_recall,
             "max_epochs": self.max_epochs,
             "model_name": self.model_name,
         }
