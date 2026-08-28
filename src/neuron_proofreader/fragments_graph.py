@@ -73,13 +73,6 @@ class FragmentsGraph(SkeletonGraph):
             verbose=verbose,
         )
 
-    # --- Node Attribute Helpers ---
-    def resize_node_attr(self, new_shape, attr_name):
-        node_attr = getattr(self, attr_name)
-        new_node_attr = np.empty(new_shape, dtype=node_attr.dtype)
-        new_node_attr[: len(node_attr)] = node_attr
-        setattr(self, attr_name, new_node_attr)
-
     # --- Load ---
     def load(self, swc_pointer):
         """
@@ -93,9 +86,7 @@ class FragmentsGraph(SkeletonGraph):
         irreducibles = self.graph_loader(swc_pointer)
 
         num_nodes = count_nodes(irreducibles)
-        self.node_component_id = np.zeros((num_nodes), dtype=int)
-        self.node_radius = np.zeros((num_nodes), dtype=np.float16)
-        self.node_xyz = np.zeros((num_nodes, 3), dtype=np.float32)
+        self.init_node_attrs(num_nodes)
 
         component_id = 0
         while irreducibles:
@@ -111,9 +102,7 @@ class FragmentsGraph(SkeletonGraph):
         num_nodes = self.number_of_nodes()
         num_somas = len(soma_centroids)
 
-        self.resize_node_attr((num_nodes + num_somas), "node_component_id")
-        self.resize_node_attr((num_nodes + num_somas), "node_radius")
-        self.resize_node_attr((num_nodes + num_somas, 3), "node_xyz")
+        self.grow_node_attrs(num_nodes + num_somas)
 
         for idx, xyz in enumerate(soma_centroids, start=1):
             node_id = self.number_of_nodes()
@@ -132,6 +121,7 @@ class FragmentsGraph(SkeletonGraph):
             self.component_id_to_swc_id[component_id] = swc_id
             self.node_component_id[node_id] = component_id
             self.node_radius[node_id] = 20
+            self.node_type[node_id] = 1
             self.node_xyz[node_id] = xyz
             self.soma_centroids.append(xyz)
 

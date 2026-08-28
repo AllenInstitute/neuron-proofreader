@@ -102,9 +102,7 @@ class ProposalGraph(FragmentsGraph):
         pg.anisotropy = graph.anisotropy
         pg.node_spacing = graph.node_spacing
         pg.verbose = graph.verbose
-        pg.node_xyz = graph.node_xyz.copy()
-        pg.node_radius = graph.node_radius.copy()
-        pg.node_component_id = graph.node_component_id.copy()
+        graph.copy_node_attrs(pg)
         pg.component_id_to_swc_id = graph.component_id_to_swc_id.copy()
         pg.kdtree = graph.kdtree
         pg.soma_centroids = list(graph.soma_centroids)
@@ -135,9 +133,7 @@ class ProposalGraph(FragmentsGraph):
         fg.anisotropy = self.anisotropy
         fg.node_spacing = self.node_spacing
         fg.verbose = self.verbose
-        fg.node_xyz = self.node_xyz.copy()
-        fg.node_radius = self.node_radius.copy()
-        fg.node_component_id = self.node_component_id.copy()
+        self.copy_node_attrs(fg)
         fg.component_id_to_swc_id = self.component_id_to_swc_id.copy()
         fg.kdtree = self.kdtree
         fg.soma_centroids = list(self.soma_centroids)
