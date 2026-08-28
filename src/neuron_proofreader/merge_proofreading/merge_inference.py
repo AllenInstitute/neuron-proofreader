@@ -309,8 +309,8 @@ class MLMergeProofreader(MergeProofreader):
                 hits = list()
                 for node in nodes:
                     try:
-                        path = nx.shortest_path(
-                            self.graph, source=root, target=node
+                        path = self.graph.shortest_path(
+                            source=root, target=node
                         )
                         if self.graph.path_length(path) < max_dist + 4:
                             hits.append(node)

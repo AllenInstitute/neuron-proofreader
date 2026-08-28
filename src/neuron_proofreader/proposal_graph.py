@@ -97,8 +97,8 @@ class ProposalGraph(FragmentsGraph):
             New ProposalGraph with the same structure as the source.
         """
         pg = cls.__new__(cls)
-        nx.Graph.__init__(pg)
-        pg.update(graph)
+        pg._init_structure()
+        pg.copy_structure_from(graph)
         pg.anisotropy = graph.anisotropy
         pg.node_spacing = graph.node_spacing
         pg.verbose = graph.verbose
@@ -128,8 +128,8 @@ class ProposalGraph(FragmentsGraph):
             New FragmentsGraph derived from this ProposalGraph.
         """
         fg = FragmentsGraph.__new__(FragmentsGraph)
-        nx.Graph.__init__(fg)
-        fg.update(self)
+        fg._init_structure()
+        fg.copy_structure_from(self)
         fg.anisotropy = self.anisotropy
         fg.node_spacing = self.node_spacing
         fg.verbose = self.verbose

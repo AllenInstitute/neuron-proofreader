@@ -8,10 +8,11 @@ Code for visualizing SkeletonGraphs.
 
 """
 
-import networkx as nx
 import numpy as np
 import plotly.colors as plc
 import plotly.graph_objects as go
+
+from arborist.skeleton_graph import SkeletonGraph
 
 
 def visualize(graph):
@@ -47,7 +48,7 @@ def visualize_proposals(graph, gt_graph=None, proposals=list()):
     """
     # Initializations
     proposals = proposals or graph.list_proposals()
-    gt_graph = gt_graph or nx.Graph()
+    gt_graph = gt_graph or SkeletonGraph()
 
     # Generate traces
     data = [get_edge_trace(graph, color="black")]
@@ -73,7 +74,7 @@ def get_component_traces(graph, use_color=True):
     """
     colors = plc.qualitative.Bold
     traces = list()
-    for nodes in map(list, nx.connected_components(graph)):
+    for nodes in map(list, graph.connected_components()):
         # Extract data
         color = colors[len(traces) % len(colors)] if use_color else "black"
         name = graph.node_swc_id(nodes[0])

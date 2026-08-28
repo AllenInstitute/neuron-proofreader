@@ -14,7 +14,6 @@ from scipy.linalg import svd
 from scipy.spatial.distance import euclidean
 from tqdm import tqdm
 
-import networkx as nx
 import numpy as np
 
 
@@ -172,9 +171,9 @@ def remove_doubles(graph, max_cable_length):
         Maximum cable length of connected components to be searched.
     """
     # Set progress bar
-    iterator = nx.connected_components(graph)
+    iterator = graph.connected_components()
     if graph.verbose:
-        total = nx.number_connected_components(graph)
+        total = graph.number_connected_components()
         iterator = tqdm(iterator, total=total, desc="Filter Doubles")
 
     # Search graph

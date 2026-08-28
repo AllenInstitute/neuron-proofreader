@@ -173,7 +173,7 @@ def get_pred_to_gt_mapping(gt_graph, pred_graph):
         ID.
     """
     pred_to_gt = defaultdict(lambda: None)
-    for nodes in map(list, nx.connected_components(pred_graph)):
+    for nodes in map(list, pred_graph.connected_components()):
         gt_id = find_aligned_component(gt_graph, pred_graph, nodes)
         if gt_id is not None:
             pred_id = pred_graph.node_component_id[nodes[0]]
@@ -347,7 +347,7 @@ def get_path(gt_graph, source, xyz):
     """
     try:
         target = gt_graph.closest_node(xyz)
-        path = nx.shortest_path(gt_graph, source=source, target=target)
+        path = gt_graph.shortest_path(source=source, target=target)
         return path
     except nx.NetworkXNoPath:
         return list()

@@ -11,7 +11,6 @@ a collection of neuron fragments and provides proofreading-specific operations.
 
 from tqdm import tqdm
 
-import networkx as nx
 import numpy as np
 
 from arborist.skeleton_graph import SkeletonGraph
@@ -98,7 +97,7 @@ class FragmentsGraph(SkeletonGraph):
 
     # --- Soma Operations ---
     def load_somas(self, soma_centroids):
-        num_components = nx.number_connected_components(self)
+        num_components = self.number_connected_components()
         num_nodes = self.number_of_nodes()
         num_somas = len(soma_centroids)
 
@@ -141,7 +140,7 @@ class FragmentsGraph(SkeletonGraph):
                         (self.node_xyz[nodes[idxs]] - soma_xyz) ** 2, axis=1
                     )
                     node = nodes[idxs[np.argmin(dists)]]
-                    if not nx.has_path(self, node, soma_node):
+                    if not self.has_path(node, soma_node):
                         self.add_edge(node, soma_node)
                         self.update_component_ids(soma_component_id, node)
                         merge_cnt += 1
@@ -221,7 +220,7 @@ class FragmentsGraph(SkeletonGraph):
         return geometry_util.tangent(self.node_xyz[np.array(path)])
 
     def __repr__(self):
-        n_components = format(nx.number_connected_components(self), ",")
+        n_components = format(self.number_connected_components(), ",")
         n_nodes = format(self.number_of_nodes(), ",")
         n_edges = format(self.number_of_edges(), ",")
         return (

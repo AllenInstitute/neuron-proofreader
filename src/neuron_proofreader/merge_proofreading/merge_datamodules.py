@@ -29,7 +29,6 @@ from scipy.spatial import KDTree
 from concurrent.futures import as_completed, ThreadPoolExecutor
 from torch.utils.data import Dataset, DataLoader
 
-import networkx as nx
 import numpy as np
 import os
 import pandas as pd
@@ -133,7 +132,7 @@ class BrainDataset:
                 # self.ignore_fragments.add(self.node_component_id[ii])
 
     def set_giant_components(self):
-        for nodes in map(list, nx.connected_components(self.graph)):
+        for nodes in map(list, self.graph.connected_components()):
             # Compute cable length
             root = util.sample_once(nodes)
             cable_length = self.cable_length(

@@ -26,7 +26,6 @@ Code that executes the full split correction pipeline.
 from time import time
 from tqdm import tqdm
 
-import networkx as nx
 import pandas as pd
 import os
 import torch
@@ -317,7 +316,7 @@ class LearnedSplitProofreader:
 
             # Check if proposal creates a loop
             i, j = proposal
-            if not nx.has_path(self.dataset.graph, i, j):
+            if not self.dataset.graph.has_path(i, j):
                 self.dataset.merge_proposal(proposal)
                 n_accepts += 1
             del preds[proposal]

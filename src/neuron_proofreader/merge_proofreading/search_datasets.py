@@ -15,7 +15,6 @@ from queue import Queue
 from threading import Thread
 from torch.utils.data import IterableDataset
 
-import networkx as nx
 import numpy as np
 import torch
 
@@ -143,7 +142,7 @@ class SearchDataset(IterableDataset, ABC):
     def _compute_fragment_stats(self):
         if not hasattr(self, "_fragment_stats_cache"):
             stats = {}
-            for nodes in nx.connected_components(self.graph):
+            for nodes in self.graph.connected_components():
                 node = util.sample_once(list(nodes))
                 cable_length = self.graph.cable_length(root=node)
                 if cable_length > self.min_size:
@@ -161,7 +160,7 @@ class SearchDataset(IterableDataset, ABC):
         return img_util.is_contained(voxel, shape, buffer=buffer)
 
     def compute_near_leaf_nodes(self, root, threshold=32):
-        component = nx.node_connected_component(self.graph, root)
+        component = self.graph.node_connected_component(root)
         leaves = [n for n in component if self.degree[n] == 1]
         near_leaf = set()
         visited = set(leaves)
@@ -244,7 +243,7 @@ class DenseSearchDataset(SearchDataset):
         """
         near_leaf_nodes = self.compute_near_leaf_nodes(root)
         nodes = list()
-        for i, j in nx.dfs_edges(self.graph, source=root):
+        for i, j in self.graph.dfs_edges(source=root):
             # Check if starting new batch
             if len(nodes) == 0:
                 if self.is_node_valid(i, near_leaf_nodes):
@@ -339,7 +338,7 @@ class SparseSearchDataset(SearchDataset):
 
     def generate_component_sites(self, root):
         visited = set()
-        for i, j in nx.dfs_edges(self.graph, source=root):
+        for i, j in self.graph.dfs_edges(source=root):
             if self.degree[i] >= 3 and i not in visited:
                 visited.add(i)
                 yield i
