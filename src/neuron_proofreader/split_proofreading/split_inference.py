@@ -37,9 +37,53 @@ from neuron_proofreader.split_proofreading.split_datasets import (
 from neuron_proofreader.utils import ml_util, util
 
 
-class SplitProofreader:
+class SomaSplitProofreader:
     """
-    Class that executes the full split proofreader inference pipeline.
+    Heuristic split proofreader that reconnects fragments close to soma
+    locations by adding edges between soma nodes and nearby fragment nodes.
+    """
+
+    step_name = "soma_split_correction"
+
+    def __init__(self, graph, output_dir, max_dist=25, log_handle=None):
+        """
+        Initializes a SomaSplitProofreader.
+
+        Parameters
+        ----------
+        graph : FragmentsGraph
+            Skeleton graph to search for split errors near somas.
+        output_dir : str
+            Directory where results will be saved.
+        max_dist : float, optional
+            Maximum distance (in microns) to search for fragments near each
+            soma. Default is 25.
+        log_handle : file-like, optional
+            Open file handle to write log messages to. If None, a new
+            summary.txt is opened in output_dir. Default is None.
+        """
+        self.graph = graph
+        self.max_dist = max_dist
+        self.output_dir = output_dir
+        log_path = os.path.join(output_dir, "summary.txt")
+        self.log_handle = log_handle or open(log_path, "a")
+
+    def __call__(self):
+        t0 = time()
+        self.log("Connect Soma Fragments...")
+        summary = self.graph.connect_soma_fragments(max_dist=self.max_dist)
+        self.log(summary)
+        t, unit = util.time_writer(time() - t0)
+        self.log(f"Module Runtime: {t:.2f} {unit}\n")
+
+    def log(self, txt):
+        print(txt)
+        self.log_handle.write(txt + "\n")
+
+
+class LearnedSplitProofreader:
+    """
+    Class that executes the full learned split proofreader inference pipeline.
     """
 
     step_name = "learned_split_correction"
