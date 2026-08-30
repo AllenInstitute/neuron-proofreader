@@ -118,6 +118,74 @@ class ImageConfig(Config):
 
 
 @dataclass
+class MergeInferenceConfig(Config):
+    """
+    Configuration class for merge detection inference parameters.
+
+    Attributes
+    ----------
+    batch_size : int, optional
+        Number of patches per forward pass. Set at runtime from available GPU
+        memory; must be set before running learned merge detection.
+    min_search_size : float
+        Minimum fragment cable length (in microns) to include in the search.
+    model_config_path : str, optional
+        Path to the merge model config JSON file.
+    model_path : str, optional
+        Path to the merge model weights file.
+    patch_shape : Tuple[int], optional
+        Patch shape for image sampling, overrides ImageConfig.patch_shape if
+        set.
+    prefetch : int
+        Number of patches to prefetch.
+    search_mode : str
+        Search strategy for learned detection. Options are "dense" and
+        "sparse".
+    threshold : float
+        Confidence threshold above which a site is flagged as a merge.
+    """
+
+    batch_size: int = None
+    min_search_size: float = 0
+    model_config_path: str = None
+    model_path: str = None
+    name: str = "merge_inference_config"
+    patch_shape: Tuple[int, int, int] = None
+    prefetch: int = 64
+    search_mode: str = "dense"
+    threshold: float = 0.5
+
+
+@dataclass
+class SplitInferenceConfig(Config):
+    """
+    Configuration class for learned split detection inference parameters.
+
+    Attributes
+    ----------
+    batch_size : int
+        Number of proposals per forward pass.
+    dt : float
+        Increment that acceptance threshold is lowered by each round.
+    min_threshold : float
+        Minimum confidence threshold for accepting a proposal.
+    patch_shape : Tuple[int], optional
+        Patch shape for image sampling, overrides ImageConfig.patch_shape if
+        set.
+    removal_threshold : float
+        Proposals with model predictions below this value are removed.
+    """
+
+    batch_size: int = None
+    dt: float = 0.05
+    min_threshold: float = 0.8
+    model_path: str = None
+    name: str = "split_inference_config"
+    patch_shape: Tuple[int, int, int] = None
+    removal_threshold: float = 0.3
+
+
+@dataclass
 class ProposalsConfig(Config):
     """
     Configuration class for skeleton graph parameters.
