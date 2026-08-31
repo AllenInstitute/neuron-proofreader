@@ -256,12 +256,17 @@ class ProofreadPipeline:
             If True, saves the corrected graph SWCs into the step directory.
             Default is True.
         """
+        # Check that batch size is set
         if merge_config.batch_size is None:
-            raise ValueError("merge_config.batch_size must be set before running learned merge detection.")
+            raise ValueError("merge_config.batch_size must be set!")
+
+        # Step initializations
         self.step_cnt += 1
         self.log(f"\nStep {self.step_cnt}: Learned Merge Detection ({merge_config.search_mode})")
         img_config = self._img_config(merge_config.patch_shape)
         step_output = self._step_dir(MLMergeProofreader.step_name)
+
+        # Create dataset
         DatasetClass = DenseSearchDataset if merge_config.search_mode == "dense" else SparseSearchDataset
         dataset = DatasetClass(
             self.graph,
@@ -269,6 +274,8 @@ class ProofreadPipeline:
             min_search_size=merge_config.min_search_size,
             prefetch=merge_config.prefetch,
         )
+
+        # Run proofreading
         proofreader = MLMergeProofreader(
             dataset,
             model,
@@ -281,11 +288,11 @@ class ProofreadPipeline:
         merge_nodes = proofreader()
         self.log(f"# Merges Detected: {len(merge_nodes)}")
 
+        # Save results
         if save_detections:
             proofreader.save_sites(proofreader.merge_sites_xyz)
         if save_fragments:
             self.save_graph(os.path.basename(step_output))
-            proofreader.save_parameters()
 
     # --- Helpers ---
     def log(self, txt):
