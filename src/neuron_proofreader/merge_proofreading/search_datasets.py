@@ -133,6 +133,9 @@ class SearchDataset(IterableDataset, ABC):
     def __getattr__(self, name):
         return getattr(self.graph, name)
 
+    def node_segment_id(self, node):
+        return self.graph.node_component_id[node]
+
     @abstractmethod
     def estimate_iterations(self):
         pass
