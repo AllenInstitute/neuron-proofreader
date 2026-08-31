@@ -262,20 +262,20 @@ class ProofreadPipeline:
         self.log(f"\nStep {self.step_cnt}: Learned Merge Detection ({merge_config.search_mode})")
         img_config = self._img_config(merge_config.patch_shape)
         step_output = self._step_dir(MLMergeProofreader.step_name)
-        DatasetClass = DenseSearchDataset if mode == "dense" else SparseSearchDataset
+        DatasetClass = DenseSearchDataset if merge_config.search_mode == "dense" else SparseSearchDataset
         dataset = DatasetClass(
             self.graph,
             img_config,
-            min_search_size=min_search_size,
-            prefetch=prefetch,
+            min_search_size=merge_config.min_search_size,
+            prefetch=merge_config.prefetch,
         )
         proofreader = MLMergeProofreader(
             dataset,
             model,
             step_output,
-            batch_size=batch_size,
+            batch_size=merge_config.batch_size,
             device=self.device,
-            threshold=threshold,
+            threshold=merge_config.threshold,
             log_handle=self.log_handle,
         )
         merge_nodes = proofreader()
