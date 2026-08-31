@@ -304,7 +304,7 @@ def find_max_eval_batch_size(
 
 
 def find_max_train_batch_size(
-    model, input_shape, optimizer_cls, device="cuda", start=1, max_bs=32
+    model, input_shape, optimizer_cls, device="cuda", start=1, max_bs=32, use_amp=True
 ):
     model.to(device)
     lo, hi = start, max_bs
@@ -317,9 +317,9 @@ def find_max_train_batch_size(
             x = torch.randn(bs, *input_shape, device=device)
             y = torch.randn(bs, 1, device=device)
             opt = optimizer_cls(model.parameters())
-            scaler = torch.cuda.amp.GradScaler()
+            scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
 
-            with torch.autocast(device_type="cuda", dtype=torch.float16):
+            with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=use_amp):
                 out = model(x)
                 loss = F.mse_loss(out, y)
 
