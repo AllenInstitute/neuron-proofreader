@@ -72,6 +72,7 @@ class Trainer:
         max_epochs=200,
         pos_weight=None,
         save_mistake_mips=False,
+        use_amp=True,
     ):
         """
         Instantiates a Trainer object.
@@ -98,6 +99,9 @@ class Trainer:
             is None (no reweighting).
         save_mistake_mips : bool, optional
             Indication of whether to save MIPs of mistakes. Default is False.
+        use_amp : bool, optional
+            If True, enables automatic mixed precision (float16) training.
+            Default is True.
         """
         # Set experiment name
         if exp_name is None:
@@ -123,7 +127,8 @@ class Trainer:
         self.criterion = nn.BCEWithLogitsLoss(pos_weight=pw)
         self.model = model.to(device)
         self.optimizer = optim.AdamW(self.model.parameters(), lr=lr)
-        self.scaler = torch.cuda.amp.GradScaler(enabled=True)
+        self.use_amp = use_amp
+        self.scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
         self.scheduler = CosineAnnealingWarmRestarts(
             self.optimizer, T_0=20, T_mult=2
         )
@@ -246,7 +251,7 @@ class Trainer:
         else:
             x = x.to(self.device)
         y = y.to(self.device)
-        with torch.autocast(device_type="cuda", dtype=torch.float16):
+        with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=self.use_amp):
             y_pred = self.model(x)
             loss = self.criterion(y_pred, y)
         return y, y_pred, loss
