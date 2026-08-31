@@ -129,14 +129,21 @@ class ProofreadPipeline:
             If True, saves the corrected graph SWCs into the step directory.
             Default is True.
         """
+        # Step initializations
         self.step_cnt += 1
         self.log(f"\nStep {self.step_cnt}: Soma Split Proofreading")
         step_output = self._step_dir(SomaSplitProofreader.step_name)
+
+        # Run proofreading
         proofreader = SomaSplitProofreader(
-            self.graph, step_output, max_dist=max_dist, log_handle=self.log_handle
+            self.graph,
+            step_output,
+            max_dist=max_dist,
+            log_handle=self.log_handle,
         )
         proofreader()
 
+        # Save results
         if save_fragments:
             self.log("Graph State...")
             self.log(self.graph.__repr__())
@@ -164,12 +171,14 @@ class ProofreadPipeline:
             If True, saves the corrected graph SWCs into the step directory.
             Default is True.
         """
-        if split_config.batch_size is None:
-            raise ValueError("split_config.batch_size must be set before running learned split detection.")
+        # Step initializations
+        assert split_config.batch_size, "split_config.batch_size must be set!"
         self.step_cnt += 1
         self.log(f"\nStep {self.step_cnt}: Learned Split Detection")
         img_config = self._img_config(split_config.patch_shape)
         step_output = self._step_dir(LearnedSplitProofreader.step_name)
+
+        # Run proofreading
         proofreader = LearnedSplitProofreader(
             self.graph,
             model,
@@ -186,6 +195,7 @@ class ProofreadPipeline:
             removal_threshold=split_config.removal_threshold,
         )
 
+        # Save result
         if save_fragments:
             self.log("Graph State...")
             self.log(self.graph.__repr__())
@@ -194,7 +204,7 @@ class ProofreadPipeline:
 
     # --- Merge Proofreading ---
     def merge_proofreading(
-        self, mode, save_detections=True, save_fragments=False
+        self, mode, save_detections=True, save_fragments=True
     ):
         """
         Runs rule-based merge proofreading.
@@ -208,7 +218,7 @@ class ProofreadPipeline:
             True.
         save_fragments : bool, optional
             If True, saves the corrected graph SWCs into the step directory.
-            Default is False.
+            Default is True.
         """
         self.step_cnt += 1
         self.log(f"\nStep {self.step_cnt}: Merge Proofreading ({mode})")
