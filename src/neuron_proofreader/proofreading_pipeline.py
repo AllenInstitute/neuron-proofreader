@@ -26,7 +26,8 @@ from neuron_proofreader.merge_proofreading.search_datasets import (
 )
 from neuron_proofreader.proposal_graph import ProposalGraph
 from neuron_proofreader.split_proofreading.split_inference import (
-    SplitProofreader,
+    LearnedSplitProofreader,
+    SomaSplitProofreader,
 )
 from neuron_proofreader.utils import geometry_util, util
 
@@ -115,49 +116,81 @@ class ProofreadPipeline:
         self.log(f"Module Runtime: {elapsed:.2f} {unit}\n")
 
     # --- Split Proofreading ---
-    def split_proofreading(
+    def soma_split_proofreading(self, max_dist=25, save_fragments=True):
+        """
+        Runs soma-based split proofreading by connecting fragments near somas.
+
+        Parameters
+        ----------
+        max_dist : float, optional
+            Maximum distance (in microns) to search for fragments near each
+            soma. Default is 25.
+        save_fragments : bool, optional
+            If True, saves the corrected graph SWCs into the step directory.
+            Default is True.
+        """
+        self.step_cnt += 1
+        self.log(f"\nStep {self.step_cnt}: Soma Split Proofreading")
+        step_output = self._step_dir(SomaSplitProofreader.step_name)
+        proofreader = SomaSplitProofreader(
+            self.graph, step_output, max_dist=max_dist, log_handle=self.log_handle
+        )
+        proofreader()
+
+        if save_fragments:
+            self.log("Graph State...")
+            self.log(self.graph.__repr__())
+            self.save_graph(os.path.basename(step_output))
+
+    def learned_split_detection(
         self,
         model,
         proposals_config,
-        batch_size=32,
-        dt=0.05,
-        min_threshold=0.8,
-        removal_threshold=0.3,
-        patch_shape=None,
-        save_detections=True,
+        split_config,
+        save_fragments=True,
     ):
-        # Run inference
+        """
+        Runs learned split detection using a GNN.
+
+        Parameters
+        ----------
+        model : torch.nn.Module
+            Trained model used to classify proposals.
+        proposals_config : ProposalsConfig
+            Config object with settings for proposal generation.
+        split_config : SplitInferenceConfig
+            Config object with settings for split inference.
+        save_fragments : bool, optional
+            If True, saves the corrected graph SWCs into the step directory.
+            Default is True.
+        """
+        if split_config.batch_size is None:
+            raise ValueError("split_config.batch_size must be set before running learned split detection.")
         self.step_cnt += 1
-        self.log(f"\nStep {self.step_cnt}: Split Proofreading")
-        img_config = self._img_config(patch_shape)
-        step_output = self._step_dir(SplitProofreader.step_name)
-        proofreader = SplitProofreader(
+        self.log(f"\nStep {self.step_cnt}: Learned Split Detection")
+        img_config = self._img_config(split_config.patch_shape)
+        step_output = self._step_dir(LearnedSplitProofreader.step_name)
+        proofreader = LearnedSplitProofreader(
             self.graph,
             model,
             img_config,
             step_output,
-            batch_size=batch_size,
+            batch_size=split_config.batch_size,
             device=self.device,
             log_handle=self.log_handle,
         )
         proofreader(
             proposals_config,
-            dt=dt,
-            min_threshold=min_threshold,
-            removal_threshold=removal_threshold,
+            dt=split_config.dt,
+            min_threshold=split_config.min_threshold,
+            removal_threshold=split_config.removal_threshold,
         )
 
-        # Save final graph
-        if save_detections:
-            self.log("Final Graph...")
+        if save_fragments:
+            self.log("Graph State...")
             self.log(self.graph.__repr__())
             self.reconfigure_node_radius()
-            self.save_graph("final_swcs")
-
-    def connect_soma_fragments(self, max_dist=25):
-        self.log(f"\nConnect Soma Fragments with dist={max_dist}")
-        summary = self.graph.connect_soma_fragments(max_dist=max_dist)
-        self.log(summary)
+            self.save_graph(os.path.basename(step_output))
 
     # --- Merge Proofreading ---
     def merge_proofreading(
@@ -198,18 +231,13 @@ class ProofreadPipeline:
             merge_sites = [self.graph.node_xyz[i] for i in merge_nodes]
             proofreader.save_sites(merge_sites)
         if save_fragments:
-            self._save_graph_to(step_output)
+            self.save_graph(os.path.basename(step_output))
             proofreader.save_parameters()
 
     def learned_merge_detection(
         self,
-        mode,
         model,
-        batch_size=16,
-        threshold=0.5,
-        min_search_size=0,
-        patch_shape=None,
-        prefetch=64,
+        merge_config,
         save_detections=True,
         save_fragments=True,
     ):
@@ -218,30 +246,21 @@ class ProofreadPipeline:
 
         Parameters
         ----------
-        mode : str
-            Search strategy. "dense" scores every node along each fragment;
-            "sparse" restricts scoring to branching nodes.
         model : torch.nn.Module
             Trained model used to score candidate merge sites.
-        batch_size : int, optional
-            Number of patches per forward pass. Default is 16.
-        threshold : float, optional
-            Confidence threshold above which a site is flagged as a merge.
-            Default is 0.5.
-        min_search_size : float, optional
-            Minimum fragment cable length (in microns) to include in the
-            search. Default is 0.
-        patch_shape : Tuple[int], optional
-            Patch shape to use for image sampling, overriding img_config.
-            Default is None (uses img_config.patch_shape).
-        prefetch : int, optional
-            Number of patches to prefetch. Default is 64.
+        merge_config : MergeInferenceConfig
+            Config object with settings for merge inference.
         save_detections : bool, optional
             If True, saves detection results to output_dir. Default is True.
+        save_fragments : bool, optional
+            If True, saves the corrected graph SWCs into the step directory.
+            Default is True.
         """
+        if merge_config.batch_size is None:
+            raise ValueError("merge_config.batch_size must be set before running learned merge detection.")
         self.step_cnt += 1
-        self.log(f"\nStep {self.step_cnt}: Learned Merge Detection ({mode})")
-        img_config = self._img_config(patch_shape)
+        self.log(f"\nStep {self.step_cnt}: Learned Merge Detection ({merge_config.search_mode})")
+        img_config = self._img_config(merge_config.patch_shape)
         step_output = self._step_dir(MLMergeProofreader.step_name)
         DatasetClass = DenseSearchDataset if mode == "dense" else SparseSearchDataset
         dataset = DatasetClass(
@@ -265,7 +284,7 @@ class ProofreadPipeline:
         if save_detections:
             proofreader.save_sites(proofreader.merge_sites_xyz)
         if save_fragments:
-            self._save_graph_to(step_output)
+            self.save_graph(os.path.basename(step_output))
             proofreader.save_parameters()
 
     # --- Helpers ---
@@ -279,8 +298,7 @@ class ProofreadPipeline:
             Text to be logged and printed.
         """
         print(txt)
-        self.log_handle.write(txt)
-        self.log_handle.write("\n")
+        self.log_handle.write(txt + "\n")
 
     def reconfigure_node_radius(self):
         n_nodes = len(self.graph.node_radius)
@@ -306,10 +324,14 @@ class ProofreadPipeline:
         util.mkdir(path)
         return path
 
-    def save_graph(self, dirname):
-        self._save_graph_to(os.path.join(self.output_dir, dirname))
+    def save_final_result(self):
+        self.log("\nFinal Graph...")
+        self.log(self.graph.__repr__())
+        self.reconfigure_node_radius()
+        self.save_graph("final_swcs")
 
-    def _save_graph_to(self, dirpath):
+    def save_graph(self, dirname):
+        dirpath = os.path.join(self.output_dir, dirname)
         util.mkdir(dirpath)
         temp_dir = os.path.join(dirpath, "temp")
         self.graph.to_zipped_swcs_multithreaded(temp_dir)
