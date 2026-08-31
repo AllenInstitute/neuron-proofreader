@@ -1,5 +1,5 @@
 """
-Created on Sun Aug 3 16:00:00 2026
+Created on Mon Aug 4 16:00:00 2026
 
 @author: Anna Grim
 @email: anna.grim@alleninstitute.org
@@ -112,96 +112,63 @@ class MergeProofreader(ABC):
 
 class MLMergeProofreader(MergeProofreader):
     """
-    CNN-based merge proofreader. Scores skeleton nodes with a trained model,
-    applies graph-aware NMS and spatial averaging to consolidate detections,
-    and optionally removes detected sites.
+    ML-based merge proofreader. Runs inference over a pre-built dataset, then
+    applies graph-aware NMS and spatial averaging to consolidate detections.
+    All search-strategy details are encapsulated in the dataset.
     """
 
     step_name = "learned_merge_correction"
 
     def __init__(
         self,
-        graph,
+        dataset,
         model,
-        img_config,
         output_dir,
-        mode="dense",
         batch_size=16,
         device="cuda",
-        modality="image",
-        save_result=True,
-        min_search_size=0,
-        prefetch=64,
-        threshold=0.5,
         log_handle=None,
+        save_result=True,
+        threshold=0.5,
     ):
         """
         Initializes an MLMergeProofreader.
 
         Parameters
         ----------
-        graph : FragmentsGraph
-            Skeleton graph to search for merge errors.
         model : torch.nn.Module
             Trained model used to score candidate merge sites.
-        img_config : ImageConfig
-            Config object that contains parameters for processing images.
+        dataset : SearchDataset
+            Pre-built search dataset. Must expose graph, patch_shape,
+            collate_fn, and estimate_iterations().
         output_dir : str
             Directory where results of the inference will be saved.
-        mode : str, optional
-            Search strategy. "dense" scores every node along each fragment;
-            "sparse" restricts scoring to branching nodes. Default is "dense".
         batch_size : int, optional
             Number of patches per forward pass. Default is 16.
         device : str, optional
             Device on which to run inference. Default is "cuda".
-        save_result : bool, optional
-            If True, saves detection results to output_dir. Default is True.
-        min_search_size : float, optional
-            Minimum fragment cable length (in microns) to include in the
-            search. Default is 0.
-        prefetch : int, optional
-            Number of patches to prefetch. Default is 64.
-        threshold : float, optional
-            Confidence threshold above which a site is flagged as a merge.
-            Default is 0.5.
         log_handle : file-like, optional
             Open file handle to write log messages to. If None, a new
             summary.txt is opened in output_dir. Default is None.
+        save_result : bool, optional
+            If True, saves detection results to output_dir. Default is True.
+        threshold : float, optional
+            Confidence threshold above which a site is flagged as a merge.
+            Default is 0.5.
         """
-        # Call parent class
-        super().__init__(graph, output_dir, log_handle)
-
-        # Create search dataset
-        DatasetClass = (
-            DenseSearchDataset if mode == "dense" else SparseSearchDataset
-        )
-        self.dataset = DatasetClass(
-            graph,
-            img_config,
-            modality=modality,
-            min_search_size=min_search_size,
-            prefetch=prefetch,
-        )
-
-        # Instance attributes
+        super().__init__(dataset.graph, output_dir, log_handle)
+        self.dataset = dataset
         self.batch_size = batch_size
         self.device = device
-        self.modality = modality
         self.model = model
-        self.mode = mode
         self.save_result = save_result
-        self.node_preds = np.zeros((len(graph.node_xyz)))
-        self.patch_shape = self.dataset.patch_shape
+        self.node_preds = np.zeros((len(dataset.graph.node_xyz)))
+        self.patch_shape = dataset.patch_shape
         self.threshold = threshold
         self.visited_sites = list()
         self.merge_sites_xyz = list()
 
-    # --- Core ---
     def __call__(self):
-        # Search graph
         t0 = time()
-        self.log("Search Graph...")
         merge_sites = self.search()
 
         # Cache XYZ coords and save predictions before graph is modified
@@ -215,7 +182,6 @@ class MLMergeProofreader(MergeProofreader):
 
         # Report results
         t, unit = util.time_writer(time() - t0)
-        self.log(f"# Detected Merges: {len(merge_sites)}")
         self.log(f"Module Runtime: {t:.2f} {unit}\n")
         if self.save_result:
             self.save_fragment_predictions(inplace=False)
@@ -227,9 +193,8 @@ class MLMergeProofreader(MergeProofreader):
         # Detect merge errors with classification
         t0 = time()
         self.model.eval()
-        collate_fn = multimodal_collate if self.modality != "image" else None
         dataloader = DataLoader(
-            self.dataset, batch_size=self.batch_size, collate_fn=collate_fn
+            self.dataset, batch_size=self.batch_size, collate_fn=self.dataset.collate_fn
         )
         pbar = tqdm(total=self.dataset.estimate_iterations())
         for nodes, x_nodes in dataloader:
@@ -252,8 +217,8 @@ class MLMergeProofreader(MergeProofreader):
 
         # Report results
         rate = len(self.visited_sites) / (time() - t0)
-        print("\n# Detected Merges:", len(merge_sites))
-        print(f"Proofreading Rate: {rate:.2f} sites/s")
+        self.log(f"# Detected Merges: {len(merge_sites)}")
+        self.log(f"Proofreading Rate: {rate:.2f} sites/s")
         return merge_sites
 
     def predict(self, x):
@@ -273,13 +238,7 @@ class MLMergeProofreader(MergeProofreader):
             Predicted merge site likelihoods.
         """
         with torch.inference_mode():
-            if isinstance(x, dict):
-                x = {
-                    k: v.to(self.device) if torch.is_tensor(v) else v
-                    for k, v in x.items()
-                }
-            else:
-                x = x.to(self.device)
+            x = x.to(self.device)
             y = sigmoid(self.model(x))
             y = y.detach().cpu().numpy()
             return np.squeeze(y, axis=1)
@@ -351,9 +310,9 @@ class MLMergeProofreader(MergeProofreader):
                 for node in nodes:
                     try:
                         path = nx.shortest_path(
-                            self.dataset.graph, source=root, target=node
+                            self.graph, source=root, target=node
                         )
-                        if self.dataset.path_length(path) < max_dist + 4:
+                        if self.graph.path_length(path) < max_dist + 4:
                             hits.append(node)
                             visited.add(node)
                     except nx.exception.NetworkXNoPath:
@@ -388,7 +347,7 @@ class MLMergeProofreader(MergeProofreader):
 
     def save_fragment_predictions(self, inplace=True):
         fragments_path = os.path.join(
-            self.output_dir, "fragment_merge_preds.zip"
+            self.output_dir, "fragments_merge_scores.zip"
         )
         if inplace:
             self.graph.node_radius = 10 * np.maximum(self.node_preds, 0.1)
@@ -415,7 +374,7 @@ class MLMergeProofreader(MergeProofreader):
         df = pd.DataFrame(
             columns=["xyz", "Segment_ID", "Prediction", "Degree"]
         )
-        df["xyz"] = list(map(tuple, self.graph.node_xyz[nodes]))
+        df["xyz"] = list(map(tuple, self.graph.node_xyz[nodes].tolist()))
         df["Prediction"] = self.node_preds[nodes]
         df["Segment_ID"] = [self.dataset.node_segment_id(i) for i in nodes]
         df["Degree"] = [self.graph.degree[i] for i in nodes]

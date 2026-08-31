@@ -25,6 +25,7 @@ from neuron_proofreader.machine_learning.image_dataloader import (
 )
 from neuron_proofreader.utils import img_util, util
 from neuron_proofreader.utils.graph_util import subgraph_to_tree_sample
+from neuron_proofreader.utils.ml_util import TensorDict
 
 
 def multimodal_collate(batch):
@@ -35,12 +36,12 @@ def multimodal_collate(batch):
     Returns
     -------
     tuple
-        (nodes_tensor, {"img": img_batch, "tree_sample": list_of_TreeSamples})
+        (nodes_tensor, TensorDict with "img" and "tree_sample" keys)
     """
     nodes = torch.tensor([b[0] for b in batch])
     imgs = torch.stack([b[1] for b in batch])
     tree_samples = [b[2] for b in batch]
-    return nodes, {"img": imgs, "tree_sample": tree_samples}
+    return nodes, TensorDict({"img": imgs, "tree_sample": tree_samples})
 
 
 # --- Datasets ---
@@ -71,6 +72,7 @@ class SearchDataset(IterableDataset, ABC):
             self.get_input = self.get_patch_and_arborist
         else:
             self.get_input = self.get_patch
+        self.collate_fn = multimodal_collate if modality != "image" else None
 
     # --- Core routines ---
     def __iter__(self):
