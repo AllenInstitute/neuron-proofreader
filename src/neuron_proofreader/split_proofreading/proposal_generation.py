@@ -205,7 +205,7 @@ class ProposalGenerator:
         while queue:
             # Visit node
             i, dist_i = queue.pop()
-            if self.graph.degree[i] == 1:
+            if self.graph.degree(i) == 1:
                 return i
 
             # Update queue
@@ -268,7 +268,7 @@ class ProposalGenerator:
         if i is not None:
             is_soma = self.graph.is_soma(i) and self.graph.is_soma(leaf)
             self.graph.n_proposals_blocked += 1 if is_soma else 0
-            return not is_soma and self.graph.degree[i] < 3
+            return not is_soma and self.graph.degree(i) < 3
         else:
             return False
 

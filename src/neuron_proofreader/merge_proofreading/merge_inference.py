@@ -29,8 +29,8 @@ from torch.nn.functional import sigmoid
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-import networkx as nx
 import numpy as np
+import rustworkx as rx
 import os
 import pandas as pd
 import torch
@@ -271,7 +271,7 @@ class MLMergeProofreader(MergeProofreader):
                     iou = img_util.compute_iou3d(
                         xyz_i, xyz_root, self.patch_shape, self.patch_shape
                     )
-                    if iou > 0.3 and self.graph.degree[i] == 2:
+                    if iou > 0.3 and self.graph.degree(i) == 2:
                         merge_sites_set.remove(i)
                         self.node_preds[i] = 0
 
@@ -306,17 +306,19 @@ class MLMergeProofreader(MergeProofreader):
 
             # Check whether to average sites in a single one
             if len(nodes) > 1:
-                hits = list()
+                hits = [root]
                 for node in nodes:
-                    try:
-                        path = nx.shortest_path(
-                            self.graph, source=root, target=node
-                        )
-                        if self.graph.path_length(path) < max_dist + 4:
+                    if node == root:
+                        continue
+                    paths = rx.graph_dijkstra_shortest_paths(
+                        self.dataset.graph, root, target=node,
+                        default_weight=1.0,
+                    )
+                    if node in paths:
+                        path = list(paths[node])
+                        if self.dataset.path_length(path) < max_dist + 4:
                             hits.append(node)
                             visited.add(node)
-                    except nx.exception.NetworkXNoPath:
-                        pass
 
                 xyz_arr = np.array([self.graph.node_xyz[i] for i in hits])
                 xyz_avg = xyz_arr.mean(axis=0)
@@ -350,11 +352,13 @@ class MLMergeProofreader(MergeProofreader):
             self.output_dir, "fragments_merge_scores.zip"
         )
         if inplace:
-            self.graph.node_radius = 10 * np.maximum(self.node_preds, 0.1)
+            self.graph.node_feats["radius"] = 10 * np.maximum(
+                self.node_preds, 0.1
+            )
             self.dataset.to_zipped_swcs(fragments_path, use_radius=True)
         else:
             graph = deepcopy(self.graph)
-            graph.node_radius = 10 * np.maximum(self.node_preds, 0.1)
+            graph.node_feats["radius"] = 10 * np.maximum(self.node_preds, 0.1)
             graph.to_zipped_swcs(fragments_path, use_radius=True)
 
     def save_parameters(self):
@@ -377,7 +381,7 @@ class MLMergeProofreader(MergeProofreader):
         df["xyz"] = list(map(tuple, self.graph.node_xyz[nodes].tolist()))
         df["Prediction"] = self.node_preds[nodes]
         df["Segment_ID"] = [self.dataset.node_segment_id(i) for i in nodes]
-        df["Degree"] = [self.graph.degree[i] for i in nodes]
+        df["Degree"] = [self.graph.degree(i) for i in nodes]
         df.to_csv(os.path.join(self.output_dir, "model_predictions.csv"))
 
     def save_train_dataset(self):
@@ -451,7 +455,7 @@ class HighRiskMergeProofreader(MergeProofreader):
             visited = {root}
             while queue:
                 i, dist_i = queue.pop()
-                if self.graph.degree[i] > 2 and i != root:
+                if self.graph.degree(i) > 2 and i != root:
                     hit_branching_nodes.add(i)
                 for j in self.graph.neighbors(i):
                     dist_j = dist_i + self.graph.dist(i, j)
@@ -504,7 +508,7 @@ class SomaMergeProofreader(MergeProofreader):
             if 1 < len(soma_nodes) < 20:
                 for i in self.graph.find_connecting_path(list(soma_nodes)):
                     dist, _ = somas_kdtree.query(self.graph.node_xyz[i])
-                    if self.graph.degree[i] > 2 and dist > 25:
+                    if self.graph.degree(i) > 2 and dist > 25:
                         merge_nodes.append(i)
 
         return merge_nodes

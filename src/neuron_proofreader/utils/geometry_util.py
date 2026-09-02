@@ -14,8 +14,8 @@ from scipy.linalg import svd
 from scipy.spatial.distance import euclidean
 from tqdm import tqdm
 
-import networkx as nx
 import numpy as np
+import rustworkx as rx
 
 
 def fit_spline_1d(pts, k=3, s=None):
@@ -172,10 +172,11 @@ def remove_doubles(graph, max_cable_length):
         Maximum cable length of connected components to be searched.
     """
     # Set progress bar
-    iterator = nx.connected_components(graph)
+    components = rx.connected_components(graph)
+    iterator = components
     if graph.verbose:
-        total = nx.number_connected_components(graph)
-        iterator = tqdm(iterator, total=total, desc="Filter Doubles")
+        total = len(components)
+        iterator = tqdm(components, total=total, desc="Filter Doubles")
 
     # Search graph
     branching_nodes = set(graph.branching_nodes())

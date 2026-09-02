@@ -26,7 +26,7 @@ dependencies = [
     'google-cloud-storage',
     'matplotlib',
     'more_itertools',
-    'networkx',
+    'rustworkx',
     'pandas',
     'plotly',
     's3fs==2024.12.0',

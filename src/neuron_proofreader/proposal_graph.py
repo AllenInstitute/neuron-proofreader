@@ -13,8 +13,8 @@ information into the graph structure.
 
 from collections import defaultdict
 
-import networkx as nx
 import numpy as np
+import rustworkx as rx
 
 from neuron_proofreader.fragments_graph import FragmentsGraph
 from neuron_proofreader.split_proofreading import groundtruth_generation
@@ -79,72 +79,6 @@ class ProposalGraph(FragmentsGraph):
         self.n_proposals_blocked = 0
         self.reset_proposals()
 
-    # --- Conversions ---
-    @classmethod
-    def from_fragments_graph(cls, graph):
-        """
-        Creates a ProposalGraph from an existing FragmentsGraph, copying all
-        graph structure and node attributes and initializing proposal state.
-
-        Parameters
-        ----------
-        graph : FragmentsGraph
-            Source graph to convert.
-
-        Returns
-        -------
-        ProposalGraph
-            New ProposalGraph with the same structure as the source.
-        """
-        pg = cls.__new__(cls)
-        nx.Graph.__init__(pg)
-        pg.update(graph)
-        pg.anisotropy = graph.anisotropy
-        pg.node_spacing = graph.node_spacing
-        pg.verbose = graph.verbose
-        pg.node_xyz = graph.node_xyz.copy()
-        pg.node_radius = graph.node_radius.copy()
-        pg.node_component_id = graph.node_component_id.copy()
-        pg.component_id_to_swc_id = graph.component_id_to_swc_id.copy()
-        pg.kdtree = graph.kdtree
-        pg.soma_centroids = list(graph.soma_centroids)
-        pg.soma_component_ids = list(graph.soma_component_ids)
-        pg.graph_loader = graph.graph_loader
-        pg.accepts = set()
-        pg.gt_accepts = set()
-        pg.gt_path = None
-        pg.merged_ids = set()
-        pg.n_merges_blocked = 0
-        pg.n_proposals_blocked = 0
-        pg.reset_proposals()
-        return pg
-
-    def to_fragments_graph(self):
-        """
-        Returns a FragmentsGraph with the same structure and node attributes,
-        with all proposal state stripped.
-
-        Returns
-        -------
-        FragmentsGraph
-            New FragmentsGraph derived from this ProposalGraph.
-        """
-        fg = FragmentsGraph.__new__(FragmentsGraph)
-        nx.Graph.__init__(fg)
-        fg.update(self)
-        fg.anisotropy = self.anisotropy
-        fg.node_spacing = self.node_spacing
-        fg.verbose = self.verbose
-        fg.node_xyz = self.node_xyz.copy()
-        fg.node_radius = self.node_radius.copy()
-        fg.node_component_id = self.node_component_id.copy()
-        fg.component_id_to_swc_id = self.component_id_to_swc_id.copy()
-        fg.kdtree = self.kdtree
-        fg.soma_centroids = list(self.soma_centroids)
-        fg.soma_component_ids = list(self.soma_component_ids)
-        fg.graph_loader = self.graph_loader
-        return fg
-
     # --- Update Structure ---
     def relabel_nodes(self):
         """
@@ -171,7 +105,7 @@ class ProposalGraph(FragmentsGraph):
         j : int
             Node ID
         """
-        assert i in self.nodes and j in self.nodes
+        assert i in self.node_indices() and j in self.node_indices()
         self.node_proposals[i].add(j)
         self.node_proposals[j].add(i)
         self.proposals.add(frozenset({i, j}))
@@ -198,7 +132,7 @@ class ProposalGraph(FragmentsGraph):
             proposals are generated from. Default is 0.
         """
         # Proposal generation
-        assert len(self.kdtree.data) == self.number_of_nodes()
+        assert len(self.kdtree.data) == self.num_nodes()
         proposal_generator = ProposalGenerator(
             self,
             allow_nonleaf_proposals=allow_nonleaf_proposals,
@@ -218,8 +152,8 @@ class ProposalGraph(FragmentsGraph):
             self.gt_accepts = groundtruth_generation.run(gt_graph, self)
 
     def is_mergeable(self, i, j):
-        one_leaf = self.degree[i] == 1 or self.degree[j] == 1
-        not_branching = self.degree[i] < 3 and self.degree[j] < 3
+        one_leaf = self.degree(i) == 1 or self.degree(j) == 1
+        not_branching = self.degree(i) < 3 and self.degree(j) < 3
         somas_check = not (self.is_soma(i) and self.is_soma(j))
         return somas_check and (one_leaf and not_branching)
 
@@ -259,7 +193,7 @@ class ProposalGraph(FragmentsGraph):
             True if both nodes in a proposal are leafs; otherwise, False.
         """
         i, j = proposal
-        return self.degree[i] == 1 and self.degree[j] == 1
+        return self.degree(i) == 1 and self.degree(j) == 1
 
     def list_proposals(self):
         """
@@ -285,7 +219,7 @@ class ProposalGraph(FragmentsGraph):
                 self.update_component_ids(component_id, i)
 
             # Update graph
-            self.add_edge(i, j)
+            self.add_edge(i, j, None)
             self.accepts.add(proposal)
             self.remove_proposal(proposal)
         else:
@@ -364,12 +298,9 @@ class ProposalGraph(FragmentsGraph):
         # Compute features
         dot_i = abs(np.dot(dir_proposal, dir_i))
         dot_j = abs(np.dot(dir_proposal, dir_j))
-        if self.is_leaf2leaf(proposal):
-            dot_ij = np.dot(dir_i, dir_j)
-        else:
-            dot_ij = np.dot(dir_i, dir_j)
-            if not self.is_leaf2leaf(proposal):
-                dot_ij = max(dot_ij, -dot_ij)
+        dot_ij = np.dot(dir_i, dir_j)
+        if not self.is_leaf2leaf(proposal):
+            dot_ij = abs(dot_ij)
         return np.array([dot_i, dot_j, dot_ij])
 
     def proposal_length(self, proposal):
@@ -383,7 +314,7 @@ class ProposalGraph(FragmentsGraph):
 
     def proposal_radius(self, proposal):
         i, j = proposal
-        return self.node_radius[i], self.node_radius[j]
+        return self.node_feats["radius"][i], self.node_feats["radius"][j]
 
     def proposal_xyz(self, proposal):
         i, j = proposal
@@ -392,7 +323,7 @@ class ProposalGraph(FragmentsGraph):
     # --- Helpers ---
     def computation_graph(self):
         def is_computation_node(i):
-            return self.degree[i] != 2 or len(self.node_proposals[i]) > 0
+            return self.degree(i) != 2 or len(self.node_proposals[i]) > 0
 
         # Add nodes
         graph = ProposalComputationGraph()
@@ -421,7 +352,7 @@ class ProposalGraph(FragmentsGraph):
                 # Add computation edge
                 edge_id = frozenset({i, curr})
                 graph.edge_to_path[edge_id] = np.array(path, dtype=int)
-                graph.add_edge(i, curr)
+                graph.pg_add_edge(i, curr)
 
                 # Mark edges as visited
                 for a, b in zip(path[:-1], path[1:]):
@@ -456,28 +387,57 @@ class ProposalGraph(FragmentsGraph):
         root : int
             Node ID
         """
-        queue = [root]
-        visited = set(queue)
-        while len(queue) > 0:
-            i = queue.pop()
-            self.node_component_id[i] = component_id
-            visited.add(i)
-            for j in [j for j in self.neighbors(i) if j not in visited]:
-                queue.append(j)
+        nodes = list(rx.node_connected_component(self, root))
+        self.node_component_id[nodes] = component_id
 
 
 # --- Computation Graph ---
-class ProposalComputationGraph(nx.Graph):
+class ProposalComputationGraph(rx.PyGraph):
+
+    def __new__(cls, *args, **kwargs):
+        # multigraph=False keeps repeated add_edge(u, v) idempotent, matching
+        # networkx.Graph semantics (parallel chains between the same pair of
+        # computation nodes would otherwise create duplicate edges).
+        return super().__new__(cls, multigraph=False)
 
     def __init__(self, max_proposals=64):
         # Call parent class
         super().__init__()
 
         # Instance attributes
+        self._pg_to_comp = {}  # ProposalGraph node ID → comp graph index
         self.edge_to_path = dict()
         self.gt_accepts = set()
         self.max_proposals = max_proposals
         self.proposals = set()
+
+    # --- ProposalGraph-ID-aware helpers ---
+    def pg_add_node(self, pg_id):
+        """Add a node keyed by its ProposalGraph ID (no-op if present)."""
+        if pg_id not in self._pg_to_comp:
+            comp_idx = self.add_node(pg_id)
+            self._pg_to_comp[pg_id] = comp_idx
+
+    def pg_add_edge(self, pg_i, pg_j, weight=None):
+        """Add an edge between ProposalGraph nodes, creating them if needed."""
+        self.pg_add_node(pg_i)
+        self.pg_add_node(pg_j)
+        self.add_edge(self._pg_to_comp[pg_i], self._pg_to_comp[pg_j], weight)
+
+    def pg_neighbors(self, pg_id):
+        """Return ProposalGraph IDs of the neighbors of node pg_id."""
+        comp_idx = self._pg_to_comp[pg_id]
+        return [self[n] for n in self.neighbors(comp_idx)]
+
+    @property
+    def pg_nodes(self):
+        """Return all ProposalGraph node IDs present in this graph."""
+        return list(self._pg_to_comp.keys())
+
+    @property
+    def pg_edges(self):
+        """Return edges as frozensets of ProposalGraph node IDs."""
+        return [frozenset({self[i], self[j]}) for i, j in self.edge_list()]
 
     def is_full(self):
         return self.n_proposals() >= self.max_proposals

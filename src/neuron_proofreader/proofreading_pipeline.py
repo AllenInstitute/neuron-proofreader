@@ -318,11 +318,12 @@ class ProofreadPipeline:
         self.log_handle.write(txt + "\n")
 
     def reconfigure_node_radius(self):
-        n_nodes = len(self.graph.node_radius)
-        self.graph.node_radius = np.ones((n_nodes), dtype=np.float16)
+        n_nodes = self.graph.num_nodes()
+        radius = np.ones((n_nodes), dtype=np.float16)
         for i, j in self.graph.accepts:
-            self.graph.node_radius[i] = 6
-            self.graph.node_radius[j] = 6
+            radius[i] = 6
+            radius[j] = 6
+        self.graph.node_feats["radius"] = radius
 
     def save_fragment_ids(self):
         path = f"{self.output_dir}/segment_ids.txt"

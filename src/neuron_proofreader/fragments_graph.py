@@ -11,11 +11,11 @@ a collection of neuron fragments and provides proofreading-specific operations.
 
 from tqdm import tqdm
 
-import networkx as nx
 import numpy as np
+import rustworkx as rx
 
 from arborist.skeleton_graph import SkeletonGraph
-from arborist.utils.graph_loading import GraphLoader, count_nodes
+from arborist.utils.graph_loading import GraphLoader
 from neuron_proofreader.utils import geometry_util, img_util, util
 
 
@@ -30,7 +30,6 @@ class FragmentsGraph(SkeletonGraph):
         self,
         anisotropy=(1.0, 1.0, 1.0),
         min_cable_length=0,
-        min_swc_pts=1,
         node_spacing=1,
         prune_depth=20,
         use_anisotropy=True,
@@ -64,6 +63,9 @@ class FragmentsGraph(SkeletonGraph):
         self.soma_centroids = list()
         self.soma_component_ids = list()
 
+        # Note: when use_anisotropy is False, the loader reads SWCs without
+        # scaling while self.anisotropy keeps the true factors for image
+        # coordinate conversion (e.g. node_voxel).
         anisotropy_actual = anisotropy if use_anisotropy else (1.0, 1.0, 1.0)
         self.graph_loader = GraphLoader(
             anisotropy=anisotropy_actual,
@@ -80,58 +82,45 @@ class FragmentsGraph(SkeletonGraph):
         new_node_attr[: len(node_attr)] = node_attr
         setattr(self, attr_name, new_node_attr)
 
-    # --- Load ---
-    def load(self, swc_pointer):
+    def resize_node_feats(self, num_nodes):
         """
-        Loads SWC files into the graph.
+        Resizes every array in "node_feats" to hold "num_nodes" entries.
 
-        Parameters
-        ----------
-        swc_pointer : str
-            Object that points to SWC files to be loaded.
+        Resizing the whole dictionary at once keeps the features aligned with
+        each other as new ones are added upstream in SkeletonGraph.
         """
-        irreducibles = self.graph_loader(swc_pointer)
-
-        num_nodes = count_nodes(irreducibles)
-        self.node_component_id = np.zeros((num_nodes), dtype=int)
-        self.node_radius = np.zeros((num_nodes), dtype=np.float16)
-        self.node_xyz = np.zeros((num_nodes, 3), dtype=np.float32)
-
-        component_id = 0
-        while irreducibles:
-            self.add_connected_component(irreducibles.pop(), component_id)
-            component_id += 1
-
-        self.check_swc_ids()
-        self.set_kdtree()
+        for key, values in self.node_feats.items():
+            resized = np.empty((num_nodes,), dtype=values.dtype)
+            resized[: len(values)] = values
+            self.node_feats[key] = resized
 
     # --- Soma Operations ---
     def load_somas(self, soma_centroids):
-        num_components = nx.number_connected_components(self)
-        num_nodes = self.number_of_nodes()
+        num_components = self.num_connected_components()
+        num_nodes = self.num_nodes()
         num_somas = len(soma_centroids)
 
         self.resize_node_attr((num_nodes + num_somas), "node_component_id")
-        self.resize_node_attr((num_nodes + num_somas), "node_radius")
         self.resize_node_attr((num_nodes + num_somas, 3), "node_xyz")
+        self.resize_node_feats(num_nodes + num_somas)
 
         for idx, xyz in enumerate(soma_centroids, start=1):
-            node_id = self.number_of_nodes()
-            assert node_id not in self.nodes
             dist_i, i = self.kdtree.query(xyz)
             if dist_i < 25:
-                self.add_edge(i, node_id)
+                node_id = self.add_node(None)
+                self.add_edge(i, node_id, None)
                 component_id = self.node_component_id[i]
                 swc_id = self.node_swc_id(i)
             elif dist_i < 50:
-                self.add_node(node_id)
+                node_id = self.add_node(None)
                 component_id = num_components + idx
                 swc_id = f"soma-component-{idx}"
             else:
                 continue
             self.component_id_to_swc_id[component_id] = swc_id
             self.node_component_id[node_id] = component_id
-            self.node_radius[node_id] = 20
+            self.node_feats["radius"][node_id] = 20
+            self.node_feats["type"][node_id] = 1  # SWC compartment code: soma
             self.node_xyz[node_id] = xyz
             self.soma_centroids.append(xyz)
 
@@ -151,8 +140,8 @@ class FragmentsGraph(SkeletonGraph):
                         (self.node_xyz[nodes[idxs]] - soma_xyz) ** 2, axis=1
                     )
                     node = nodes[idxs[np.argmin(dists)]]
-                    if not nx.has_path(self, node, soma_node):
-                        self.add_edge(node, soma_node)
+                    if not rx.graph_has_path(self, node, soma_node):
+                        self.add_edge(node, soma_node, None)
                         self.update_component_ids(soma_component_id, node)
                         merge_cnt += 1
                         somas_connected.append(soma_component_id)
@@ -170,7 +159,7 @@ class FragmentsGraph(SkeletonGraph):
                 soma_nodes.append(i)
         return soma_nodes
 
-    def remove_merge_sites(self, merge_site_nodes, max_depth=10):
+    def remove_merge_sites(self, merge_site_nodes, max_depth=8):
         """
         Removes detected merge sites and their local neighborhoods from the
         graph.
@@ -181,18 +170,16 @@ class FragmentsGraph(SkeletonGraph):
             Node IDs identified as merge sites.
         max_depth : float, optional
             Radius (in microns) around each merge site to remove. Default
-            is 10.
+            is 8.
         """
         rm_nodes = set()
-        for root in tqdm(merge_site_nodes, desc="Remove Merge Sites"):
-            root = self.find_nearby_branching_node(root)
-            nbhd = self.nodes_within_distance(root, max_depth)
+        for root in merge_site_nodes:
+            nbhd = set(self.nodes_within_distance(root, max_depth))
             for i in list(nbhd):
-                if i != root and self.degree[i] >= 3:
-                    nbhd.extend(self.nodes_within_distance(root, 8))
-            rm_nodes.update(set(nbhd))
+                if i != root and self.degree(i) >= 3:
+                    nbhd.update(self.nodes_within_distance(i, max_depth))
+            rm_nodes |= nbhd
         self.remove_nodes(rm_nodes)
-        print("# Nodes Deleted:", len(rm_nodes))
 
     # --- Image Coordinate Helpers ---
     def node_voxel(self, i):
@@ -216,7 +203,7 @@ class FragmentsGraph(SkeletonGraph):
             origin = metadata["chunk_origin"][::-1]
             shape = metadata["chunk_shape"][::-1]
             nodes = list()
-            for i in self.nodes:
+            for i in self.node_indices():
                 voxel = np.array(self.node_voxel(i))
                 if not img_util.is_contained(voxel - origin, shape):
                     nodes.append(i)
@@ -231,13 +218,13 @@ class FragmentsGraph(SkeletonGraph):
         return geometry_util.tangent(self.node_xyz[np.array(path)])
 
     def __repr__(self):
-        n_components = format(nx.number_connected_components(self), ",")
-        n_nodes = format(self.number_of_nodes(), ",")
-        n_edges = format(self.number_of_edges(), ",")
+        n_components = format(self.num_connected_components(), ",")
+        n_nodes = format(self.num_nodes(), ",")
+        n_edges = format(self.num_edges(), ",")
         return (
-            f"   FragmentsGraph(\n"
-            f"      num_connected_components={n_components},\n"
-            f"      num_nodes={n_nodes},\n"
-            f"      num_edges={n_edges},\n"
-            f"   )"
+            f"FragmentsGraph(\n"
+            f"   num_connected_components={n_components},\n"
+            f"   num_nodes={n_nodes},\n"
+            f"   num_edges={n_edges},\n"
+            f")"
         )

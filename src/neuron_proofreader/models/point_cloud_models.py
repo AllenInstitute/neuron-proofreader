@@ -293,10 +293,10 @@ def index_points(points, idx):
 
 def subgraph_to_point_cloud(graph, n_points=3600):
     point_cloud = list()
-    for n1, n2 in graph.edges:
+    for n1, n2 in graph.edge_list():
         # Use average radius
-        r1 = graph.node_radius[n1]
-        r2 = graph.node_radius[n2]
+        r1 = graph.node_feats["radius"][n1]
+        r2 = graph.node_feats["radius"][n2]
         r = (r1 + r2) / 2
 
         pts = sample_cylinder_between_points(
