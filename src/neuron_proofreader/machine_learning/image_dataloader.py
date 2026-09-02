@@ -159,7 +159,7 @@ class PatchLoader(ABC):
                     visited.add(frozenset({i, j}))
 
     def annotate_fragment(self, mask, subgraph, offset, fill_val=1):
-        for node1, node2 in subgraph.edges:
+        for node1, node2 in subgraph.edge_list():
             # Get local voxel coordinates
             voxel1 = subgraph.node_local_voxel(node1, offset)
             voxel2 = subgraph.node_local_voxel(node2, offset)
@@ -281,4 +281,25 @@ class DetectionBatchLoader(PatchLoader):
 
 
 class ProposalPatchLoader(PatchLoader):
-    pass
+    """
+    Reads image patches centered on proposals. Each patch is a cube sized to
+    contain both proposal endpoints plus padding.
+    """
+
+    def __init__(self, graph, img_config, padding=40):
+        super().__init__(graph, img_config)
+        self.padding = padding
+
+    def __call__(self, proposal):
+        center, shape = self.compute_patch_specs(proposal)
+        offset = img_util.get_offset(center, shape)
+        img = self.read_image(center, shape)
+        return img, offset
+
+    def compute_patch_specs(self, proposal):
+        node1, node2 = tuple(proposal)
+        voxel1 = np.array(self.graph.node_voxel(node1))
+        voxel2 = np.array(self.graph.node_voxel(node2))
+        center = tuple(((voxel1 + voxel2) / 2).astype(int))
+        length = int(np.max(np.abs(voxel2 - voxel1))) + 2 * self.padding
+        return center, (length, length, length)

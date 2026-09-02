@@ -18,8 +18,9 @@ from torch_geometric.data import HeteroData
 import numpy as np
 import torch
 
+from neuron_proofreader.configs import ImageConfig
 from neuron_proofreader.machine_learning.image_dataloader import (
-    TensorStoreImage,
+    ProposalPatchLoader,
 )
 from arborist.utils.graph_utils import edges_to_line_graph
 from neuron_proofreader.utils import geometry_util, img_util, util
@@ -127,11 +128,11 @@ class SkeletonFeatureExtractor:
             Subgraph of "graph" attribute to extract features for.
         """
         node_features = dict()
-        for i in subgraph.nodes:
+        for i in subgraph.pg_nodes:
             node_features[i] = np.array(
                 [
-                    self.graph.degree[i],
-                    self.graph.node_radius[i],
+                    self.graph.degree(i),
+                    self.graph.node_feats["radius"][i],
                     len(self.graph.node_proposals[i]),
                 ]
             )
@@ -152,11 +153,11 @@ class SkeletonFeatureExtractor:
             Dictionary that maps an edge to its feature vector.
         """
         edge_features = dict()
-        for edge in map(frozenset, subgraph.edges):
+        for edge in subgraph.pg_edges:
             path = subgraph.edge_to_path[edge]
             edge_features[edge] = np.array(
                 [
-                    np.mean(self.graph.node_radius[path]),
+                    np.mean(self.graph.node_feats["radius"][path]),
                     min(self.graph.path_length(path), 5000) / 5000,
                 ],
             )
@@ -246,9 +247,15 @@ class ImageFeatureExtractor:
             Number of voxels to be added in each dimension from start and end
             point of proposal for image patch extraction. Default is 40.
         """
-        self.brightness_clip = brightness_clip
+        img_config = ImageConfig(
+            brightness_clip=brightness_clip,
+            img_path=img_path,
+            patch_shape=patch_shape,
+        )
         self.graph = graph
-        self.img = TensorStoreImage(img_path)
+        self.patch_loader = ProposalPatchLoader(
+            graph, img_config, padding=padding
+        )
         self.patch_shape = patch_shape
         self.padding = padding
 
@@ -264,113 +271,58 @@ class ImageFeatureExtractor:
             Data structure that stores features.
         """
         with ThreadPoolExecutor() as executor:
-            # Assign threads
-            pending = dict()
-            for proposal in subgraph.proposals:
-                thread = executor.submit(self.init_extractor, proposal)
-                pending[thread] = proposal
-
-            # Store results
+            pending = {
+                executor.submit(self.extract, p): p
+                for p in subgraph.proposals
+            }
             patches, profiles = dict(), dict()
-            for thread in as_completed(pending.keys()):
+            for thread in as_completed(pending):
                 proposal = pending.pop(thread)
-                extractor = thread.result()
-
-                profiles[proposal] = extractor.get_intensity_profile()
-                patches[proposal] = extractor.get_input_patch()
+                profiles[proposal], patches[proposal] = thread.result()
 
         # Update features
         features.set_features(patches, "proposal_patches")
         features.integrate_proposal_profiles(profiles)
 
-    def init_extractor(self, proposal):
+    def extract(self, proposal):
         """
-        Initializes a PatchFeatureExtractor for a given proposal.
+        Extracts the intensity profile and input patch for a proposal.
 
         Parameters
         ----------
-        proposal : Any
+        proposal : Frozenset[int]
             Proposal that image patches are centered about.
 
         Returns
         -------
-        extractor : PatchFeatureExtractor
-            Feature extractor configured with the cropped image, segment mask,
-            spatial offset, and patch shape.
+        Tuple[numpy.ndarray]
+            Intensity profile and input patch.
         """
-        # Compute patch specs
-        center, shape = self.compute_crop(proposal)
-        offset = img_util.get_offset(center, shape)
-
-        # Read images
-        img = self.read_image(center, shape)
+        img, offset = self.patch_loader(proposal)
         mask = self.create_segment_mask(proposal, img.shape, offset)
-
-        # Create patch feature extractor
         extractor = PatchFeatureExtractor(
             self.graph, img, mask, proposal, offset, self.patch_shape
         )
-        return extractor
+        return extractor.get_intensity_profile(), extractor.get_input_patch()
 
     # --- Helpers ---
     def create_segment_mask(self, proposal, shape, offset):
         # Find nearby nodes
         center = self.graph.proposal_midpoint(proposal)
-        nodes = self.graph.kdtree.query_ball_point(center, self.padding + 10)
+        nodes = set(
+            self.graph.kdtree.query_ball_point(center, self.padding + 10)
+        )
 
         # Populate mask
-        mask = np.zeros(shape)
-        visited = set()
+        mask = np.zeros(shape, dtype=np.float32)
         for i in nodes:
             voxel_i = self.graph.node_local_voxel(i, offset)
             for j in self.graph.neighbors(i):
-                if frozenset({i, j}) not in visited and j in nodes:
+                if i < j and j in nodes:
                     voxel_j = self.graph.node_local_voxel(j, offset)
                     voxels = geometry_util.make_digital_line(voxel_i, voxel_j)
                     img_util.annotate_voxels(mask, voxels, fill_val=0.25)
-                    visited.add(frozenset({i, j}))
         return mask
-
-    def read_image(self, center, shape):
-        """
-        Reads the image patch specified by the given center and shape.
-
-        Parameters
-        ----------
-        center : Tuple[int]
-            Center of image patch to be read.
-        shape : Tuple[int]
-            Center of image patch to be read.
-        """
-        patch = self.img.read(center, shape)
-        patch = np.minimum(patch, self.brightness_clip)
-        return img_util.normalize(patch)
-
-    def compute_crop(self, proposal):
-        """
-        Computes the center and cubic shape of the image patch for a proposal.
-
-        Parameters
-        ----------
-        proposal : Frozenset[int]
-            Proposal to compute image crop of.
-
-        Returns
-        -------
-        center : Tuple[int]
-            Center of the bounding box between the two proposal nodes.
-        shape : Tuple[int]
-            Cubic shape large enough to contain both nodes with padding.
-        """
-        # Node info
-        node1, node2 = proposal
-        voxel1 = np.array(self.graph.node_voxel(node1))
-        voxel2 = np.array(self.graph.node_voxel(node2))
-
-        # Compute bounds
-        center = tuple(((voxel1 + voxel2) / 2).astype(int))
-        length = np.max(np.abs(voxel2 - voxel1)) + 2 * self.padding
-        return center, (length, length, length)
 
 
 class PatchFeatureExtractor:
@@ -597,8 +549,8 @@ class FeatureSet:
         """
         # Instance Attributes
         self.graph = graph
-        self.node_index_mapping = IndexMapping(graph.nodes)
-        self.edge_index_mapping = IndexMapping(graph.edges)
+        self.node_index_mapping = IndexMapping(graph.pg_nodes)
+        self.edge_index_mapping = IndexMapping(graph.pg_edges)
         self.proposal_index_mapping = IndexMapping(graph.proposals)
 
         self.node_features = None
@@ -763,7 +715,7 @@ class HeteroGraphData(HeteroData):
         graph : networkx.Graph
             Irreducible graph containing branches.
         """
-        edge_index = self._build_adjacency(graph.edges, self.idxs_branches)
+        edge_index = self._build_adjacency(graph.pg_edges, self.idxs_branches)
         self.set_edge_index(edge_index, ("branch", "to", "branch"))
 
     def build_branch_proposal_adjacency(self, graph):
@@ -781,7 +733,7 @@ class HeteroGraphData(HeteroData):
         for proposal in graph.proposals:
             idx_proposal = self.idxs_proposals.id_to_idx[proposal]
             for i in proposal:
-                for j in graph.neighbors(i):
+                for j in graph.pg_neighbors(i):
                     branch = frozenset((i, j))
                     idx_branch = self.idxs_branches.id_to_idx[branch]
                     edge_index_b2p.append([idx_branch, idx_proposal])

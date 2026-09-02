@@ -29,9 +29,9 @@ from scipy.spatial import KDTree
 from concurrent.futures import as_completed, ThreadPoolExecutor
 from torch.utils.data import Dataset, DataLoader
 
-import networkx as nx
 import numpy as np
 import os
+import rustworkx as rx
 import pandas as pd
 import torch
 
@@ -133,7 +133,7 @@ class BrainDataset:
                 # self.ignore_fragments.add(self.node_component_id[ii])
 
     def set_giant_components(self):
-        for nodes in map(list, nx.connected_components(self.graph)):
+        for nodes in map(list, rx.connected_components(self.graph)):
             # Compute cable length
             root = util.sample_once(nodes)
             cable_length = self.cable_length(
@@ -164,8 +164,8 @@ class BrainDataset:
     def get_random_nonmerge_site(self):
         # Set sample space
         use_br = np.random.random() < self.random_branching_site_probability
-        nodes = self.branching_nodes() if use_br else self.nodes
-        nodes = nodes or self.nodes
+        nodes = self.branching_nodes() if use_br else self.node_indices()
+        nodes = nodes or self.node_indices()
 
         # Sample node
         n_attempts = 0
@@ -178,7 +178,7 @@ class BrainDataset:
             # Try again
             n_attempts += 1
             if n_attempts > 100:
-                return util.sample_once(self.nodes), 0
+                return util.sample_once(self.node_indices()), 0
 
     # --- Helpers ---
     def add_nonmerge_sites(self, num_sites):
@@ -229,7 +229,7 @@ class BrainDataset:
         while queue:
             # Visit node
             i, d_i = queue.pop()
-            if self.degree[i] >= 3 and i != root:
+            if self.degree(i) >= 3 and i != root:
                 return True
 
             # Update queue

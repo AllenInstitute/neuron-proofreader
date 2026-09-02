@@ -10,13 +10,14 @@ image segmentation.
 """
 
 from abc import ABC, abstractmethod
+from collections import deque
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from queue import Queue
 from threading import Thread
 from torch.utils.data import IterableDataset
 
-import networkx as nx
 import numpy as np
+import rustworkx as rx
 import torch
 
 from neuron_proofreader.machine_learning.image_dataloader import (
@@ -138,7 +139,7 @@ class SearchDataset(IterableDataset, ABC):
     def _compute_fragment_stats(self):
         if not hasattr(self, "_fragment_stats_cache"):
             stats = {}
-            for nodes in nx.connected_components(self.graph):
+            for nodes in rx.connected_components(self.graph):
                 node = util.sample_once(list(nodes))
                 cable_length = self.graph.cable_length(root=node)
                 if cable_length > self.min_size:
@@ -156,14 +157,15 @@ class SearchDataset(IterableDataset, ABC):
         return img_util.is_contained(voxel, shape, buffer=buffer)
 
     def compute_near_leaf_nodes(self, root, threshold=32):
-        component = nx.node_connected_component(self.graph, root)
-        leaves = [n for n in component if self.degree[n] == 1]
+        components = rx.connected_components(self.graph)
+        component = next(c for c in components if root in c)
+        leaves = [n for n in component if self.degree(n) == 1]
         near_leaf = set()
         visited = set(leaves)
-        queue = [(leaf, 0) for leaf in leaves]
+        queue = deque((leaf, 0) for leaf in leaves)
         while queue:
-            i, dist_i = queue.pop(0)
-            if self.degree[i] <= 2:
+            i, dist_i = queue.popleft()
+            if self.degree(i) <= 2:
                 near_leaf.add(i)
             for j in self.neighbors(i):
                 dist_j = dist_i + self.dist(i, j)
@@ -177,7 +179,7 @@ class SearchDataset(IterableDataset, ABC):
         if near_leaf_nodes is not None:
             is_nonleaf = node not in near_leaf_nodes
         else:
-            is_nonleaf = self.degree[node] > 2 or not self._is_near_leaf_slow(
+            is_nonleaf = self.degree(node) > 2 or not self._is_near_leaf_slow(
                 node
             )
         return is_contained and is_nonleaf
@@ -187,7 +189,7 @@ class SearchDataset(IterableDataset, ABC):
         visited = {node}
         while queue:
             i, dist_i = queue.pop()
-            if self.degree[i] == 1:
+            if self.degree(i) == 1:
                 return True
             for j in self.neighbors(i):
                 dist_j = dist_i + self.dist(i, j)
@@ -239,7 +241,7 @@ class DenseSearchDataset(SearchDataset):
         """
         near_leaf_nodes = self.compute_near_leaf_nodes(root)
         nodes = list()
-        for i, j in nx.dfs_edges(self.graph, source=root):
+        for i, j in rx.dfs_edges(self.graph, root):
             # Check if starting new batch
             if len(nodes) == 0:
                 if self.is_node_valid(i, near_leaf_nodes):
@@ -255,7 +257,7 @@ class DenseSearchDataset(SearchDataset):
                 nodes = list()
 
             # Visit j
-            is_branching = self.degree[j] >= 3
+            is_branching = self.degree(j) >= 3
             is_next = self.dist(last_node, j) >= self.step_size - 2
             is_valid = self.is_node_valid(j, near_leaf_nodes)
             if (is_next or is_branching) and is_valid:
@@ -334,8 +336,8 @@ class SparseSearchDataset(SearchDataset):
 
     def generate_component_sites(self, root):
         visited = set()
-        for i, j in nx.dfs_edges(self.graph, source=root):
-            if self.degree[i] >= 3 and i not in visited:
+        for i, j in rx.dfs_edges(self.graph, root):
+            if self.degree(i) >= 3 and i not in visited:
                 visited.add(i)
                 yield i
 

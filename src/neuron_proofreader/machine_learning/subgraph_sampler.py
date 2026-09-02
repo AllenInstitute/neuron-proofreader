@@ -121,7 +121,7 @@ class SubgraphSampler:
         while queue:
             # Visit node
             i, d_i = queue.popleft()
-            subgraph.add_node(i)
+            subgraph.pg_add_node(i)
             self.add_nbhd(i, subgraph, visited)
 
             # Visit proposals at node
@@ -134,7 +134,7 @@ class SubgraphSampler:
                 self.add_proposals(subgraph, queue, visited, i)
 
             # Update queue
-            for j in subgraph.neighbors(i):
+            for j in subgraph.pg_neighbors(i):
                 if j not in visited:
                     n_j = len(self.graph.node_proposals[j])
                     d_j = min(d_i + 1, -n_j)
@@ -171,7 +171,7 @@ class SubgraphSampler:
                 # Store computation edge
                 edge_id = frozenset({i, curr})
                 subgraph.edge_to_path[edge_id] = np.array(path, dtype=int)
-                subgraph.add_edge(i, curr)
+                subgraph.pg_add_edge(i, curr)
 
     def add_proposals(self, subgraph, queue, visited, i):
         nodes = list(self.graph.node_proposals[i])
@@ -225,7 +225,7 @@ class SubgraphSampler:
             True if node needs to be contained in the computation graph;
             otherwise, False.
         """
-        is_irreducible = self.graph.degree[i] != 2
+        is_irreducible = self.graph.degree(i) != 2
         has_proposals = len(self.graph.node_proposals[i]) > 0
         return is_irreducible or has_proposals
 

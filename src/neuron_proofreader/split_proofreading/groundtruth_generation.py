@@ -24,8 +24,8 @@ ground truth skeleton and are structurally consistent.
 
 from collections import defaultdict
 
-import networkx as nx
 import numpy as np
+import rustworkx as rx
 
 from neuron_proofreader.utils import geometry_util, util
 
@@ -173,7 +173,7 @@ def get_pred_to_gt_mapping(gt_graph, pred_graph):
         ID.
     """
     pred_to_gt = defaultdict(lambda: None)
-    for nodes in map(list, nx.connected_components(pred_graph)):
+    for nodes in map(list, rx.connected_components(pred_graph)):
         gt_id = find_aligned_component(gt_graph, pred_graph, nodes)
         if gt_id is not None:
             pred_id = pred_graph.node_component_id[nodes[0]]
@@ -310,7 +310,7 @@ def get_irreducible_edge(graph, node):
     while queue:
         # Visit node
         i = queue.pop()
-        if graph.degree[i] != 2:
+        if graph.degree(i) != 2:
             edge.append(i)
             if len(edge) == 2:
                 break
@@ -345,9 +345,10 @@ def get_path(gt_graph, source, xyz):
     path : List[int]
         Ordered list of node IDs representing the shortest path.
     """
-    try:
-        target = gt_graph.closest_node(xyz)
-        path = nx.shortest_path(gt_graph, source=source, target=target)
-        return path
-    except nx.NetworkXNoPath:
-        return list()
+    target = gt_graph.closest_node(xyz)
+    if target == source:
+        return [source]
+    paths = rx.graph_dijkstra_shortest_paths(
+        gt_graph, source, target=target, default_weight=1.0
+    )
+    return list(paths[target]) if target in paths else list()

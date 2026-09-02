@@ -8,8 +8,8 @@ Code for visualizing SkeletonGraphs.
 
 """
 
-import networkx as nx
 import numpy as np
+import rustworkx as rx
 import plotly.colors as plc
 import plotly.graph_objects as go
 
@@ -47,7 +47,7 @@ def visualize_proposals(graph, gt_graph=None, proposals=list()):
     """
     # Initializations
     proposals = proposals or graph.list_proposals()
-    gt_graph = gt_graph or nx.Graph()
+    gt_graph = gt_graph or rx.PyGraph()
 
     # Generate traces
     data = [get_edge_trace(graph, color="black")]
@@ -73,12 +73,11 @@ def get_component_traces(graph, use_color=True):
     """
     colors = plc.qualitative.Bold
     traces = list()
-    for nodes in map(list, nx.connected_components(graph)):
+    for nodes in map(set, rx.connected_components(graph)):
         # Extract data
         color = colors[len(traces) % len(colors)] if use_color else "black"
-        name = graph.node_swc_id(nodes[0])
-        subgraph = graph.subgraph(nodes)
-        edges = subgraph.edges
+        name = graph.node_swc_id(next(iter(nodes)))
+        edges = [(i, j) for i, j in graph.edge_list() if i in nodes and j in nodes]
 
         # Create trace
         traces.append(
@@ -106,7 +105,7 @@ def get_edge_trace(graph, color="blue", edges=list(), name=None):
         Scatter3d object that represents the 3D trace of the graph edges.
     """
     # Build coordinate lists
-    edges = edges or graph.edges()
+    edges = edges or graph.edge_list()
     x, y, z = list(), list(), list()
     for i, j in edges:
         x0, y0, z0 = graph.node_xyz[i]

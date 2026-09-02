@@ -26,8 +26,8 @@ Code that executes the full split correction pipeline.
 from time import time
 from tqdm import tqdm
 
-import networkx as nx
 import pandas as pd
+import rustworkx as rx
 import os
 import torch
 
@@ -177,9 +177,9 @@ class LearnedSplitProofreader:
                 self.remove_proposals(preds, removal_threshold)
 
                 # Update acceptance threshold
-                new_threshold = max(cur_threshold - dt, min_threshold)
-                if cur_threshold == new_threshold:
+                if cur_threshold <= min_threshold:
                     break
+                new_threshold = max(cur_threshold - dt, min_threshold)
 
         # Report results
         t, unit = util.time_writer(time() - t0)
@@ -254,9 +254,9 @@ class LearnedSplitProofreader:
             )
 
             # Update threshold
-            new_threshold = max(cur_threshold - dt, min_threshold)
-            if cur_threshold == new_threshold:
+            if cur_threshold <= min_threshold:
                 break
+            new_threshold = max(cur_threshold - dt, min_threshold)
 
         # Report results
         t, unit = util.time_writer(time() - t0)
@@ -317,7 +317,7 @@ class LearnedSplitProofreader:
 
             # Check if proposal creates a loop
             i, j = proposal
-            if not nx.has_path(self.dataset.graph, i, j):
+            if not rx.graph_has_path(self.dataset.graph, i, j):
                 self.dataset.merge_proposal(proposal)
                 n_accepts += 1
             del preds[proposal]
@@ -335,7 +335,7 @@ class LearnedSplitProofreader:
         # Sanity check
         for proposal in self.dataset.list_proposals():
             i, j = proposal
-            if self.dataset.degree[i] > 2 or self.dataset.degree[j] > 2:
+            if self.dataset.degree(i) > 2 or self.dataset.degree(j) > 2:
                 self.dataset.remove_proposal(proposal)
                 cnt += 1
 
