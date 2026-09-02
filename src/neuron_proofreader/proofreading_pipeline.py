@@ -20,6 +20,10 @@ from neuron_proofreader.merge_proofreading.merge_inference import (
     MLMergeProofreader,
     SomaMergeProofreader,
 )
+from neuron_proofreader.merge_proofreading.search_datasets import (
+    DenseSearchDataset,
+    SparseSearchDataset,
+)
 from neuron_proofreader.proposal_graph import ProposalGraph
 from neuron_proofreader.split_proofreading.split_inference import (
     LearnedSplitProofreader,
@@ -125,14 +129,21 @@ class ProofreadPipeline:
             If True, saves the corrected graph SWCs into the step directory.
             Default is True.
         """
+        # Step initializations
         self.step_cnt += 1
         self.log(f"\nStep {self.step_cnt}: Soma Split Proofreading")
         step_output = self._step_dir(SomaSplitProofreader.step_name)
+
+        # Run proofreading
         proofreader = SomaSplitProofreader(
-            self.graph, step_output, max_dist=max_dist, log_handle=self.log_handle
+            self.graph,
+            step_output,
+            max_dist=max_dist,
+            log_handle=self.log_handle,
         )
         proofreader()
 
+        # Save results
         if save_fragments:
             self.log("Graph State...")
             self.log(self.graph.__repr__())
@@ -160,12 +171,14 @@ class ProofreadPipeline:
             If True, saves the corrected graph SWCs into the step directory.
             Default is True.
         """
-        if split_config.batch_size is None:
-            raise ValueError("split_config.batch_size must be set before running learned split detection.")
+        # Step initializations
+        assert split_config.batch_size, "split_config.batch_size must be set!"
         self.step_cnt += 1
         self.log(f"\nStep {self.step_cnt}: Learned Split Detection")
         img_config = self._img_config(split_config.patch_shape)
         step_output = self._step_dir(LearnedSplitProofreader.step_name)
+
+        # Run proofreading
         proofreader = LearnedSplitProofreader(
             self.graph,
             model,
@@ -182,6 +195,7 @@ class ProofreadPipeline:
             removal_threshold=split_config.removal_threshold,
         )
 
+        # Save result
         if save_fragments:
             self.log("Graph State...")
             self.log(self.graph.__repr__())
@@ -190,7 +204,7 @@ class ProofreadPipeline:
 
     # --- Merge Proofreading ---
     def merge_proofreading(
-        self, mode, save_detections=True, save_fragments=False
+        self, mode, save_detections=True, save_fragments=True
     ):
         """
         Runs rule-based merge proofreading.
@@ -204,7 +218,7 @@ class ProofreadPipeline:
             True.
         save_fragments : bool, optional
             If True, saves the corrected graph SWCs into the step directory.
-            Default is False.
+            Default is True.
         """
         self.step_cnt += 1
         self.log(f"\nStep {self.step_cnt}: Merge Proofreading ({mode})")
@@ -252,33 +266,43 @@ class ProofreadPipeline:
             If True, saves the corrected graph SWCs into the step directory.
             Default is True.
         """
+        # Check that batch size is set
         if merge_config.batch_size is None:
-            raise ValueError("merge_config.batch_size must be set before running learned merge detection.")
+            raise ValueError("merge_config.batch_size must be set!")
+
+        # Step initializations
         self.step_cnt += 1
         self.log(f"\nStep {self.step_cnt}: Learned Merge Detection ({merge_config.search_mode})")
         img_config = self._img_config(merge_config.patch_shape)
         step_output = self._step_dir(MLMergeProofreader.step_name)
-        proofreader = MLMergeProofreader(
+
+        # Create dataset
+        DatasetClass = DenseSearchDataset if merge_config.search_mode == "dense" else SparseSearchDataset
+        dataset = DatasetClass(
             self.graph,
-            model,
             img_config,
-            step_output,
-            mode=merge_config.search_mode,
-            batch_size=merge_config.batch_size,
-            device=self.device,
             min_search_size=merge_config.min_search_size,
             prefetch=merge_config.prefetch,
+        )
+
+        # Run proofreading
+        proofreader = MLMergeProofreader(
+            dataset,
+            model,
+            step_output,
+            batch_size=merge_config.batch_size,
+            device=self.device,
             threshold=merge_config.threshold,
             log_handle=self.log_handle,
         )
         merge_nodes = proofreader()
         self.log(f"# Merges Detected: {len(merge_nodes)}")
 
+        # Save results
         if save_detections:
             proofreader.save_sites(proofreader.merge_sites_xyz)
         if save_fragments:
             self.save_graph(os.path.basename(step_output))
-            proofreader.save_parameters()
 
     # --- Helpers ---
     def log(self, txt):
