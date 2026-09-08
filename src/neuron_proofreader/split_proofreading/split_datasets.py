@@ -11,6 +11,7 @@ generation for training and inference in split-correction tasks.
 
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
+from threading import Thread
 from torch.utils.data import IterableDataset
 from tqdm import tqdm
 
@@ -41,7 +42,7 @@ class FragmentsDataset(IterableDataset):
         img_config,
         batch_size=32,
         gt_path=None,
-        prefetch=4,
+        prefetch=2,
     ):
         """
         Instantiates a FragmentsDataset object.
@@ -56,6 +57,10 @@ class FragmentsDataset(IterableDataset):
             ...
         gt_path : str, optional
             Path to ground-truth SWC files to be loaded. Default is None.
+        prefetch : int, optional
+            Number of batches to extract features for ahead of the caller.
+            Note: each queued batch holds its image patches in memory, which
+            is roughly 7MB per proposal. Default is 2.
         """
         # Instance attributes
         self.batch_size = batch_size
@@ -70,12 +75,17 @@ class FragmentsDataset(IterableDataset):
             img_config.img_path,
             brightness_clip=img_config.brightness_clip,
             patch_shape=img_config.patch_shape,
+            percentiles=img_config.percentiles,
         )
 
     # --- Get Data ---
     def __iter__(self):
         """
         Iterates over the dataset and yields model-ready inputs and targets.
+
+        Note: features are extracted on a background thread so that reading
+        image patches overlaps the caller's forward pass. At most "prefetch"
+        batches are held in memory at once.
 
         Yields
         ------
@@ -84,9 +94,27 @@ class FragmentsDataset(IterableDataset):
         targets : torch.Tensor
             Ground truth labels.
         """
-        for subgraph in self.get_sampler():
-            features = self.feature_extractor(subgraph)
-            yield HeteroGraphData(features)
+        queue = Queue(maxsize=self.prefetch)
+        sentinel = object()
+
+        def producer():
+            try:
+                for subgraph in self.get_sampler():
+                    features = self.feature_extractor(subgraph)
+                    queue.put(HeteroGraphData(features))
+            except Exception as e:
+                queue.put(e)
+            finally:
+                queue.put(sentinel)
+
+        Thread(target=producer, daemon=True).start()
+        while True:
+            item = queue.get()
+            if item is sentinel:
+                break
+            if isinstance(item, Exception):
+                raise item
+            yield item
 
     # --- Helpers ---
     def __getattr__(self, name):

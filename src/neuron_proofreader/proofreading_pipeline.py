@@ -175,7 +175,9 @@ class ProofreadPipeline:
         assert split_config.batch_size, "split_config.batch_size must be set!"
         self.step_cnt += 1
         self.log(f"\nStep {self.step_cnt}: Learned Split Detection")
-        img_config = self._img_config(split_config.patch_shape)
+        img_config = self._img_config(
+            split_config.patch_shape, percentiles=split_config.percentiles
+        )
         step_output = self._step_dir(LearnedSplitProofreader.step_name)
 
         # Run proofreading
@@ -330,11 +332,14 @@ class ProofreadPipeline:
         segment_ids = list(self.graph.component_id_to_swc_id.values())
         util.write_list(path, segment_ids)
 
-    def _img_config(self, patch_shape):
-        if patch_shape is None:
+    def _img_config(self, patch_shape, percentiles=None):
+        if patch_shape is None and percentiles is None:
             return self.img_config
         cfg = copy(self.img_config)
-        cfg.patch_shape = patch_shape
+        if patch_shape is not None:
+            cfg.patch_shape = patch_shape
+        if percentiles is not None:
+            cfg.percentiles = percentiles
         return cfg
 
     def _step_dir(self, name):
