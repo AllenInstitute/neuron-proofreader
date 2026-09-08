@@ -40,6 +40,7 @@ class FeaturePipeline:
         brightness_clip=400,
         padding=50,
         patch_shape=(96, 96, 96),
+        percentiles=(1, 99.5),
     ):
         """
         Instantiates a FeaturePipeline object.
@@ -58,21 +59,28 @@ class FeaturePipeline:
         patch_shape : Tuple[int], optional
             Shape of image patch expected by the vision model. Default is (96,
             96, 96).
+        percentiles : Tuple[float], optional
+            Upper and lower percentiles used to normalize image patches.
+            Default is (1, 99.5).
         """
-        self.extractors = [
-            SkeletonFeatureExtractor(graph),
-            ImageFeatureExtractor(
-                graph,
-                img_path,
-                brightness_clip=brightness_clip,
-                patch_shape=patch_shape,
-                padding=padding,
-            ),
-        ]
+        self.skeleton_extractor = SkeletonFeatureExtractor(graph)
+        self.image_extractor = ImageFeatureExtractor(
+            graph,
+            img_path,
+            brightness_clip=brightness_clip,
+            patch_shape=patch_shape,
+            padding=padding,
+            percentiles=percentiles,
+        )
 
     def __call__(self, subgraph):
         """
         Runs the feature extraction pipeline.
+
+        Note: the image patch reads are launched before the skeleton features
+        are computed so that the reads overlap that computation. The image
+        features are stored afterwards, since the proposal profiles are
+        concatenated onto the skeleton-based proposal features.
 
         Parameters
         ----------
@@ -80,8 +88,13 @@ class FeaturePipeline:
             Subgraph of "graph" attribute to extract features for.
         """
         features = FeatureSet(subgraph)
-        for extractor in self.extractors:
-            extractor(subgraph, features)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            thread = executor.submit(
+                self.image_extractor.extract_batch, subgraph
+            )
+            self.skeleton_extractor(subgraph, features)
+            patches, profiles = thread.result()
+        self.image_extractor.update_features(features, patches, profiles)
         return features
 
 
@@ -219,7 +232,16 @@ class ImageFeatureExtractor:
     """
     A class for extracting image patches, image profiles along proposals, and
     generating masks that indicate the spatial locations of proposals.
+
+    Attributes
+    ----------
+    max_workers : int
+        Number of threads used to extract image features. Note: each thread
+        both reads a patch and processes it, so this bounds the number of
+        concurrent reads. Throughput plateaus between 32 and 48 threads.
     """
+
+    max_workers = 32
 
     def __init__(
         self,
@@ -228,6 +250,7 @@ class ImageFeatureExtractor:
         brightness_clip=400,
         patch_shape=(96, 96, 96),
         padding=40,
+        percentiles=(1, 99.5),
     ):
         """
         Instantiates an ImageExtractor object.
@@ -246,11 +269,15 @@ class ImageFeatureExtractor:
         padding : int, optional
             Number of voxels to be added in each dimension from start and end
             point of proposal for image patch extraction. Default is 40.
+        percentiles : Tuple[float], optional
+            Upper and lower percentiles used to normalize image patches.
+            Default is (1, 99.5).
         """
         img_config = ImageConfig(
             brightness_clip=brightness_clip,
             img_path=img_path,
             patch_shape=patch_shape,
+            percentiles=percentiles,
         )
         self.graph = graph
         self.patch_loader = ProposalPatchLoader(
@@ -270,17 +297,51 @@ class ImageFeatureExtractor:
         features : FeatureSet
             Data structure that stores features.
         """
-        with ThreadPoolExecutor() as executor:
+        patches, profiles = self.extract_batch(subgraph)
+        self.update_features(features, patches, profiles)
+
+    def extract_batch(self, subgraph):
+        """
+        Extracts an image patch and intensity profile for each proposal in the
+        given subgraph.
+
+        Parameters
+        ----------
+        subgraph : ProposalComputationGraph
+            Subgraph of "graph" attribute to extract features for.
+
+        Returns
+        -------
+        patches : Dict[Frozenset[int], numpy.ndarray]
+            Dictionary that maps a proposal to its image patch.
+        profiles : Dict[Frozenset[int], numpy.ndarray]
+            Dictionary that maps a proposal to its intensity profile.
+        """
+        patches, profiles = dict(), dict()
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             pending = {
                 executor.submit(self.extract, p): p
                 for p in subgraph.proposals
             }
-            patches, profiles = dict(), dict()
             for thread in as_completed(pending):
-                proposal = pending.pop(thread)
+                proposal = pending[thread]
                 profiles[proposal], patches[proposal] = thread.result()
+        return patches, profiles
 
-        # Update features
+    @staticmethod
+    def update_features(features, patches, profiles):
+        """
+        Stores the extracted image patches and profiles.
+
+        Parameters
+        ----------
+        features : FeatureSet
+            Data structure that stores features.
+        patches : Dict[Frozenset[int], numpy.ndarray]
+            Dictionary that maps a proposal to its image patch.
+        profiles : Dict[Frozenset[int], numpy.ndarray]
+            Dictionary that maps a proposal to its intensity profile.
+        """
         features.set_features(patches, "proposal_patches")
         features.integrate_proposal_profiles(profiles)
 
@@ -614,10 +675,13 @@ class FeatureSet:
             Zero-valued feature matrix with shape
                 (num_objects, *feature_shape),
             where `feature_shape` is inferred from the feature dictionary.
+            Note: features are stored as float32 to match the model weights,
+            since widening image patches to float64 doubles both host memory
+            and the host-to-device transfer.
         """
         key = util.sample_once(feature_dict.keys())
         shape = (len(feature_dict.keys()),) + feature_dict[key].shape
-        return np.zeros(shape)
+        return np.zeros(shape, dtype=np.float32)
 
     def integrate_proposal_profiles(self, profiles_dict):
         """

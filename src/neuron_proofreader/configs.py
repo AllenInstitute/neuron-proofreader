@@ -172,6 +172,10 @@ class SplitInferenceConfig(Config):
     patch_shape : Tuple[int], optional
         Patch shape for image sampling, overrides ImageConfig.patch_shape if
         set.
+    percentiles : Tuple[float], optional
+        Percentiles used to normalize patches, overrides
+        ImageConfig.percentiles if set. Must match the normalization the
+        split model was trained with.
     removal_threshold : float
         Proposals with model predictions below this value are removed.
     """
@@ -182,6 +186,7 @@ class SplitInferenceConfig(Config):
     model_path: str = None
     name: str = "split_inference_config"
     patch_shape: Tuple[int, int, int] = None
+    percentiles: Tuple[float, float] = (1, 99.9)
     removal_threshold: float = 0.3
 
 
