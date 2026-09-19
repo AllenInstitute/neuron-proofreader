@@ -128,7 +128,7 @@ class Trainer:
         self.model = model.to(device)
         self.optimizer = optim.AdamW(self.model.parameters(), lr=lr)
         self.use_amp = use_amp
-        self.scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+        self.scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
         self.scheduler = CosineAnnealingWarmRestarts(
             self.optimizer, T_0=20, T_mult=2
         )
