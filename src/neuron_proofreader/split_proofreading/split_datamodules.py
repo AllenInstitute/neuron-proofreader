@@ -51,6 +51,7 @@ class FragmentsDataset(IterableDataset):
             img_config.img_path,
             brightness_clip=img_config.brightness_clip,
             patch_shape=img_config.patch_shape,
+            transform=img_config.transform,
         )
         self.sampler = None
 

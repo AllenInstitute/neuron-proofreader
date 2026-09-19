@@ -41,6 +41,7 @@ class FeaturePipeline:
         padding=50,
         patch_shape=(96, 96, 96),
         percentiles=(1, 99.5),
+        transform=None,
     ):
         """
         Instantiates a FeaturePipeline object.
@@ -62,6 +63,9 @@ class FeaturePipeline:
         percentiles : Tuple[float], optional
             Upper and lower percentiles used to normalize image patches.
             Default is (1, 99.5).
+        transform : ImageTransforms or None, optional
+            Augmentation applied to each (image, mask) input patch during
+            training. Default is None (no augmentation).
         """
         self.skeleton_extractor = SkeletonFeatureExtractor(graph)
         self.image_extractor = ImageFeatureExtractor(
@@ -71,6 +75,7 @@ class FeaturePipeline:
             patch_shape=patch_shape,
             padding=padding,
             percentiles=percentiles,
+            transform=transform,
         )
 
     def __call__(self, subgraph):
@@ -251,6 +256,7 @@ class ImageFeatureExtractor:
         patch_shape=(96, 96, 96),
         padding=40,
         percentiles=(1, 99.5),
+        transform=None,
     ):
         """
         Instantiates an ImageExtractor object.
@@ -272,6 +278,10 @@ class ImageFeatureExtractor:
         percentiles : Tuple[float], optional
             Upper and lower percentiles used to normalize image patches.
             Default is (1, 99.5).
+        transform : ImageTransforms or None, optional
+            Augmentation applied to each (image, mask) input patch. Passing
+            a transform also enables random jitter of the patch center in the
+            patch loader. Default is None (no augmentation).
         """
         img_config = ImageConfig(
             brightness_clip=brightness_clip,
@@ -279,12 +289,14 @@ class ImageFeatureExtractor:
             patch_shape=patch_shape,
             percentiles=percentiles,
         )
+        img_config.transform = transform
         self.graph = graph
         self.patch_loader = ProposalPatchLoader(
             graph, img_config, padding=padding
         )
         self.patch_shape = patch_shape
         self.padding = padding
+        self.transform = transform
 
     def __call__(self, subgraph, features):
         """
@@ -364,7 +376,16 @@ class ImageFeatureExtractor:
         extractor = PatchFeatureExtractor(
             self.graph, img, mask, proposal, offset, self.patch_shape
         )
-        return extractor.get_intensity_profile(), extractor.get_input_patch()
+
+        # Note: the intensity profile is read from the unaugmented patch so
+        # that skeleton voxel coordinates stay aligned with the image. The
+        # augmentation is applied to the stacked (image, mask) input patch
+        # only, so geometric transforms move both channels together.
+        profile = extractor.get_intensity_profile()
+        patches = extractor.get_input_patch()
+        if self.transform:
+            patches = self.transform(patches)
+        return profile, patches
 
     # --- Helpers ---
     def create_segment_mask(self, proposal, shape, offset):
