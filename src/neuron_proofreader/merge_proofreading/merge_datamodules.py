@@ -102,8 +102,8 @@ class BrainDataset:
         graph = FragmentsGraph(
             anisotropy=config.anisotropy,
             min_cable_length=config.min_cable_length,
-            min_swc_pts=config.min_swc_pts,
             node_spacing=config.node_spacing,
+            prune_depth=config.prune_depth,
             use_anisotropy=config.use_anisotropy,
             verbose=config.verbose,
         )
