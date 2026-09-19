@@ -17,7 +17,7 @@ from neuron_proofreader.proposal_graph import ProposalComputationGraph
 from neuron_proofreader.utils import util
 
 
-class SubgraphSampler:
+class GraphSampler:
     """
     A class that extracts ProposalComputationGraphs from a ProposalGraphs in
     order to create batches suitable for GNN input.

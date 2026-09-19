@@ -415,11 +415,11 @@ def check_gcs_file_exists(path):
     return bucket.blob(key).exists()
 
 
-def check_gcs_prefix_exists(prefix):
-    bucket_name, key = parse_cloud_path(prefix)
+def check_gcs_prefix_exists(path):
+    bucket_name, prefix = parse_cloud_path(path)
     bucket = storage.Client().bucket(bucket_name)
-    key = key.rstrip("/") + "/"
-    exists = any(bucket.list_blobs(prefix=key, max_results=1))
+    prefix = prefix.rstrip("/") + "/"
+    exists = any(bucket.list_blobs(prefix=prefix, max_results=1))
     return exists
 
 
@@ -447,7 +447,7 @@ def list_gcs_paths(path, extension=""):
     Parameters
     ----------
     path : str
-        Path to location in a GCS bucket.
+        Path to location in GCS bucket.
     extension : str, optional
         File extension of filenames to be listed. Default is an empty string.
 
@@ -456,15 +456,24 @@ def list_gcs_paths(path, extension=""):
     List[str]
         Paths under the GCS prefix with the given extension.
     """
-    # Create bucket
+    # Create bucket reader
+    path = path.rstrip("/") + "/"
     bucket_name, prefix = parse_cloud_path(path)
     bucket = storage.Client().bucket(bucket_name)
 
-    # List paths
-    paths = list()
-    for name in [b.name for b in bucket.list_blobs(prefix=prefix)]:
-        if extension in name:
-            paths.append(os.path.join(f"gs://{bucket_name}", name))
+    # Parse directory
+    paths = []
+    for blob in bucket.list_blobs(prefix=prefix):
+        # Portion of the path after the directory prefix
+        relative = blob.name[len(prefix):]
+
+        # Skip files in subdirectories and directory placeholders
+        if "/" in relative or not relative:
+            continue
+
+        if not extension or relative.endswith(extension):
+            paths.append(f"gs://{bucket_name}/{blob.name}")
+
     return sorted(paths)
 
 
@@ -493,13 +502,12 @@ def list_gcs_subprefixes(path):
 
     # Parse directory contents
     prefix_depth = len(prefix.split("/"))
-    subdirs = list()
+    subprefixes = list()
     for prefix in blobs.prefixes:
-        is_dir = prefix.endswith("/")
-        is_direct_subdir = len(prefix.split("/")) - 1 == prefix_depth
-        if is_dir and is_direct_subdir:
-            subdirs.append(prefix)
-    return subdirs
+        is_direct = len(prefix.split("/")) - 1 == prefix_depth
+        if prefix.endswith("/") and is_direct:
+            subprefixes.append(prefix)
+    return sorted(subprefixes)
 
 
 def read_gcs_txt(prefix, client=None):
@@ -508,7 +516,7 @@ def read_gcs_txt(prefix, client=None):
 
     Parameters
     ----------
-    path : str
+    prefix : str
         Path to txt file to be read.
 
     Returns

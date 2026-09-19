@@ -596,8 +596,11 @@ class FeatureSet:
         "proposal": ("proposal_features", "proposal_index_mapping"),
         "proposal_patches": ("proposal_patches", "proposal_index_mapping"),
     }
+    # Feature dimensions: proposals have 17 skeleton-based features plus a
+    # 50-length intensity profile (16 per branch, 16 + mean + std along the
+    # proposal).
     n_branch_features = 2
-    n_proposal_features = 70
+    n_proposal_features = 67
 
     def __init__(self, graph):
         """
@@ -835,23 +838,6 @@ class HeteroGraphData(HeteroData):
             edge_index.extend([[v1, v2], [v2, v1]])
         return edge_index
 
-    def get_feature_dict(self):
-        """
-        Gets a dictionary that contains the number of features for branchs and
-        proposals.
-
-        Returns
-        -------
-        feature_dict : Dict[str, int]
-            Dictionary that contains the number of features for branchs and
-            proposals.
-        """
-        feature_dict = {
-            "branch": FeatureSet.n_branch_features,
-            "proposal": FeatureSet.n_proposal_features,
-        }
-        return feature_dict
-
     def get_inputs(self):
         """
         Gets inputs in a format that can passed through a GNN.
@@ -980,7 +966,10 @@ def get_feature_dict():
         Dictionary that contains the number of features for branchs and
         proposals.
     """
-    return {"branch": 2, "proposal": 67}
+    return {
+        "branch": FeatureSet.n_branch_features,
+        "proposal": FeatureSet.n_proposal_features,
+    }
 
 
 def resize_segmentation(mask, new_shape):
