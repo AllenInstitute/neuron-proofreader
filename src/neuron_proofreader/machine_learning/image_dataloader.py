@@ -39,6 +39,7 @@ class TensorStoreImage:
             Path to image.
         """
         # Load image
+        self.img_path = img_path
         bucket_name, inner_path = util.parse_cloud_path(img_path)
         self.img = ts.open(
             {
@@ -82,7 +83,18 @@ class TensorStoreImage:
             Image patch.
         """
         s = img_util.get_slices(voxel, shape)
-        return self.img[(0, 0, *s)].read().result()
+        try:
+            return self.img[(0, 0, *s)].read().result()
+        except ValueError as e:
+            if "OUT_OF_RANGE" in str(e):
+                raise ValueError(
+                    f"Out-of-bounds read from image: {self.img_path}\n"
+                    f"  Requested center voxel: {tuple(voxel)}\n"
+                    f"  Requested patch shape:  {tuple(shape)}\n"
+                    f"  Image shape:            {tuple(self.img.shape)}\n"
+                    f"  Original error: {e}"
+                ) from e
+            raise
 
     def shape(self):
         """
