@@ -105,7 +105,10 @@ class VisionHGAT(torch.nn.Module):
         x_img = input_dict["img"]
         edge_index_dict = input_dict["edge_index_dict"]
 
-        # Initial embedding
+        # Initial embedding. Patches arrive as float16; outside autocast the
+        # convolutions need them in the weight dtype.
+        if not torch.is_autocast_enabled():
+            x_img = x_img.to(next(self.patch_embedding.parameters()).dtype)
         x_img = self.patch_embedding(x_img)
         for key, f in self.node_embedding.items():
             x_dict[key] = f(x_dict[key])

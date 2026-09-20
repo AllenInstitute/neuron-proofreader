@@ -318,6 +318,7 @@ class ProofreadPipeline:
         """
         print(txt)
         self.log_handle.write(txt + "\n")
+        self.log_handle.flush()
 
     def reconfigure_node_radius(self):
         n_nodes = self.graph.num_nodes()

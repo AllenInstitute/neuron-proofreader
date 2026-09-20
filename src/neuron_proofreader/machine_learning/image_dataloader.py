@@ -27,7 +27,17 @@ from neuron_proofreader.utils import geometry_util, img_util, util
 class TensorStoreImage:
     """
     Class that reads images with the TensorStore library.
+
+    Attributes
+    ----------
+    cache_bytes : int
+        Size of the decoded-chunk cache. A patch read touches 2-8 chunks
+        (128x256x256 voxels each for the ExaSPIM zarrs), so as long as
+        consecutive reads are spatially close most of them are served from
+        this cache instead of GCS. 8GB holds roughly 500 chunks.
     """
+
+    cache_bytes = 8_000_000_000
 
     def __init__(self, img_path):
         """
@@ -50,9 +60,9 @@ class TensorStoreImage:
                     "path": inner_path,
                 },
                 "context": {
-                    "cache_pool": {"total_bytes_limit": 1000000000},
-                    "cache_pool#remote": {"total_bytes_limit": 1000000000},
+                    "cache_pool": {"total_bytes_limit": self.cache_bytes},
                     "data_copy_concurrency": {"limit": 8},
+                    "gcs_request_concurrency": {"limit": 64},
                 },
                 "recheck_cached_data": "open",
             }
@@ -82,9 +92,35 @@ class TensorStoreImage:
         numpy.ndarray
             Image patch.
         """
+        return self.wait(self.read_async(voxel, shape), voxel, shape)
+
+    def read_async(self, voxel, shape):
+        """
+        Starts reading a patch without blocking. TensorStore fetches and
+        decodes the chunks on its own thread pool, so many reads can be in
+        flight without holding a Python thread each.
+
+        Parameters
+        ----------
+        voxel : Tuple[int]
+            Center of image patch to be read.
+        shape : Tuple[int]
+            Shape of image patch to be read.
+
+        Returns
+        -------
+        tensorstore.Future
+            Future that resolves to the image patch; pass it to "wait".
+        """
         s = img_util.get_slices(voxel, shape)
+        return self.img[(0, 0, *s)].read()
+
+    def wait(self, future, voxel, shape):
+        """
+        Waits for a read started by "read_async" and returns the patch.
+        """
         try:
-            return self.img[(0, 0, *s)].read().result()
+            return future.result()
         except ValueError as e:
             if "OUT_OF_RANGE" in str(e):
                 raise ValueError(
@@ -209,7 +245,14 @@ class PatchLoader(ABC):
         patch : numpy.ndarray
             Preprocessed image patch.
         """
-        patch = self.img.read(center, shape)
+        return self.finish_read(self.img.read_async(center, shape), center, shape)
+
+    def finish_read(self, future, center, shape):
+        """
+        Waits for a patch read started with "self.img.read_async" and
+        preprocesses it exactly as "read_image" does.
+        """
+        patch = self.img.wait(future, center, shape)
         patch = np.minimum(patch, self.brightness_clip)
         return img_util.normalize(patch, percentiles=self.percentiles).astype(
             np.float32
@@ -302,11 +345,40 @@ class ProposalPatchLoader(PatchLoader):
         super().__init__(graph, img_config)
         self.padding = padding
 
-    def __call__(self, proposal):
-        center, shape = self.compute_patch_specs(proposal)
+    def __call__(self, proposal, read=None):
+        """
+        Loads the preprocessed image patch of a proposal.
+
+        Parameters
+        ----------
+        proposal : Frozenset[int]
+            Proposal that the patch is centered on.
+        read : Tuple[tensorstore.Future, Tuple[int], Tuple[int]], optional
+            Pending read for this proposal from "read_async". Default is
+            None, in which case the read is issued here.
+
+        Returns
+        -------
+        Tuple[numpy.ndarray, Tuple[int]]
+            Image patch and its offset in the image.
+        """
+        future, center, shape = read or self.read_async(proposal)
         offset = img_util.get_offset(center, shape)
-        img = self.read_image(center, shape)
+        img = self.finish_read(future, center, shape)
         return img, offset
+
+    def read_async(self, proposal):
+        """
+        Starts reading the image patch of a proposal without blocking.
+
+        Returns
+        -------
+        Tuple[tensorstore.Future, Tuple[int], Tuple[int]]
+            Pending read with the patch center and shape, to be passed to
+            "__call__".
+        """
+        center, shape = self.compute_patch_specs(proposal)
+        return self.img.read_async(center, shape), center, shape
 
     def compute_patch_specs(self, proposal):
         node1, node2 = tuple(proposal)

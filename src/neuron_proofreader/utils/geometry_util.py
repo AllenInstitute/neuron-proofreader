@@ -8,7 +8,7 @@ Code for processing geometric data.
 
 """
 
-from collections import defaultdict
+from itertools import chain
 from scipy.interpolate import UnivariateSpline
 from scipy.linalg import svd
 from scipy.spatial.distance import euclidean
@@ -159,7 +159,7 @@ def resample_curve_3d(pts, n_pts=None, s=None):
 
 
 # --- Fragment Filtering ---
-def remove_doubles(graph, max_cable_length):
+def remove_doubles(graph, max_cable_length, search_radius=15):
     """
     Removes connected components from the graph that are likely doubles
     caused by image ghosting artifacts.
@@ -170,82 +170,264 @@ def remove_doubles(graph, max_cable_length):
         Graph to be searched for doubles.
     max_cable_length : float
         Maximum cable length of connected components to be searched.
+    search_radius : float, optional
+        Radius (in microns) used to search for nodes of other components.
+        Default is 15.
     """
-    # Set progress bar
-    components = rx.connected_components(graph)
-    iterator = components
+    # Label nodes by connected component
+    nodes, labels, sizes = component_labels(graph)
+    if len(sizes) == 0:
+        return
+
+    # Find candidate components (unbranched and short)
+    is_candidate = find_candidate_components(graph, labels, max_cable_length)
+    candidate_nodes = nodes[is_candidate[labels[nodes]]]
+    if len(candidate_nodes) == 0:
+        return
+
+    # Project each candidate node onto the nearest other component
+    query_nodes, hit_nodes, hit_dists = nearest_other_component(
+        graph, candidate_nodes, search_radius
+    )
+
+    # Check doubles criteria
+    is_dbl = is_double(graph, labels, sizes, query_nodes, hit_nodes, hit_dists)
+    nodes_to_remove = nodes[is_dbl[labels[nodes]]]
     if graph.verbose:
-        total = len(components)
-        iterator = tqdm(components, total=total, desc="Filter Doubles")
-
-    # Search graph
-    branching_nodes = set(graph.branching_nodes())
-    nodes_to_remove = list()
-    for nodes in iterator:
-        # Check if component is obviously too big
-        if len(nodes) > 1000:
-            continue
-
-        # Check for branching node
-        if branching_nodes.intersection(nodes):
-            continue
-
-        # Check cable length
-        nodes = list(nodes)
-        length = graph.cable_length(max_depth=max_cable_length, root=nodes[0])
-        if length > max_cable_length:
-            continue
-
-        # Check doubles criteria
-        if is_double(graph, nodes):
-            nodes_to_remove.extend(nodes)
+        print(
+            f"Filter Doubles: removed {is_dbl.sum()} of "
+            f"{is_candidate.sum()} candidate components"
+        )
 
     # Update graph
     graph.remove_nodes(nodes_to_remove)
 
 
-def is_double(graph, nodes):
+def component_labels(graph):
     """
-    Determines if the connected component corresponding to "nodes" is a double
-    of another connected component.
+    Labels every node with the index of its connected component.
 
-    Paramters
-    ---------
+    Parameters
+    ----------
     graph : SkeletonGraph
-        Graph to be searched.
-    nodes : List[int]
-        Nodes corresponding to a single connected component.
+        Graph to be labeled.
 
     Returns
     -------
-    bool
-        True if the component is a double; otherwise, False.
+    nodes : numpy.ndarray
+        All node IDs in the graph.
+    labels : numpy.ndarray
+        Array indexed by node ID that gives the component index, or -1 for
+        IDs that are not in the graph.
+    sizes : numpy.ndarray
+        Number of nodes in each component.
     """
-    # Compute projection distances
-    cid = graph.node_component_id[nodes[0]]
-    cid_to_dists = defaultdict(list)
-    for i in nodes:
-        # Find nearest neighbor
-        idxs = np.array(graph.kdtree.query_ball_point(graph.node_xyz[i], 15))
-        idxs = idxs[graph.node_component_id[idxs] != cid]
-        if len(idxs) > 0:
-            idx = nearest_neighbor(
-                graph.node_xyz[idxs], graph.node_xyz[i], return_index=True
-            )
+    components = rx.connected_components(graph)
+    n_components = len(components)
+    sizes = np.fromiter(map(len, components), np.int64, n_components)
+    nodes = np.fromiter(chain.from_iterable(components), np.int64, sizes.sum())
 
-            # Store distance
-            j = idxs[idx]
-            cid_to_dists[graph.node_component_id[j]].append(graph.dist(i, j))
+    n_ids = max(graph.node_indices(), default=-1) + 1
+    labels = np.full(n_ids, -1, dtype=np.int64)
+    labels[nodes] = np.repeat(np.arange(n_components), sizes)
+    return nodes, labels, sizes
 
-    # Determine if double
-    for dists in cid_to_dists.values():
-        if len(dists) > 10:
-            percent_hit = len(dists) / len(nodes)
-            if percent_hit > 0.6 and np.std(dists) < 2:
-                return True
-            elif percent_hit > 0.8 and np.std(dists) < 2.5:
-                return True
-    return False
+
+def find_candidate_components(graph, labels, max_cable_length):
+    """
+    Finds unbranched components that are short enough to possibly be
+    doubles.
+
+    Parameters
+    ----------
+    graph : SkeletonGraph
+        Graph to be searched.
+    labels : numpy.ndarray
+        Component index of each node, see "component_labels".
+    max_cable_length : float
+        Maximum cable length of a candidate component.
+
+    Returns
+    -------
+    numpy.ndarray
+        Boolean array indexed by component index.
+    """
+    n_components = labels.max() + 1
+    edges, edge_lengths = graph.edge_lengths()
+
+    # Components containing a branching node (degree > 2)
+    degree = np.bincount(edges.ravel(), minlength=len(labels))
+    has_branch = np.zeros(n_components, dtype=bool)
+    has_branch[labels[degree > 2]] = True
+
+    # Cable length of each component (sum of its edge lengths)
+    cable_lengths = np.bincount(
+        labels[edges[:, 0]], weights=edge_lengths, minlength=n_components
+    )
+
+    is_short = cable_lengths <= max_cable_length
+    return ~has_branch & is_short
+
+
+def nearest_other_component(
+    graph, query_nodes, radius, k=32, chunk_size=500000
+):
+    """
+    Finds, for each query node, the nearest node that belongs to a different
+    connected component and lies within "radius".
+
+    Parameters
+    ----------
+    graph : SkeletonGraph
+        Graph with "kdtree", "node_xyz", and "node_component_id" set.
+    query_nodes : numpy.ndarray
+        Node IDs to query.
+    radius : float
+        Search radius (inclusive).
+    k : int, optional
+        Number of nearest neighbors requested per node. Default is 32.
+    chunk_size : int, optional
+        Number of query nodes processed per KD-tree call, which bounds peak
+        memory. Default is 500000.
+
+    Returns
+    -------
+    query_nodes : numpy.ndarray
+        Query nodes that have a neighbor in another component.
+    hit_nodes : numpy.ndarray
+        Nearest such neighbor for each returned query node.
+    hit_dists : numpy.ndarray
+        Distance to that neighbor.
+    """
+    cid = graph.node_component_id
+    n_ids = len(graph.node_xyz)
+    k = min(k, n_ids)
+
+    # Set progress bar
+    chunks = range(0, len(query_nodes), chunk_size)
+    if graph.verbose and len(chunks) > 1:
+        chunks = tqdm(chunks, desc="Filter Doubles")
+
+    # Search KD-Tree
+    out_query, out_hit, out_dist = list(), list(), list()
+    for start in chunks:
+        # Query k nearest neighbors within radius (bound is exclusive, so
+        # nudge it up to match query_ball_point's inclusive radius)
+        nodes = query_nodes[start : start + chunk_size]
+        dists, idxs = graph.kdtree.query(
+            graph.node_xyz[nodes],
+            k=k,
+            distance_upper_bound=np.nextafter(radius, np.inf),
+            workers=-1,
+        )
+        dists = dists.reshape(len(nodes), k)
+        idxs = idxs.reshape(len(nodes), k)
+
+        # Missing neighbors are reported as index n_ids with distance inf
+        is_found = idxs < n_ids
+        idxs_safe = np.minimum(idxs, n_ids - 1)
+        is_other = is_found & (cid[idxs_safe] != cid[nodes][:, None])
+
+        # Nearest neighbor in another component (neighbors are sorted)
+        has_other = is_other.any(axis=1)
+        rows = np.flatnonzero(has_other)
+        cols = is_other[rows].argmax(axis=1)
+        out_query.append(nodes[rows])
+        out_hit.append(idxs[rows, cols])
+        out_dist.append(dists[rows, cols])
+
+        # Exact fallback for nodes whose k neighbors were all in their own
+        # component while more may exist within the radius
+        for i in np.flatnonzero(~has_other & is_found[:, -1]):
+            result = _nearest_other_component_exact(graph, nodes[i], radius)
+            if result is not None:
+                out_query.append(nodes[i : i + 1])
+                out_hit.append(result[0])
+                out_dist.append(result[1])
+
+    return (
+        np.concatenate(out_query),
+        np.concatenate(out_hit),
+        np.concatenate(out_dist),
+    )
+
+
+def _nearest_other_component_exact(graph, node, radius):
+    """
+    Finds the nearest node to "node" in another component within "radius"
+    using a ball query, see "nearest_other_component".
+
+    Returns
+    -------
+    Tuple[numpy.ndarray] or None
+        Length-1 arrays (hit node, distance), or None if no such node.
+    """
+    xyz = graph.node_xyz
+    idxs = np.array(graph.kdtree.query_ball_point(xyz[node], radius), int)
+    idxs = idxs[graph.node_component_id[idxs] != graph.node_component_id[node]]
+    if len(idxs) == 0:
+        return None
+
+    dists = np.linalg.norm(xyz[idxs].astype(np.float64) - xyz[node], axis=1)
+    j = np.argmin(dists)
+    return idxs[j : j + 1], dists[j : j + 1]
+
+
+def is_double(graph, labels, sizes, query_nodes, hit_nodes, hit_dists):
+    """
+    Determines which components are doubles of another component.
+
+    A component is a double if more than 10 of its nodes project onto the
+    same other component and either
+        (i) more than 60% of its nodes do so with a standard deviation of
+            the projection distance below 2, or
+        (ii) more than 80% of its nodes do so with a standard deviation
+             below 2.5.
+
+    Parameters
+    ----------
+    graph : SkeletonGraph
+        Graph to be searched.
+    labels : numpy.ndarray
+        Component index of each node, see "component_labels".
+    sizes : numpy.ndarray
+        Number of nodes in each component.
+    query_nodes : numpy.ndarray
+        Nodes that were projected onto another component.
+    hit_nodes : numpy.ndarray
+        Node in another component that each query node projected onto.
+    hit_dists : numpy.ndarray
+        Projection distance for each query node.
+
+    Returns
+    -------
+    numpy.ndarray
+        Boolean array indexed by component index.
+    """
+    # Group projections by (component, hit component) pairs
+    cid = graph.node_component_id
+    keys = labels[query_nodes] * (cid.max() + 1) + cid[hit_nodes]
+    order = np.argsort(keys, kind="stable")
+    keys, dists = keys[order], hit_dists[order]
+    starts = np.flatnonzero(np.r_[True, keys[1:] != keys[:-1]])
+    counts = np.diff(np.r_[starts, len(keys)])
+
+    # Standard deviation of projection distances within each group
+    means = np.add.reduceat(dists, starts) / counts
+    sq_devs = (dists - np.repeat(means, counts)) ** 2
+    stds = np.sqrt(np.add.reduceat(sq_devs, starts) / counts)
+
+    # Check doubles criteria per group
+    component = labels[query_nodes[order[starts]]]
+    percent_hit = counts / sizes[component]
+    is_tight = (percent_hit > 0.6) & (stds < 2)
+    is_loose = (percent_hit > 0.8) & (stds < 2.5)
+    is_dbl_group = (counts > 10) & (is_tight | is_loose)
+
+    # A component is a double if any of its groups is
+    is_dbl = np.zeros(len(sizes), dtype=bool)
+    is_dbl[component[is_dbl_group]] = True
+    return is_dbl
 
 
 # --- Miscellaneous ---
@@ -326,6 +508,43 @@ def make_digital_line(p1, p2):
     t = np.linspace(0, 1, n + 1)
     line = np.round(p1 + np.outer(t, diff)).astype(int)
     return line
+
+
+def make_digital_lines(p1s, p2s):
+    """
+    Vectorized version of "make_digital_line" for many segments at once.
+    Produces exactly the voxels that calling make_digital_line(p1, p2) for
+    each pair and concatenating would, including the numpy.linspace
+    parameterization (t_k = k * (1 / n), t_n = 1).
+
+    Parameters
+    ----------
+    p1s : ArrayLike
+        Start coordinates with shape (n_segments, 3).
+    p2s : ArrayLike
+        End coordinates with shape (n_segments, 3).
+
+    Returns
+    -------
+    numpy.ndarray
+        Voxel coordinates of all segments, shape (n_voxels, 3).
+    """
+    p1s = np.asarray(p1s, dtype=int).reshape(-1, 3)
+    p2s = np.asarray(p2s, dtype=int).reshape(-1, 3)
+    if len(p1s) == 0:
+        return np.zeros((0, 3), dtype=int)
+
+    diffs = p2s - p1s
+    n = np.max(np.abs(diffs), axis=1)
+    counts = n + 1
+    seg = np.repeat(np.arange(len(p1s)), counts)
+    k = np.arange(counts.sum()) - np.repeat(np.cumsum(counts) - counts, counts)
+
+    n_seg = n[seg]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        t = k * (1.0 / n_seg)
+    t[k == n_seg] = 1.0  # linspace sets the endpoint exactly; covers n == 0
+    return np.round(p1s[seg] + t[:, None] * diffs[seg]).astype(int)
 
 
 def make_line(p1, p2, n_steps):
