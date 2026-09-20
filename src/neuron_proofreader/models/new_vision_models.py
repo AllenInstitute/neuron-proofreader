@@ -41,6 +41,7 @@ class CNN3D(nn.Module):
         max_channels=256,
         num_single_blocks=2,
         output_dim=1,
+        output_hidden_dim=None,
         pool_stage_idxs=(2, -1),
         use_double=True,
     ):
@@ -68,6 +69,7 @@ class CNN3D(nn.Module):
             "max_channels": max_channels,
             "num_single_blocks": num_single_blocks,
             "output_dim": output_dim,
+            "output_hidden_dim": output_hidden_dim,
             "pool_stage_idxs": tuple(pool_stage_idxs),
             "use_double": use_double,
         }
@@ -100,7 +102,15 @@ class CNN3D(nn.Module):
         )
 
         total_dim = sum(c * 2 for c in stage_channels)
-        self.output = FeedForwardNet(total_dim, output_dim, 3)
+        if output_hidden_dim is None:
+            self.output = FeedForwardNet(total_dim, output_dim, 3)
+        else:
+            self.output = nn.Sequential(
+                nn.Linear(total_dim, output_hidden_dim),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(output_hidden_dim, output_dim),
+            )
         self.apply(self.init_weights)
 
     @staticmethod
