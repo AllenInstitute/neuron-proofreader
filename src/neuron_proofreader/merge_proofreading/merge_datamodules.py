@@ -99,7 +99,9 @@ class BrainDataset:
         self.nonmerge_sites = self.load_sites(
             os.path.join(sites_prefix, "nonmerge_sites")
         )
-        self.patch_loader = PatchLoader(self.graph, img_config)
+        self.patch_loader = (
+            PatchLoader(self.graph, img_config) if img_config else None
+        )
 
         # Store dataset info
         self.set_giant_components()
