@@ -369,6 +369,31 @@ class BrainDatasetCollection(Dataset):
         df = pd.DataFrame(rows)
         df.to_csv(os.path.join(output_dir, "val_summary.csv"), index=False)
 
+    def save_config(self, path):
+        """
+        Saves per-brain dataset parameters to a JSON file.
+
+        Parameters
+        ----------
+        path : str
+            Destination file path.
+        """
+        config = [
+            {
+                "brain_id": bd.brain_id,
+                "annotated_only": bd.annotated_only,
+                "class_ratios": list(bd.class_ratios),
+                "rebalance_classes": bd.rebalance_classes,
+                "random_nonmerge_site_prob": bd.random_nonmerge_site_prob,
+                "subgraph_depth": bd.subgraph_depth,
+                "n_merge_sites": len(bd.merge_sites),
+                "n_nonmerge_sites": len(bd.nonmerge_sites),
+                "n_examples": len(bd),
+            }
+            for bd in self.datasets
+        ]
+        util.write_json(path, config)
+
     # --- Dataset Interface ---
     def __len__(self):
         """
