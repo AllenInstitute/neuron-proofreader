@@ -693,11 +693,8 @@ def create_dataset_collection(
         segmentation_id = get_segmentation_id(sites_root_path, brain_id)
         sites_path = os.path.join(sites_root_path, brain_id, segmentation_id)
         swcs_path = os.path.join(
-            swcs_root_path, brain_id, segmentation_id, "fragments"
+            swcs_root_path, brain_id, segmentation_id, "fragments", "world"
         )
-        # util.get_google_swcs_prefix(
-        #    swcs_root_path, brain_id, segmentation_id
-        # )
 
         # Add dataset
         print(f"   \nBrain ID [{i}/{len(brain_ids)}]: {brain_id}")
