@@ -57,6 +57,9 @@ class BrainDataset:
     ----------
     brain_id : str
         Unique identifier for this brain.
+    annotated_only : bool
+        If True, negatives come only from the annotated nonmerge sites and
+        no random nonmerge sites are ever sampled for this brain.
     subgraph_depth : float
         Radius (in microns) used when extracting rooted subgraphs.
     """
@@ -69,6 +72,7 @@ class BrainDataset:
         brain_id,
         sites_prefix,
         swcs_path,
+        annotated_only=False,
         class_ratios=(0.5, 0.5),
         graph_config=None,
         img_config=None,
@@ -77,10 +81,13 @@ class BrainDataset:
         subgraph_depth=100,
     ):
         # Instance attributes
+        self.annotated_only = annotated_only
         self.brain_id = brain_id
         self.class_ratios = class_ratios
         self.ignore_fragments = set()
-        self.random_nonmerge_site_prob = random_nonmerge_site_prob
+        self.random_nonmerge_site_prob = (
+            0 if annotated_only else random_nonmerge_site_prob
+        )
         self.rebalance_classes = rebalance_classes
         self.subgraph_depth = subgraph_depth
 
@@ -240,10 +247,16 @@ class BrainDataset:
                     visited.add(j)
         return False
 
+    def _num_neg_candidates(self):
+        n_neg = len(self.nonmerge_sites)
+        if self.annotated_only:
+            return n_neg
+        return n_neg or len(self.merge_sites)
+
     def _list_indices(self):
         # Compute target class counts
         n_pos = len(self.merge_sites)
-        n_neg = len(self.nonmerge_sites) or n_pos
+        n_neg = self._num_neg_candidates()
         pos_ratio, neg_ratio = self.class_ratios
         n_target_neg = min(int(n_pos * neg_ratio / pos_ratio), n_neg)
 
@@ -265,7 +278,7 @@ class BrainDataset:
             Number of examples in the dataset.
         """
         n_pos = len(self.merge_sites)
-        n_neg = len(self.nonmerge_sites) or n_pos
+        n_neg = self._num_neg_candidates()
         pos_ratio, neg_ratio = self.class_ratios
         n_target_neg = min(int(n_pos * neg_ratio / pos_ratio), n_neg)
         size = n_target_neg if self.rebalance_classes else n_neg
@@ -275,6 +288,7 @@ class BrainDataset:
         return (
             f"BrainDataset("
             f"brain_id={self.brain_id}, "
+            f"annotated_only={self.annotated_only}, "
             f"n_examples={len(self)}, "
             f"n_pos_examples={len(self.merge_sites)}, "
             f"n_neg_examples={len(self.nonmerge_sites)})"
@@ -663,6 +677,7 @@ def create_dataset_collection(
     img_prefixes_path,
     sites_root_path,
     swcs_root_path,
+    annotated_only_ids=(),
     class_ratios=(0.5, 0.5),
     graph_config=None,
     img_config=None,
@@ -702,6 +717,7 @@ def create_dataset_collection(
             brain_id,
             sites_path,
             swcs_path,
+            annotated_only=brain_id in annotated_only_ids,
             class_ratios=class_ratios,
             graph_config=graph_config,
             img_config=img_config,
@@ -712,7 +728,7 @@ def create_dataset_collection(
         print(dataset)
 
         # Check whether to generate examples for validation
-        if dataset_mode == "Val":
+        if dataset_mode == "Val" and not dataset.annotated_only:
             num_target_neg = val_neg_multiplier * len(dataset.merge_sites)
             num_added_neg = num_target_neg - len(dataset.nonmerge_sites)
             if num_added_neg > 0:
