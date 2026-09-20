@@ -82,15 +82,9 @@ class TensorStoreImage:
         s = img_util.get_slices(voxel, shape)
         try:
             return self.img[(0, 0, *s)].read().result()
-        except ValueError as e:
+        except (IndexError, ValueError) as e:
             if "OUT_OF_RANGE" in str(e):
-                raise ValueError(
-                    f"Out-of-bounds read from image: {self.img_path}\n"
-                    f"  Requested center voxel: {tuple(voxel)}\n"
-                    f"  Requested patch shape:  {tuple(shape)}\n"
-                    f"  Image shape:            {tuple(self.img.shape)}\n"
-                    f"  Original error: {e}"
-                ) from e
+                return np.zeros(shape, dtype=np.float32)
             raise
 
     def shape(self):

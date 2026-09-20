@@ -71,6 +71,17 @@ class NewVisionHGAT(torch.nn.Module):
         # Call parent class
         super().__init__()
 
+        # Store config for checkpointing
+        self.config = {
+            "patch_shape": patch_shape,
+            "concat_heads": concat_heads,
+            "geometry_embed_dim": geometry_embed_dim,
+            "heads": heads,
+            "hidden_dim": hidden_dim,
+            "img_embed_dim": img_embed_dim,
+            "n_layers": n_layers,
+        }
+
         # Initial embeddings. The fusion layer maps the concatenated image
         # and geometric embeddings onto "hidden_dim", so the two embedding
         # dimensions can be set independently of it. Note: branch features
