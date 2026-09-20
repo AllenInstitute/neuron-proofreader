@@ -159,7 +159,6 @@ class FragmentsDatasetCollection(IterableDataset):
         shuffle : bool, optional
             Indication of whether to shuffle examples. Default is True.
         """
-        # Instance attributes
         self.datasets = dict()
         self.shuffle = shuffle
 
@@ -368,7 +367,7 @@ def generate_dataset_example_ids(bucket_name, dataset_prefix):
     Parameters
     ----------
     bucket_name : str
-        Name of the Google Cloud Storage bucket.
+        Name of the GCS bucket.
     dataset_prefix : str
         Root prefix under which dataset contents are organized.
 
