@@ -88,10 +88,11 @@ class ProposalGraph(FragmentsGraph):
         old_proposals = self.list_proposals()
         old_to_new = super().relabel_nodes()
 
-        # Update proposals
+        # Update proposals, dropping any whose endpoint was removed
         self.reset_proposals()
         for i, j in old_proposals:
-            self.add_proposal(int(old_to_new[i]), int(old_to_new[j]))
+            if i in old_to_new and j in old_to_new:
+                self.add_proposal(int(old_to_new[i]), int(old_to_new[j]))
 
     # --- Proposal Operations ---
     def add_proposal(self, i, j):
@@ -105,7 +106,8 @@ class ProposalGraph(FragmentsGraph):
         j : int
             Node ID
         """
-        assert i in self.node_indices() and j in self.node_indices()
+        # has_node is O(1); "i in self.node_indices()" is a linear scan
+        assert self.has_node(i) and self.has_node(j)
         self.node_proposals[i].add(j)
         self.node_proposals[j].add(i)
         self.proposals.add(frozenset({i, j}))
