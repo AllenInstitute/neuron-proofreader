@@ -691,12 +691,17 @@ def create_dataset_collection(
     print(f"\nLoading {dataset_mode} Dataset...")
     assert dataset_mode in ["Train", "Val"]
     if dataset_mode == "Train":
-        img_config.set_train_mode()
         rebalance_classes = True
     else:
-        img_config.set_val_mode()
         random_nonmerge_site_prob = 0
         rebalance_classes = False
+
+    # img_config is None for graph-only datasets
+    if img_config is not None:
+        if dataset_mode == "Train":
+            img_config.set_train_mode()
+        else:
+            img_config.set_val_mode()
 
     # Load image prefixes
     bucket, root_prefix = util.parse_cloud_path(sites_root_path)
@@ -706,7 +711,8 @@ def create_dataset_collection(
     datasets = list()
     for i, brain_id in enumerate(brain_ids, start=1):
         # Extract dataset info
-        img_config.set_img_path(os.path.join(img_prefixes[brain_id], "0"))
+        if img_config is not None:
+            img_config.set_img_path(os.path.join(img_prefixes[brain_id], "0"))
         segmentation_id = get_segmentation_id(sites_root_path, brain_id)
         sites_path = os.path.join(sites_root_path, brain_id, segmentation_id)
         swcs_path = os.path.join(
