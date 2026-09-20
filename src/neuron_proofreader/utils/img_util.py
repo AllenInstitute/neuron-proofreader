@@ -314,7 +314,7 @@ def get_slices(center, shape):
     Tuple[slice]
         Slice objects used to index into the image.
     """
-    start = [int(c - d // 2) for c, d in zip(center, shape)]
+    start = [max(0, int(c - d // 2)) for c, d in zip(center, shape)]
     return tuple(slice(s, s + d) for s, d in zip(start, shape))
 
 
