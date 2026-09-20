@@ -72,6 +72,7 @@ class Trainer:
         max_epochs=200,
         pos_weight=None,
         save_mistake_mips=False,
+        unfreeze_epoch=None,
         use_amp=True,
     ):
         """
@@ -99,6 +100,9 @@ class Trainer:
             is None (no reweighting).
         save_mistake_mips : bool, optional
             Indication of whether to save MIPs of mistakes. Default is False.
+        unfreeze_epoch : int or None, optional
+            If set, calls model.unfreeze_arborist() at the start of this
+            epoch. Freeze the encoder before calling run(). Default is None.
         use_amp : bool, optional
             If True, enables automatic mixed precision (float16) training.
             Default is True.
@@ -118,6 +122,7 @@ class Trainer:
         self.mistakes_dir = os.path.join(log_dir, "mistakes")
         self.model_name = model_name
         self.save_mistake_mips = save_mistake_mips
+        self.unfreeze_epoch = unfreeze_epoch
 
         pw = (
             torch.tensor([pos_weight], device=device)
@@ -150,8 +155,11 @@ class Trainer:
         val_dataloader.dataset.save_val_summary(self.log_dir)
         print("\nExperiment:", exp_name)
         for epoch in range(self.max_epochs):
-            # Train-Validate
+            if self.unfreeze_epoch is not None and epoch == self.unfreeze_epoch:
+                self.model.unfreeze_arborist()
+                print(f"\nUnfroze Arborist encoder at epoch {epoch}")
 
+            # Train-Validate
             train_stats = self.train_step(train_dataloader, epoch)
             val_stats = self.validate_step(val_dataloader, epoch)
             new_best = self.check_model_performance(val_stats, epoch)
