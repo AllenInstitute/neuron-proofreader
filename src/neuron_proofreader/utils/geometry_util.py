@@ -328,6 +328,43 @@ def make_digital_line(p1, p2):
     return line
 
 
+def make_digital_lines(p1s, p2s):
+    """
+    Vectorized version of "make_digital_line" for many segments at once.
+    Produces exactly the voxels that calling make_digital_line(p1, p2) for
+    each pair and concatenating would, including the numpy.linspace
+    parameterization (t_k = k * (1 / n), t_n = 1).
+
+    Parameters
+    ----------
+    p1s : ArrayLike
+        Start coordinates with shape (n_segments, 3).
+    p2s : ArrayLike
+        End coordinates with shape (n_segments, 3).
+
+    Returns
+    -------
+    numpy.ndarray
+        Voxel coordinates of all segments, shape (n_voxels, 3).
+    """
+    p1s = np.asarray(p1s, dtype=int).reshape(-1, 3)
+    p2s = np.asarray(p2s, dtype=int).reshape(-1, 3)
+    if len(p1s) == 0:
+        return np.zeros((0, 3), dtype=int)
+
+    diffs = p2s - p1s
+    n = np.max(np.abs(diffs), axis=1)
+    counts = n + 1
+    seg = np.repeat(np.arange(len(p1s)), counts)
+    k = np.arange(counts.sum()) - np.repeat(np.cumsum(counts) - counts, counts)
+
+    n_seg = n[seg]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        t = k * (1.0 / n_seg)
+    t[k == n_seg] = 1.0  # linspace sets the endpoint exactly; covers n == 0
+    return np.round(p1s[seg] + t[:, None] * diffs[seg]).astype(int)
+
+
 def make_line(p1, p2, n_steps):
     """
     Generates a series of points representing a straight line between two 3D

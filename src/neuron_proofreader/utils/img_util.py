@@ -9,12 +9,13 @@ Helper routines for reading and processing images.
 """
 
 from matplotlib.colors import ListedColormap
-from scipy.ndimage import zoom
 
 import json
 import matplotlib.pyplot as plt
 import numpy as np
 import tensorstore as ts
+import torch
+import torch.nn.functional as F
 
 from neuron_proofreader.utils import util
 
@@ -168,12 +169,26 @@ def annotate_voxels(img, voxels, kernel_size=3, fill_val=1):
     fill_val : int, optional
         Fill value. Default is 1.
     """
+    voxels = np.asarray(voxels, dtype=np.int64).reshape(-1, 3)
+    if len(voxels) == 0:
+        return
+
+    # Keep voxels whose full kernel lies inside the image (same test as
+    # is_contained(voxel, img.shape, buffer))
     buffer = (kernel_size - 1) // 2
-    shape = (kernel_size, kernel_size, kernel_size)
-    for voxel in voxels:
-        if is_contained(voxel, img.shape, buffer=buffer):
-            s = get_slices(voxel, shape)
-            img[s] = fill_val
+    shape = np.asarray(img.shape)
+    keep = np.all(voxels - buffer >= 0, axis=1)
+    keep &= np.all(voxels + buffer < shape, axis=1)
+    voxels = voxels[keep]
+    if len(voxels) == 0:
+        return
+
+    # Fill kernel around every voxel in one vectorized assignment. The kernel
+    # spans [c - k//2, c - k//2 + k), matching get_slices.
+    offsets = np.arange(kernel_size) - kernel_size // 2
+    grid = np.stack(np.meshgrid(offsets, offsets, offsets, indexing="ij"), -1)
+    idx = (voxels[:, None, :] + grid.reshape(1, -1, 3)).reshape(-1, 3)
+    img[idx[:, 0], idx[:, 1], idx[:, 2]] = fill_val
 
 
 def compute_iou3d(c1, c2, s1, s2):
@@ -447,10 +462,15 @@ def normalize(img, percentiles=(1, 99.5)):
     Returns
     -------
     img : numpy.ndarray
-        Normalized image.
+        Normalized image as float32. The arithmetic is done in float32 (the
+        precision every consumer casts to anyway), which halves the memory
+        traffic of the float64 version.
     """
     mn, mx = np.percentile(img, percentiles)
-    return np.clip((img - mn) / (mx - mn + 1e-5), 0, 1)
+    out = img.astype(np.float32)
+    out -= np.float32(mn)
+    out /= np.float32(mx - mn + 1e-5)
+    return np.clip(out, 0, 1, out=out)
 
 
 def pad_to_shape(img, target_shape, pad_value=0):
@@ -492,9 +512,62 @@ def resize(img, new_shape):
     -------
     numpy.ndarray
         Resized 3D image.
+
+    Notes
+    -----
+    Reproduces scipy.ndimage.zoom(img, factors, order=1, prefilter=False),
+    which the split model was trained with, using torch's trilinear
+    interpolation (20-30x faster on the CPU). Both map output index i to
+    input coordinate i * (in - 1) / (out - 1). One scipy quirk is kept on
+    purpose: when that product rounds to slightly more than in - 1 for the
+    last output index, scipy treats the coordinate as out of bounds and
+    zero-fills the entire last plane along that axis.
     """
-    zoom_factors = np.array(new_shape) / np.array(img.shape)
-    return zoom(img, zoom_factors, order=1, prefilter=False)
+    new_shape = tuple(int(s) for s in new_shape)
+    if tuple(img.shape) == new_shape:
+        return np.array(img, dtype=np.float32, copy=True)
+
+    x = torch.from_numpy(np.ascontiguousarray(img, dtype=np.float32))
+    out = F.interpolate(
+        x[None, None], size=new_shape, mode="trilinear", align_corners=True
+    )[0, 0].numpy()
+
+    # scipy border quirk (see Notes)
+    for axis, (n_in, n_out) in enumerate(zip(img.shape, new_shape)):
+        if n_out > 1:
+            zoom_factor = np.float64(n_in - 1) / np.float64(n_out - 1)
+            if np.float64(n_out - 1) * zoom_factor > n_in - 1:
+                idx = [slice(None)] * 3
+                idx[axis] = -1
+                out[tuple(idx)] = 0
+    return out
+
+
+def resize_nearest(mask, new_shape):
+    """
+    Resizes a 3D label mask with nearest-neighbor sampling, reproducing
+    skimage.transform.resize(mask, shape, order=0, preserve_range=True,
+    anti_aliasing=False), which samples at grid centers
+    (i + 0.5) * in / out - 0.5.
+
+    Parameters
+    ----------
+    mask : numpy.ndarray
+        Mask to be resized.
+    new_shape : Tuple[int]
+        Desired output shape.
+
+    Returns
+    -------
+    numpy.ndarray
+        Resized mask with the same dtype as the input.
+    """
+    new_shape = tuple(int(s) for s in new_shape)
+    if tuple(mask.shape) == new_shape:
+        return np.array(mask, copy=True)
+    x = torch.from_numpy(np.ascontiguousarray(mask, dtype=np.float32))
+    out = F.interpolate(x[None, None], size=new_shape, mode="nearest-exact")
+    return out[0, 0].numpy().astype(mask.dtype)
 
 
 def to_physical(voxel, anisotropy, offset=(0, 0, 0)):

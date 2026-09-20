@@ -194,6 +194,27 @@ class FragmentsGraph(SkeletonGraph):
         """
         return tuple([v - o for v, o in zip(self.node_voxel(node), offset)])
 
+    def nodes_local_voxels(self, nodes, offset):
+        """
+        Vectorized "node_local_voxel" for many nodes; identical arithmetic
+        (float64 division, truncation toward zero, xyz -> zyx).
+
+        Parameters
+        ----------
+        nodes : ArrayLike
+            Node IDs.
+        offset : Tuple[int]
+            Offset of the patch in voxel coordinates.
+
+        Returns
+        -------
+        numpy.ndarray
+            Local voxel coordinates with shape (len(nodes), 3).
+        """
+        xyz = self.node_xyz[np.asarray(nodes, dtype=int)].astype(np.float64)
+        voxels = np.trunc(xyz / self.anisotropy).astype(int)[:, ::-1]
+        return voxels - np.asarray(offset, dtype=int)
+
     def clip_to_bbox(self, metadata_path):
         """
         Clips skeletons to the bounding box defined in a metadata JSON file.
