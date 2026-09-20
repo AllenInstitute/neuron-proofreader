@@ -29,7 +29,6 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 import numpy as np
-import rustworkx as rx
 import os
 import pandas as pd
 import torch
@@ -307,19 +306,16 @@ class MLMergeProofreader(MergeProofreader):
 
             # Check whether to average sites in a single one
             if len(nodes) > 1:
+                # One bounded traversal from root replaces a whole-component
+                # shortest-path query per nearby site.
+                path_dists = self.graph.path_distances_within(
+                    root, max_dist + 4
+                )
                 hits = [root]
                 for node in nodes:
-                    if node == root:
-                        continue
-                    paths = rx.graph_dijkstra_shortest_paths(
-                        self.dataset.graph, root, target=node,
-                        default_weight=1.0,
-                    )
-                    if node in paths:
-                        path = list(paths[node])
-                        if self.dataset.path_length(path) < max_dist + 4:
-                            hits.append(node)
-                            visited.add(node)
+                    if node != root and node in path_dists:
+                        hits.append(node)
+                        visited.add(node)
 
                 xyz_arr = np.array([self.graph.node_xyz[i] for i in hits])
                 xyz_avg = xyz_arr.mean(axis=0)
@@ -519,6 +515,9 @@ class SomaMergeProofreader(MergeProofreader):
         return merge_nodes
 
     def __call__(self):
-        merge_nodes = super().__call__()
+        # Skip the relabel inside remove_merge_sites: node indices stay
+        # stable after removal, and remove_small_components relabels once.
+        merge_nodes = self.search()
+        self.graph.remove_merge_sites(merge_nodes, relabel_nodes=False)
         self.graph.remove_small_components()
         return merge_nodes
