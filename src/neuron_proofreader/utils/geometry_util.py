@@ -159,17 +159,10 @@ def resample_curve_3d(pts, n_pts=None, s=None):
 
 
 # --- Fragment Filtering ---
-def remove_doubles(graph, max_cable_length, max_nodes=1000, search_radius=15):
+def remove_doubles(graph, max_cable_length, search_radius=15):
     """
     Removes connected components from the graph that are likely doubles
     caused by image ghosting artifacts.
-
-    A component is a double if it is small (at most "max_nodes" nodes, no
-    branching nodes, cable length at most "max_cable_length") and most of its
-    nodes project onto a single other component at a nearly constant offset.
-    See "is_double" for the exact criteria. All steps are vectorized so the
-    runtime is dominated by a single batched KD-tree query over the nodes of
-    the candidate components.
 
     Parameters
     ----------
@@ -177,9 +170,6 @@ def remove_doubles(graph, max_cable_length, max_nodes=1000, search_radius=15):
         Graph to be searched for doubles.
     max_cable_length : float
         Maximum cable length of connected components to be searched.
-    max_nodes : int, optional
-        Maximum number of nodes of connected components to be searched.
-        Default is 1000.
     search_radius : float, optional
         Radius (in microns) used to search for nodes of other components.
         Default is 15.
@@ -189,10 +179,8 @@ def remove_doubles(graph, max_cable_length, max_nodes=1000, search_radius=15):
     if len(sizes) == 0:
         return
 
-    # Find candidate components (small, unbranched, short)
-    is_candidate = find_candidate_components(
-        graph, labels, sizes, max_nodes, max_cable_length
-    )
+    # Find candidate components (unbranched and short)
+    is_candidate = find_candidate_components(graph, labels, max_cable_length)
     candidate_nodes = nodes[is_candidate[labels[nodes]]]
     if len(candidate_nodes) == 0:
         return
@@ -245,11 +233,10 @@ def component_labels(graph):
     return nodes, labels, sizes
 
 
-def find_candidate_components(
-    graph, labels, sizes, max_nodes, max_cable_length
-):
+def find_candidate_components(graph, labels, max_cable_length):
     """
-    Finds components that are small enough to possibly be doubles.
+    Finds unbranched components that are short enough to possibly be
+    doubles.
 
     Parameters
     ----------
@@ -257,10 +244,6 @@ def find_candidate_components(
         Graph to be searched.
     labels : numpy.ndarray
         Component index of each node, see "component_labels".
-    sizes : numpy.ndarray
-        Number of nodes in each component.
-    max_nodes : int
-        Maximum number of nodes of a candidate component.
     max_cable_length : float
         Maximum cable length of a candidate component.
 
@@ -269,7 +252,7 @@ def find_candidate_components(
     numpy.ndarray
         Boolean array indexed by component index.
     """
-    n_components = len(sizes)
+    n_components = labels.max() + 1
     edges, edge_lengths = graph.edge_lengths()
 
     # Components containing a branching node (degree > 2)
@@ -282,9 +265,8 @@ def find_candidate_components(
         labels[edges[:, 0]], weights=edge_lengths, minlength=n_components
     )
 
-    is_small = sizes <= max_nodes
     is_short = cable_lengths <= max_cable_length
-    return is_small & ~has_branch & is_short
+    return ~has_branch & is_short
 
 
 def nearest_other_component(
@@ -293,11 +275,6 @@ def nearest_other_component(
     """
     Finds, for each query node, the nearest node that belongs to a different
     connected component and lies within "radius".
-
-    Uses a batched k-nearest-neighbor query, then falls back to an exact ball
-    query for the rare nodes whose k nearest neighbors all lie within the
-    radius and in their own component. The result is therefore exact
-    regardless of "k".
 
     Parameters
     ----------
@@ -323,8 +300,7 @@ def nearest_other_component(
         Distance to that neighbor.
     """
     cid = graph.node_component_id
-    xyz = graph.node_xyz
-    n_ids = len(xyz)
+    n_ids = len(graph.node_xyz)
     k = min(k, n_ids)
 
     # Set progress bar
@@ -339,7 +315,7 @@ def nearest_other_component(
         # nudge it up to match query_ball_point's inclusive radius)
         nodes = query_nodes[start : start + chunk_size]
         dists, idxs = graph.kdtree.query(
-            xyz[nodes],
+            graph.node_xyz[nodes],
             k=k,
             distance_upper_bound=np.nextafter(radius, np.inf),
             workers=-1,
