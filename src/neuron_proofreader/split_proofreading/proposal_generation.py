@@ -78,15 +78,16 @@ class ProposalGenerator:
         if self.graph.verbose:
             iterator = tqdm(iterator, desc="Proposal Generation")
 
+        # Cable length of every fragment in one vectorized pass, instead of
+        # a DFS from each leaf.
+        node_cable_length = self.graph.node_cable_lengths()
+
         # Main
         connections = dict()
         proposals = set()
         for leaf in iterator:
             # Check if fragment satisfies size requirement
-            length = self.graph.cable_length(
-                max_depth=self.min_size_with_proposals, root=leaf
-            )
-            if length < self.min_size_with_proposals:
+            if node_cable_length[leaf] < self.min_size_with_proposals:
                 continue
 
             # Generate proposals

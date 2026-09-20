@@ -203,6 +203,10 @@ class LearnedSplitProofreader:
         self.log(f"Total Runtime: {t:.2f} {unit}\n")
         self.save_connections()
 
+        # Drop unresolved proposals: nothing downstream uses them, and every
+        # later relabel_nodes (e.g. after merge removal) would re-add them.
+        self.dataset.reset_proposals()
+
     # --- Core Routines ---
     def generate_proposals(self, proposals_config):
         """

@@ -24,7 +24,7 @@ from neuron_proofreader.machine_learning.image_dataloader import (
     DetectionBatchLoader,
     DetectionPatchLoader,
 )
-from neuron_proofreader.utils import img_util, util
+from neuron_proofreader.utils import img_util
 from neuron_proofreader.utils.graph_util import subgraph_to_tree_sample
 from neuron_proofreader.utils.ml_util import TensorDict
 
@@ -144,10 +144,10 @@ class SearchDataset(IterableDataset, ABC):
     def _compute_fragment_stats(self):
         if not hasattr(self, "_fragment_stats_cache"):
             stats = {}
-            for nodes in rx.connected_components(self.graph):
-                node = util.sample_once(list(nodes))
-                cable_length = self.graph.cable_length(root=node)
+            components, lengths = self.graph.component_cable_lengths()
+            for nodes, cable_length in zip(components, lengths):
                 if cable_length > self.min_size:
+                    node = next(iter(nodes))
                     stats[self.node_component_id[node]] = cable_length
             self._fragment_stats_cache = stats
         return self._fragment_stats_cache
@@ -162,8 +162,9 @@ class SearchDataset(IterableDataset, ABC):
         return img_util.is_contained(voxel, shape, buffer=buffer)
 
     def compute_near_leaf_nodes(self, root, threshold=32):
-        components = rx.connected_components(self.graph)
-        component = next(c for c in components if root in c)
+        # Only the component containing root is needed; computing every
+        # component here made each fragment cost a full-graph pass.
+        component = rx.node_connected_component(self.graph, root)
         leaves = [n for n in component if self.degree(n) == 1]
         near_leaf = set()
         visited = set(leaves)

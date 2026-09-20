@@ -159,7 +159,9 @@ class FragmentsGraph(SkeletonGraph):
                 soma_nodes.append(i)
         return soma_nodes
 
-    def remove_merge_sites(self, merge_site_nodes, max_depth=8):
+    def remove_merge_sites(
+        self, merge_site_nodes, max_depth=8, relabel_nodes=True
+    ):
         """
         Removes detected merge sites and their local neighborhoods from the
         graph.
@@ -171,6 +173,10 @@ class FragmentsGraph(SkeletonGraph):
         max_depth : float, optional
             Radius (in microns) around each merge site to remove. Default
             is 8.
+        relabel_nodes : bool, optional
+            Whether to relabel nodes after removal. Pass False when another
+            removal step follows immediately, so the graph is relabeled once.
+            Default is True.
         """
         rm_nodes = set()
         for root in merge_site_nodes:
@@ -179,7 +185,7 @@ class FragmentsGraph(SkeletonGraph):
                 if i != root and self.degree(i) >= 3:
                     nbhd.update(self.nodes_within_distance(i, max_depth))
             rm_nodes |= nbhd
-        self.remove_nodes(rm_nodes)
+        self.remove_nodes(rm_nodes, relabel_nodes=relabel_nodes)
 
     # --- Image Coordinate Helpers ---
     def node_voxel(self, i):
