@@ -38,7 +38,6 @@ class VisionHGAT(torch.nn.Module):
     def __init__(
         self,
         patch_shape,
-        disable_msg_passing=False,
         heads=4,
         hidden_dim=128,
         n_layers=2,
@@ -53,15 +52,9 @@ class VisionHGAT(torch.nn.Module):
         )
 
         # Message passing layers
-        self.disable_msg_passing = disable_msg_passing
-        if self.disable_msg_passing:
-            self.gat1 = self.init_mlp_layers(hidden_dim, n_layers)
-            self.gat2 = self.init_mlp_layers(hidden_dim, n_layers)
-            self.output = nn.Linear(hidden_dim, 1)
-        else:
-            self.gat1 = self.init_gat(hidden_dim, hidden_dim, heads)
-            self.gat2 = self.init_gat(hidden_dim * heads, hidden_dim, heads)
-            self.output = nn.Linear(hidden_dim * heads**2, 1)
+        self.gat1 = self.init_gat(hidden_dim, hidden_dim, heads)
+        self.gat2 = self.init_gat(hidden_dim * heads, hidden_dim, heads)
+        self.output = nn.Linear(hidden_dim * heads**2, 1)
 
         # Initialize weights
         self.init_weights()
@@ -79,26 +72,17 @@ class VisionHGAT(torch.nn.Module):
             gat_dict[relation] = init_gat(hidden_dim, edge_dim, heads)
         return nn_geometric.HeteroConv(gat_dict)
 
-    def init_mlp_layers(self, hidden_dim, n_layers=2):
-        layers = nn.ModuleList()
-        for _ in range(n_layers):
-            layers.append(
-                nn_geometric.HeteroDictLinear(
-                    hidden_dim, hidden_dim, types=("branch", "proposal")
-                )
-            )
-        return layers
-
     def init_weights(self):
-        """
-        Initializes linear layers.
-        """
+        norm_types = (nn.GroupNorm, nn.BatchNorm3d, nn.LayerNorm)
         for layer in [self.node_embedding, self.patch_embedding, self.output]:
-            for param in layer.parameters():
-                if len(param.shape) > 1:
-                    init.kaiming_normal_(param)
-                else:
-                    init.zeros_(param)
+            for module in layer.modules():
+                if isinstance(module, norm_types):
+                    continue
+                for param in module.parameters(recurse=False):
+                    if len(param.shape) > 1:
+                        init.kaiming_normal_(param)
+                    else:
+                        init.zeros_(param)
 
     def forward(self, input_dict):
         x_dict = input_dict["x_dict"]
@@ -112,14 +96,8 @@ class VisionHGAT(torch.nn.Module):
         x_dict["proposal"] = torch.cat((x_dict["proposal"], x_img), dim=1)
 
         # Message passing
-        if self.disable_msg_passing:
-            for layer in self.gat1:
-                x_dict = layer(x_dict)
-            for layer in self.gat2:
-                x_dict = layer(x_dict)
-        else:
-            x_dict = self.gat1(x_dict, edge_index_dict)
-            x_dict = self.gat2(x_dict, edge_index_dict)
+        x_dict = self.gat1(x_dict, edge_index_dict)
+        x_dict = self.gat2(x_dict, edge_index_dict)
         return self.output(x_dict["proposal"])
 
 

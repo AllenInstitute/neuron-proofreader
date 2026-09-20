@@ -21,15 +21,7 @@ class ProposalGenerator:
     A class for generating proposals between fragments in a graph.
     """
 
-    def __init__(
-        self,
-        graph,
-        allow_nonleaf_proposals=False,
-        max_attempts=2,
-        max_proposals_per_leaf=3,
-        min_size_with_proposals=0,
-        search_scaling_factor=1.5,
-    ):
+    def __init__(self, graph, config):
         """
         Instantiates a ProposalGenerator object.
 
@@ -37,44 +29,29 @@ class ProposalGenerator:
         ----------
         graph : ProposalGraph
             Graph that proposals will be generated for.
-        allow_nonleaf_proposals : bool, optional
-            Indication of whether to generate proposals between leaf and nodes
-            with degree 2. Default is False.
-        max_attempts : int, optional
-            Number of attempts made to generate proposals from a node with
-            increasing search radii. Default is 2.
-        max_proposals_per_leaf : bool, optional
-            Maximum number of proposals generated at each leaf. Default is 3.
-        min_size_with_proposals : float, optional
-            Minimum cable path length required for fragments that proposals
-            are generated from. Default is 0.
-        search_scaling_factor : 1.5, optional
-            Scaling actor used to enlarge search radius for each search.
-            Default is 2.
+        config : ProposalConfig
+            Configuration object containing parameters for generating
+            proposals.
         """
         # Instance attributes
-        self.allow_nonleaf_proposals = allow_nonleaf_proposals
+        self.allow_nonleaf_proposals = config.allow_nonleaf_proposals
         self.graph = graph
-        self.kdtree = None
-        self.max_attempts = max_attempts
-        self.max_proposals_per_leaf = max_proposals_per_leaf
-        self.min_size_with_proposals = min_size_with_proposals
-        self.search_scaling_factor = search_scaling_factor
+        self.initial_radius = config.initial_search_radius
+        self.max_attempts = config.max_attempts
+        self.max_proposals_per_leaf = config.max_proposals_per_leaf
+        self.min_size_with_proposals = config.min_size_with_proposals
+        self.search_scaling_factor = config.search_scaling_factor
 
-    def __call__(self, initial_radius):
+        # Set KD-Tree
+        self.set_kdtree()
+
+    def __call__(self):
         """
         Generates edge proposals between fragments within the given search
         radius.
-
-        Parameters
-        ----------
-        initial_radius : float
-            Initial search radius used to generate proposals between endpoints
-            of proposal.
         """
         # Initializations
-        self.set_kdtree()
-        iterator = self.graph.leaf_nodes()
+        iterator = self.valid_leafs()
         if self.graph.verbose:
             iterator = tqdm(iterator, desc="Proposal Generation")
 
@@ -82,20 +59,13 @@ class ProposalGenerator:
         connections = dict()
         proposals = set()
         for leaf in iterator:
-            # Check if fragment satisfies size requirement
-            length = self.graph.cable_length(
-                max_depth=self.min_size_with_proposals, root=leaf
-            )
-            if length < self.min_size_with_proposals:
-                continue
-
             # Generate proposals
             cnt = 0
             node_candidates = list()
             while len(node_candidates) == 0 and cnt < self.max_attempts:
                 # Search for candidates
                 cnt += 1
-                radius = initial_radius * self.search_scaling_factor**cnt
+                radius = self.initial_radius * self.search_scaling_factor**cnt
                 node_candidates = self.find_node_candidates(leaf, radius)
 
                 # Parse candidates
@@ -335,6 +305,14 @@ class ProposalGenerator:
         else:
             leafs = np.array(self.graph.leaf_nodes())
             self.kdtree = KDTree(self.graph.node_xyz[leafs])
+
+    def valid_leafs(self):
+        valid_leafs = list()
+        min_sz = self.min_size_with_proposals
+        for i in self.graph.leaf_nodes():
+            if self.graph.cable_length(max_depth=min_sz, root=i) >= min_sz:
+                valid_leafs.append(i)
+        return valid_leafs
 
 
 # --- Trim Endpoints ---

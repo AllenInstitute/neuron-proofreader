@@ -14,9 +14,6 @@ import numpy as np
 import tensorstore as ts
 
 from neuron_proofreader.configs import ImageConfig
-from neuron_proofreader.machine_learning.image_augmentation import (
-    ImageTransforms,
-)
 from neuron_proofreader.utils import geometry_util, img_util, util
 
 # ----------------------------------------------------------------------------
@@ -39,6 +36,7 @@ class TensorStoreImage:
             Path to image.
         """
         # Load image
+        self.img_path = img_path
         bucket_name, inner_path = util.parse_cloud_path(img_path)
         self.img_path = img_path
         self.img = ts.open(
@@ -136,7 +134,7 @@ class PatchLoader(ABC):
         self.config = img_config or ImageConfig()
         self.graph = graph
         self.img = TensorStoreImage(img_config.img_path)
-        self.transform = ImageTransforms() if self.config.transform else None
+        self.transform = self.config.transform or None
 
     # --- Abstract Interface ---
     @abstractmethod
@@ -312,6 +310,7 @@ class ProposalPatchLoader(PatchLoader):
         node1, node2 = tuple(proposal)
         voxel1 = np.array(self.graph.node_voxel(node1))
         voxel2 = np.array(self.graph.node_voxel(node2))
-        center = tuple(((voxel1 + voxel2) / 2).astype(int))
+        center = ((voxel1 + voxel2) / 2).astype(int)
+        center = tuple(self.adjust_voxel(center))
         length = int(np.max(np.abs(voxel2 - voxel1))) + 2 * self.padding
         return center, (length, length, length)
