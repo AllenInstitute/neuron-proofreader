@@ -140,7 +140,7 @@ class ArboristVisionMergeDetector(nn.Module):
 
     @classmethod
     def load(cls, path, map_location=None):
-        ckpt = torch.load(path, map_location=map_location)
+        ckpt = torch.load(path, map_location=map_location, weights_only=True)
         config = {k: v for k, v in ckpt["config"].items() if k != "model_type"}
         model = cls(**config)
         model.load_state_dict(ckpt["state_dict"])
