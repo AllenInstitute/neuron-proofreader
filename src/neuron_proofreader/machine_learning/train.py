@@ -147,7 +147,9 @@ class Trainer:
             Dataloader used for validation.
         """
         exp_name = os.path.basename(os.path.normpath(self.log_dir))
-        val_dataloader.dataset.save_val_summary(self.log_dir)
+        dataset = getattr(val_dataloader, 'dataset', None)
+        if dataset is not None and hasattr(dataset, 'save_val_summary'):
+            dataset.save_val_summary(self.log_dir)
         print("\nExperiment:", exp_name)
         for epoch in range(self.max_epochs):
             # Train-Validate
@@ -245,7 +247,12 @@ class Trainer:
         """
         if isinstance(x, dict):
             x = {
-                k: v.to(self.device) if isinstance(v, torch.Tensor) else v
+                k: (
+                    {ik: iv.to(self.device) for ik, iv in v.items()}
+                    if isinstance(v, dict)
+                    else v.to(self.device) if isinstance(v, torch.Tensor)
+                    else v
+                )
                 for k, v in x.items()
             }
         else:
