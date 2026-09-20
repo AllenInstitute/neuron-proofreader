@@ -164,13 +164,6 @@ def remove_doubles(graph, max_cable_length, search_radius=15):
     Removes connected components from the graph that are likely doubles
     caused by image ghosting artifacts.
 
-    A component is a double if it is small (at most "max_nodes" nodes, no
-    branching nodes, cable length at most "max_cable_length") and most of its
-    nodes project onto a single other component at a nearly constant offset.
-    See "is_double" for the exact criteria. All steps are vectorized so the
-    runtime is dominated by a single batched KD-tree query over the nodes of
-    the candidate components.
-
     Parameters
     ----------
     graph : SkeletonGraph
@@ -283,11 +276,6 @@ def nearest_other_component(
     Finds, for each query node, the nearest node that belongs to a different
     connected component and lies within "radius".
 
-
-    Uses a batched k-nearest-neighbor query, then falls back to an exact ball
-    query for the rare nodes whose k nearest neighbors all lie within the
-    radius and in their own component. The result is therefore exact
-    regardless of "k".
 
 
     Parameters
