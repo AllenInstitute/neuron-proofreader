@@ -156,3 +156,90 @@ class ArboristVisionMergeDetector(nn.Module):
         with torch.amp.autocast("cuda", enabled=False):
             z_trees = [self.arborist.encode(s)[0] for s in tree_samples]
         return torch.stack(z_trees).to(device)
+
+
+class VisionOnlyMergeDetector(nn.Module):
+    """
+    Vision-only merge detector that classifies merge sites from 3D image
+    patches alone, with no graph/skeleton input.
+    """
+
+    def __init__(
+        self,
+        vision_input_shape,
+        output_dim=1,
+        vision_backbone="CNN3D",
+        vision_latent_dim=64,
+        dropout=0.1,
+        output_hidden_dim=128,
+        **vision_backbone_kwargs,
+    ):
+        """
+        Instantiates a VisionOnlyMergeDetector object.
+
+        Parameters
+        ----------
+        vision_input_shape : Tuple[int]
+            Shape of one node's image patch: (C, D, H, W).
+        output_dim : int, optional
+            Output dimension of the classifier head. Default is 1.
+        vision_backbone : str, optional
+            Vision backbone to use: "CNN3D" or "ViT3D". Default is "CNN3D".
+        vision_latent_dim : int, optional
+            Output dimension of the vision backbone. Default is 64.
+        dropout : float, optional
+            Dropout probability. Default is 0.1.
+        output_hidden_dim : int, optional
+            Hidden dim of the backbone's output head. Default is 128.
+        **vision_backbone_kwargs
+            Extra keyword arguments forwarded to the backbone constructor.
+        """
+        super().__init__()
+
+        self.config = {
+            "model_type": "VisionOnlyMergeDetector",
+            "vision_input_shape": tuple(vision_input_shape),
+            "output_dim": output_dim,
+            "vision_backbone": vision_backbone,
+            "vision_latent_dim": vision_latent_dim,
+            "dropout": dropout,
+            "output_hidden_dim": output_hidden_dim,
+            **vision_backbone_kwargs,
+        }
+
+        if vision_backbone == "ViT3D":
+            self.vision = ViT3D(
+                vision_input_shape,
+                output_dim=output_dim,
+                output_hidden_dim=output_hidden_dim,
+                dropout=dropout,
+                use_output_head=True,
+                **vision_backbone_kwargs,
+            )
+        else:
+            self.vision = CNN3D(
+                vision_input_shape,
+                output_dim=output_dim,
+                output_hidden_dim=output_hidden_dim,
+                dropout=dropout,
+                use_output_head=True,
+                **vision_backbone_kwargs,
+            )
+
+    def forward(self, x):
+        return self.vision(x["img"])
+
+    def save(self, path):
+        torch.save(
+            {"config": self.config, "state_dict": self.state_dict()}, path
+        )
+
+    @classmethod
+    def load(cls, path, map_location=None):
+        ckpt = torch.load(path, map_location=map_location, weights_only=True)
+        config = {k: v for k, v in ckpt["config"].items() if k != "model_type"}
+        if config.get("vision_backbone", "CNN3D") == "CNN3D":
+            config = CNN3D.upgrade_config(config)
+        model = cls(**config)
+        model.load_state_dict(ckpt["state_dict"])
+        return model
