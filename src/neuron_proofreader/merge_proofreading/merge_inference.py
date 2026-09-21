@@ -22,7 +22,6 @@ site nodes, and the base __call__ derives xyz coordinates and removes them.
 
 from abc import ABC, abstractmethod
 from collections import defaultdict, deque
-from copy import deepcopy
 from scipy.spatial import KDTree
 from time import time
 from torch.nn.functional import sigmoid
@@ -30,7 +29,6 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 import numpy as np
-import rustworkx as rx
 import os
 import pandas as pd
 import torch
@@ -171,12 +169,15 @@ class MLMergeProofreader(MergeProofreader):
         t0 = time()
         merge_sites = self.search()
 
-        # Cache XYZ coords and save predictions before graph is modified
+        # Cache XYZ coords and save predictions before graph is modified.
+        # node_preds is indexed by pre-removal node IDs, so the score-colored
+        # fragments must be written before remove_merge_sites relabels nodes.
         self.merge_sites_xyz = [
             self.graph.node_xyz[i].tolist() for i in merge_sites
         ]
         if self.save_result:
             self.save_predictions()
+            self.save_fragment_predictions(inplace=False)
 
         self.graph.remove_merge_sites(merge_sites)
 
@@ -184,7 +185,6 @@ class MLMergeProofreader(MergeProofreader):
         t, unit = util.time_writer(time() - t0)
         self.log(f"Module Runtime: {t:.2f} {unit}\n")
         if self.save_result:
-            self.save_fragment_predictions(inplace=False)
             self.save_parameters()
 
         return merge_sites
@@ -306,19 +306,16 @@ class MLMergeProofreader(MergeProofreader):
 
             # Check whether to average sites in a single one
             if len(nodes) > 1:
+                # One bounded traversal from root replaces a whole-component
+                # shortest-path query per nearby site.
+                path_dists = self.graph.path_distances_within(
+                    root, max_dist + 4
+                )
                 hits = [root]
                 for node in nodes:
-                    if node == root:
-                        continue
-                    paths = rx.graph_dijkstra_shortest_paths(
-                        self.dataset.graph, root, target=node,
-                        default_weight=1.0,
-                    )
-                    if node in paths:
-                        path = list(paths[node])
-                        if self.dataset.path_length(path) < max_dist + 4:
-                            hits.append(node)
-                            visited.add(node)
+                    if node != root and node in path_dists:
+                        hits.append(node)
+                        visited.add(node)
 
                 xyz_arr = np.array([self.graph.node_xyz[i] for i in hits])
                 xyz_avg = xyz_arr.mean(axis=0)
@@ -351,15 +348,19 @@ class MLMergeProofreader(MergeProofreader):
         fragments_path = os.path.join(
             self.output_dir, "fragments_merge_scores.zip"
         )
-        if inplace:
-            self.graph.node_feats["radius"] = 10 * np.maximum(
-                self.node_preds, 0.1
-            )
-            self.dataset.to_zipped_swcs(fragments_path, use_radius=True)
-        else:
-            graph = deepcopy(self.graph)
-            graph.node_feats["radius"] = 10 * np.maximum(self.node_preds, 0.1)
-            graph.to_zipped_swcs(fragments_path, use_radius=True)
+        # Swap the radius feature for the prediction scores while writing.
+        # Avoids deepcopying the whole graph (Rust state + kdtree) when the
+        # scores are not meant to be kept.
+        old_radius = self.graph.node_feats.get("radius")
+        self.graph.node_feats["radius"] = 10 * np.maximum(self.node_preds, 0.1)
+        try:
+            self.graph.to_zipped_swcs(fragments_path, use_radius=True)
+        finally:
+            if not inplace:
+                if old_radius is None:
+                    del self.graph.node_feats["radius"]
+                else:
+                    self.graph.node_feats["radius"] = old_radius
 
     def save_parameters(self):
         json_path = os.path.join(self.output_dir, "detection_parameters.json")
@@ -514,6 +515,9 @@ class SomaMergeProofreader(MergeProofreader):
         return merge_nodes
 
     def __call__(self):
-        merge_nodes = super().__call__()
+        # Skip the relabel inside remove_merge_sites: node indices stay
+        # stable after removal, and remove_small_components relabels once.
+        merge_nodes = self.search()
+        self.graph.remove_merge_sites(merge_nodes, relabel_nodes=False)
         self.graph.remove_small_components()
         return merge_nodes

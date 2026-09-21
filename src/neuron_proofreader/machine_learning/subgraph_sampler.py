@@ -21,7 +21,17 @@ class SubgraphSampler:
     """
     A class that extracts ProposalComputationGraphs from a ProposalGraphs in
     order to create batches suitable for GNN input.
+
+    Batches are seeded by walking the proposals in spatial (Morton / Z-order)
+    order of their midpoints rather than in random order. Consecutive batches
+    therefore read image patches from the same neighborhood of the volume,
+    which lets the image cache serve most chunk reads; with random order
+    nearly every patch is a cold read from cloud storage.
     """
+
+    # Number of proposals inspected past the cursor when looking for a batch
+    # seed whose cluster still fits in the batch.
+    max_lookahead = 20
 
     def __init__(self, graph, gnn_depth=2, max_proposals=64):
         """
@@ -42,8 +52,40 @@ class SubgraphSampler:
         self.graph = graph
         self.proposals = set(graph.list_proposals())
 
+        # Spatial visiting order
+        self.ordered_proposals = self.sort_spatially(self.proposals)
+        self.cursor = 0
+
         # Identify clustered proposals
         self.set_proposal_clusters()
+
+    def sort_spatially(self, proposals):
+        """
+        Sorts proposals by the Morton code of their midpoint voxel so that
+        proposals that are close in the volume are close in the ordering.
+
+        Parameters
+        ----------
+        proposals : Iterable[Frozenset[int]]
+            Proposals to be sorted.
+
+        Returns
+        -------
+        List[Frozenset[int]]
+            Proposals in spatial order.
+        """
+        proposals = list(proposals)
+        if not proposals:
+            return proposals
+        pairs = np.array([tuple(p) for p in proposals], dtype=int)
+        xyz = (self.graph.node_xyz[pairs[:, 0]] + self.graph.node_xyz[pairs[:, 1]]) / 2
+        voxels = xyz[:, ::-1] / self.graph.anisotropy[::-1]
+        voxels = np.clip(voxels, 0, 2**21 - 1).astype(np.uint64)
+        keys = np.zeros(len(proposals), dtype=np.uint64)
+        for bit in range(21):
+            for axis in range(3):
+                keys |= ((voxels[:, axis] >> np.uint64(bit)) & np.uint64(1)) << np.uint64(3 * bit + axis)
+        return [proposals[i] for i in np.argsort(keys, kind="stable")]
 
     def set_proposal_clusters(self, k=2):
         self.clusters = dict()
@@ -237,13 +279,32 @@ class SubgraphSampler:
         return set()
 
     def sample_proposal(self, subgraph):
-        if self.clusters:
-            cnt = 0
-            while cnt < 20:
-                cnt += 1
-                proposal = util.sample_once(self.clusters.keys())
-                if self.cluster_size(proposal) <= subgraph.proposal_margin():
-                    return proposal
-            return None
-        else:
-            return util.sample_once(self.proposals)
+        """
+        Picks the next batch seed: the first unvisited proposal at or after
+        the cursor in spatial order whose cluster (if any) fits in the
+        remaining batch capacity. If none of the next "max_lookahead"
+        proposals fit, returns None so the current batch is emitted.
+
+        Parameters
+        ----------
+        subgraph : ProposalComputationGraph
+            Batch currently being built.
+
+        Returns
+        -------
+        Frozenset[int] or None
+            Proposal to seed the BFS from, or None.
+        """
+        # Skip proposals already consumed by earlier BFS expansions
+        ordered = self.ordered_proposals
+        while self.cursor < len(ordered) and ordered[self.cursor] not in self.proposals:
+            self.cursor += 1
+
+        margin = subgraph.proposal_margin()
+        for idx in range(self.cursor, min(self.cursor + self.max_lookahead, len(ordered))):
+            proposal = ordered[idx]
+            if proposal not in self.proposals:
+                continue
+            if proposal not in self.clusters or self.cluster_size(proposal) <= margin:
+                return proposal
+        return None

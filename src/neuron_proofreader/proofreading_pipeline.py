@@ -318,6 +318,7 @@ class ProofreadPipeline:
         """
         print(txt)
         self.log_handle.write(txt + "\n")
+        self.log_handle.flush()
 
     def reconfigure_node_radius(self):
         n_nodes = self.graph.num_nodes()
@@ -354,10 +355,11 @@ class ProofreadPipeline:
         self.save_graph("final_swcs")
 
     def save_graph(self, dirname):
+        # SWC formatting is GIL-bound, so the threaded writer was no faster
+        # than a single pass and its per-batch zips then had to be re-read
+        # and re-written by combine_zips. Write the archive directly instead.
         dirpath = os.path.join(self.output_dir, dirname)
         util.mkdir(dirpath)
-        temp_dir = os.path.join(dirpath, "temp")
-        self.graph.to_zipped_swcs_multithreaded(temp_dir)
-        zip_paths = util.list_paths(temp_dir, extension=".zip")
-        util.combine_zips(zip_paths, os.path.join(dirpath, "swcs.zip"))
-        util.rmdir(temp_dir)
+        self.graph.to_zipped_swcs(
+            os.path.join(dirpath, "swcs.zip"), use_radius=True
+        )

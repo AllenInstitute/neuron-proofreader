@@ -85,7 +85,9 @@ class FragmentsDataset(IterableDataset):
 
         Note: features are extracted on a background thread so that reading
         image patches overlaps the caller's forward pass. At most "prefetch"
-        batches are held in memory at once.
+        batches are held in memory at once. The image reads of the next batch
+        are issued before the current batch is processed, so the cloud
+        latency of a batch is hidden behind the CPU work of the previous one.
 
         Yields
         ------
@@ -99,9 +101,18 @@ class FragmentsDataset(IterableDataset):
 
         def producer():
             try:
-                for subgraph in self.get_sampler():
-                    features = self.feature_extractor(subgraph)
+                sampler = self.get_sampler()
+                subgraph = next(sampler, None)
+                reads = self.feature_extractor.issue_reads(subgraph) if subgraph else None
+                while subgraph is not None:
+                    next_subgraph = next(sampler, None)
+                    next_reads = (
+                        self.feature_extractor.issue_reads(next_subgraph)
+                        if next_subgraph is not None else None
+                    )
+                    features = self.feature_extractor(subgraph, reads)
                     queue.put(HeteroGraphData(features))
+                    subgraph, reads = next_subgraph, next_reads
             except Exception as e:
                 queue.put(e)
             finally:
@@ -148,7 +159,6 @@ class FragmentsDatasetCollection(IterableDataset):
         shuffle : bool, optional
             Indication of whether to shuffle examples. Default is True.
         """
-        # Instance attributes
         self.datasets = dict()
         self.shuffle = shuffle
 
@@ -357,7 +367,7 @@ def generate_dataset_example_ids(bucket_name, dataset_prefix):
     Parameters
     ----------
     bucket_name : str
-        Name of the Google Cloud Storage bucket.
+        Name of the GCS bucket.
     dataset_prefix : str
         Root prefix under which dataset contents are organized.
 

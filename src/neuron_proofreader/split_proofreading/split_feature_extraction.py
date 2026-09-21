@@ -12,7 +12,6 @@ correction.
 from concurrent.futures import as_completed, ThreadPoolExecutor
 from scipy.spatial import KDTree
 
-from skimage.transform import resize
 from torch_geometric.data import HeteroData
 
 import numpy as np
@@ -73,7 +72,7 @@ class FeaturePipeline:
             percentiles=percentiles,
         )
 
-    def __call__(self, subgraph):
+    def __call__(self, subgraph, reads=None):
         """
         Runs the feature extraction pipeline.
 
@@ -86,16 +85,27 @@ class FeaturePipeline:
         ----------
         subgraph : ProposalComputationGraph
             Subgraph of "graph" attribute to extract features for.
+        reads : dict, optional
+            Image reads for this subgraph that were already started with
+            "issue_reads" (e.g. while the previous batch was being
+            processed). Default is None.
         """
         features = FeatureSet(subgraph)
         with ThreadPoolExecutor(max_workers=1) as executor:
             thread = executor.submit(
-                self.image_extractor.extract_batch, subgraph
+                self.image_extractor.extract_batch, subgraph, reads
             )
             self.skeleton_extractor(subgraph, features)
             patches, profiles = thread.result()
         self.image_extractor.update_features(features, patches, profiles)
         return features
+
+    def issue_reads(self, subgraph):
+        """
+        Starts the image reads for a subgraph without waiting for them; pass
+        the result to "__call__" later.
+        """
+        return self.image_extractor.issue_reads(subgraph)
 
 
 class SkeletonFeatureExtractor:
@@ -236,12 +246,15 @@ class ImageFeatureExtractor:
     Attributes
     ----------
     max_workers : int
-        Number of threads used to extract image features. Note: each thread
-        both reads a patch and processes it, so this bounds the number of
-        concurrent reads. Throughput plateaus between 32 and 48 threads.
+        Number of threads that turn image patches into features. Image reads
+        are not bound by this: every read of a batch is issued up front and
+        runs on TensorStore's own thread pool, so these threads only do CPU
+        work. Keeping this small matters because the threads hold the GIL
+        while annotating masks, and the GIL is shared with the thread that
+        launches the GPU forward pass.
     """
 
-    max_workers = 32
+    max_workers = 6
 
     def __init__(
         self,
@@ -286,6 +299,12 @@ class ImageFeatureExtractor:
         self.patch_shape = patch_shape
         self.padding = padding
 
+        # Patches are resized with torch ops from "max_workers" Python
+        # threads. Each thread would otherwise spin up its own intra-op
+        # thread pool (max_workers x cores threads), which starves the rest
+        # of the pipeline; one thread per op is fastest here.
+        torch.set_num_threads(1)
+
     def __call__(self, subgraph, features):
         """
         Extracts image patches and profiles for each proposal in the graph.
@@ -300,7 +319,26 @@ class ImageFeatureExtractor:
         patches, profiles = self.extract_batch(subgraph)
         self.update_features(features, patches, profiles)
 
-    def extract_batch(self, subgraph):
+    def issue_reads(self, subgraph):
+        """
+        Starts the image read of every proposal in the subgraph. The reads
+        run on TensorStore's thread pool, so issuing them early (ideally
+        while the previous batch is still being processed) hides most of the
+        read latency.
+
+        Parameters
+        ----------
+        subgraph : ProposalComputationGraph
+            Subgraph whose proposals' patches are to be read.
+
+        Returns
+        -------
+        Dict[Frozenset[int], tuple]
+            Pending read per proposal, see "ProposalPatchLoader.read_async".
+        """
+        return {p: self.patch_loader.read_async(p) for p in subgraph.proposals}
+
+    def extract_batch(self, subgraph, reads=None):
         """
         Extracts an image patch and intensity profile for each proposal in the
         given subgraph.
@@ -309,6 +347,9 @@ class ImageFeatureExtractor:
         ----------
         subgraph : ProposalComputationGraph
             Subgraph of "graph" attribute to extract features for.
+        reads : Dict[Frozenset[int], tuple], optional
+            Pending image reads from "issue_reads". Default is None, in which
+            case they are issued here.
 
         Returns
         -------
@@ -317,11 +358,15 @@ class ImageFeatureExtractor:
         profiles : Dict[Frozenset[int], numpy.ndarray]
             Dictionary that maps a proposal to its intensity profile.
         """
+        # All reads are in flight before any CPU work starts (see max_workers)
+        reads = reads if reads is not None else self.issue_reads(subgraph)
+        proposals = list(subgraph.proposals)
+
         patches, profiles = dict(), dict()
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             pending = {
-                executor.submit(self.extract, p): p
-                for p in subgraph.proposals
+                executor.submit(self.extract, p, reads[p]): p
+                for p in proposals
             }
             for thread in as_completed(pending):
                 proposal = pending[thread]
@@ -345,7 +390,7 @@ class ImageFeatureExtractor:
         features.set_features(patches, "proposal_patches")
         features.integrate_proposal_profiles(profiles)
 
-    def extract(self, proposal):
+    def extract(self, proposal, read=None):
         """
         Extracts the intensity profile and input patch for a proposal.
 
@@ -353,13 +398,16 @@ class ImageFeatureExtractor:
         ----------
         proposal : Frozenset[int]
             Proposal that image patches are centered about.
+        read : tuple, optional
+            Pending image read for this proposal, see
+            "ProposalPatchLoader.read_async". Default is None.
 
         Returns
         -------
         Tuple[numpy.ndarray]
             Intensity profile and input patch.
         """
-        img, offset = self.patch_loader(proposal)
+        img, offset = self.patch_loader(proposal, read=read)
         mask = self.create_segment_mask(proposal, img.shape, offset)
         extractor = PatchFeatureExtractor(
             self.graph, img, mask, proposal, offset, self.patch_shape
@@ -368,21 +416,25 @@ class ImageFeatureExtractor:
 
     # --- Helpers ---
     def create_segment_mask(self, proposal, shape, offset):
-        # Find nearby nodes
+        # Find edges between nearby nodes
         center = self.graph.proposal_midpoint(proposal)
-        nodes = set(
-            self.graph.kdtree.query_ball_point(center, self.padding + 10)
-        )
+        nodes = self.graph.kdtree.query_ball_point(center, self.padding + 10)
+        node_set = set(nodes)
+        edges = [
+            (i, j)
+            for i in nodes
+            for j in self.graph.neighbors(i)
+            if i < j and j in node_set
+        ]
 
-        # Populate mask
+        # Rasterize all edges at once
         mask = np.zeros(shape, dtype=np.float32)
-        for i in nodes:
-            voxel_i = self.graph.node_local_voxel(i, offset)
-            for j in self.graph.neighbors(i):
-                if i < j and j in nodes:
-                    voxel_j = self.graph.node_local_voxel(j, offset)
-                    voxels = geometry_util.make_digital_line(voxel_i, voxel_j)
-                    img_util.annotate_voxels(mask, voxels, fill_val=0.25)
+        if edges:
+            edges = np.asarray(edges, dtype=int)
+            v = self.graph.nodes_local_voxels(edges.ravel(), offset)
+            v = v.reshape(-1, 2, 3)
+            voxels = geometry_util.make_digital_lines(v[:, 0], v[:, 1])
+            img_util.annotate_voxels(mask, voxels, fill_val=0.25)
         return mask
 
 
@@ -436,12 +488,15 @@ class PatchFeatureExtractor:
         Returns
         -------
         numpy.ndarray
-            Array with shape (2, *patch_shape), where channel 0 contains
-            raw image data and channel 1 contains segmentation data.
+            Float16 array with shape (2, *patch_shape), where channel 0
+            contains raw image data and channel 1 contains segmentation data.
+            The cast to float16 is done here with torch because numpy's
+            float16 conversion is slow enough to dominate batch assembly.
         """
         img = img_util.resize(self.img, self.patch_shape)
         mask = resize_segmentation(self.mask, self.patch_shape)
-        return np.stack([img, mask], axis=0)
+        patch = torch.from_numpy(np.stack([img, mask], axis=0))
+        return patch.to(torch.float16).numpy()
 
     def get_intensity_profile(self):
         """
@@ -639,7 +694,8 @@ class FeatureSet:
 
         # Store features
         index_mapping = getattr(self, index_mappping_attr)
-        feature_matrix = self.to_matrix(feature_dict, index_mapping)
+        dtype = np.float16 if feature_type == "proposal_patches" else np.float32
+        feature_matrix = self.to_matrix(feature_dict, index_mapping, dtype)
         setattr(self, feat_attr, feature_matrix)
 
     # --- Helpers ---
@@ -660,14 +716,19 @@ class FeatureSet:
         return targets
 
     @staticmethod
-    def init_matrix(feature_dict):
+    def init_matrix(feature_dict, dtype=np.float32):
         """
-        Initializes a  from a feature dictionary.
+        Initializes a feature matrix from a feature dictionary.
 
         Parameters
         ----------
         feature_dict : Dict[hashable, numpy.ndarray]
             Mapping from object IDs to feature arrays.
+        dtype : numpy.dtype, optional
+            Data type of the matrix. Default is float32. Image patches are
+            stored as float16: the model runs under fp16 autocast, so the
+            first convolution would cast them to fp16 anyway, and this halves
+            host memory and the host-to-device transfer.
 
         Returns
         -------
@@ -675,13 +736,10 @@ class FeatureSet:
             Zero-valued feature matrix with shape
                 (num_objects, *feature_shape),
             where `feature_shape` is inferred from the feature dictionary.
-            Note: features are stored as float32 to match the model weights,
-            since widening image patches to float64 doubles both host memory
-            and the host-to-device transfer.
         """
         key = util.sample_once(feature_dict.keys())
         shape = (len(feature_dict.keys()),) + feature_dict[key].shape
-        return np.zeros(shape, dtype=np.float32)
+        return np.zeros(shape, dtype=dtype)
 
     def integrate_proposal_profiles(self, profiles_dict):
         """
@@ -700,7 +758,7 @@ class FeatureSet:
             (self.proposal_features, x), axis=1
         )
 
-    def to_matrix(self, feature_dict, index_mapping):
+    def to_matrix(self, feature_dict, index_mapping, dtype=np.float32):
         """
         Converts a dictionary of features into a dense feature matrix.
 
@@ -710,13 +768,15 @@ class FeatureSet:
             Mapping from object IDs to feature arrays.
         index_mapping : IndexMapping
             Data structure for mapping between object IDs and indices.
+        dtype : numpy.dtype, optional
+            Data type of the matrix. Default is float32.
 
         Returns
         -------
         x : numpy.ndarray
             Dense feature matrix with shape (num_objects, feature_dim).
         """
-        x = self.init_matrix(feature_dict)
+        x = self.init_matrix(feature_dict, dtype)
         for object_id in feature_dict:
             idx = index_mapping.id_to_idx[object_id]
             x[idx] = feature_dict[object_id]
@@ -746,8 +806,8 @@ class HeteroGraphData(HeteroData):
         self.idxs_branches = features.edge_index_mapping
         self.idxs_proposals = features.proposal_index_mapping
 
-        # Node features
-        self.x_img = torch.tensor(features.proposal_patches)
+        # Node features (from_numpy avoids a second copy of the patches)
+        self.x_img = torch.from_numpy(features.proposal_patches)
         self["branch"].x = torch.tensor(features.edge_features)
         self["proposal"].x = torch.tensor(features.proposal_features)
         self["proposal"].y = torch.tensor(features.targets)
@@ -999,11 +1059,4 @@ def resize_segmentation(mask, new_shape):
     mask : numpy.ndarray
         Resized segmentation mask.
     """
-    mask = resize(
-        mask,
-        new_shape,
-        order=0,
-        preserve_range=True,
-        anti_aliasing=False,
-    ).astype(mask.dtype)
-    return mask
+    return img_util.resize_nearest(mask, new_shape)
