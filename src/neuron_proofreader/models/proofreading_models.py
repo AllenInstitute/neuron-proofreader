@@ -145,6 +145,8 @@ class ArboristVisionMergeDetector(nn.Module):
     def load(cls, path, map_location=None):
         ckpt = torch.load(path, map_location=map_location, weights_only=True)
         config = {k: v for k, v in ckpt["config"].items() if k != "model_type"}
+        if config.get("vision_backbone", "CNN3D") == "CNN3D":
+            config = CNN3D.upgrade_config(config)
         model = cls(**config)
         model.load_state_dict(ckpt["state_dict"])
         return model
