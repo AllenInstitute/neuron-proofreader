@@ -121,6 +121,8 @@ class ProposalGraph(FragmentsGraph):
             proposals.
         """
         # Proposal generation
+        if self.num_nodes() == 0:
+            return
         assert len(self.kdtree.data) == self.num_nodes()
         proposal_generator = ProposalGenerator(self, config)
         proposals = proposal_generator()
@@ -134,6 +136,46 @@ class ProposalGraph(FragmentsGraph):
             gt_graph = FragmentsGraph(anisotropy=self.anisotropy)
             gt_graph.load(self.gt_path)
             self.gt_accepts = groundtruth_generation.run(gt_graph, self)
+
+    def keep_fragments(self, swc_ids):
+        """
+        Removes every fragment whose SWC ID is not in the given set. Must be
+        called before proposals are generated.
+
+        Parameters
+        ----------
+        swc_ids : Set[str]
+            SWC IDs of fragments to keep.
+        """
+        rm_component_ids = [
+            component_id
+            for component_id, swc_id in self.component_id_to_swc_id.items()
+            if (swc_id if "." in swc_id else f"{swc_id}.0") not in swc_ids
+        ]
+        if rm_component_ids:
+            rm_nodes = np.where(
+                np.isin(self.node_component_id, rm_component_ids)
+            )[0]
+            self.remove_nodes(rm_nodes.tolist())
+
+    def set_gt_accepts(self, swc_id_pairs):
+        """
+        Sets accepted proposals by matching each proposal's endpoint SWC IDs
+        against the given pairs. Matching on SWC IDs rather than node IDs
+        lets ground truth computed at one node spacing be applied to a graph
+        built at another.
+
+        Parameters
+        ----------
+        swc_id_pairs : Set[Frozenset[str]]
+            Unordered pairs of SWC IDs whose proposal is accepted.
+        """
+        self.gt_accepts = set()
+        for proposal in self.proposals:
+            i, j = tuple(proposal)
+            pair = frozenset({self.node_swc_id(i), self.node_swc_id(j)})
+            if pair in swc_id_pairs:
+                self.gt_accepts.add(proposal)
 
     def is_mergeable(self, i, j):
         one_leaf = self.degree(i) == 1 or self.degree(j) == 1
