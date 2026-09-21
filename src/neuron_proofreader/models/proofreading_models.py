@@ -92,6 +92,15 @@ class ArboristVisionMergeDetector(nn.Module):
                 **vision_backbone_kwargs,
             )
 
+        # Projection when the backbone returns raw pooled features
+        self.vision_proj = None
+        if isinstance(getattr(self.vision, "output", None), nn.Identity):
+            self.vision_proj = nn.Sequential(
+                nn.Linear(self.vision.feature_dim, vision_latent_dim),
+                nn.GELU(),
+                nn.Dropout(dropout),
+            )
+
         # Arborist skeleton encoder — produces z_tree per subgraph
         self.arborist = Arborist(
             latent_dim=arborist_latent_dim, **_arborist_kwargs
@@ -112,6 +121,8 @@ class ArboristVisionMergeDetector(nn.Module):
 
     def forward(self, x):
         z_img = self.vision(x["img"])
+        if self.vision_proj is not None:
+            z_img = self.vision_proj(z_img)
         z_tree = self._encode_tree_samples(x["tree_sample"], z_img.device)
         return self.head(self.drop(torch.cat([z_img, z_tree], dim=1)))
 
