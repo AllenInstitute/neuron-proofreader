@@ -126,14 +126,6 @@ class ArboristVisionMergeDetector(nn.Module):
         z_tree = self._encode_tree_samples(x["tree_sample"], z_img.device)
         return self.head(self.drop(torch.cat([z_img, z_tree], dim=1)))
 
-    def freeze_arborist(self):
-        for p in self.arborist.parameters():
-            p.requires_grad_(False)
-
-    def unfreeze_arborist(self):
-        for p in self.arborist.parameters():
-            p.requires_grad_(True)
-
     # --- Helpers
     def _load_curve_encoder(self, path):
         ckpt = torch.load(path, map_location="cpu")
