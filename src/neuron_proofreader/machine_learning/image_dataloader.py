@@ -112,7 +112,7 @@ class TensorStoreImage:
         tensorstore.Future
             Future that resolves to the image patch; pass it to "wait".
         """
-        s = img_util.get_slices(voxel, shape)
+        s = img_util.get_slices(voxel, shape, self.img.shape[2:])
         return self.img[(0, 0, *s)].read()
 
     def wait(self, future, voxel, shape):

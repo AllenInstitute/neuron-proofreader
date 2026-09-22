@@ -313,9 +313,10 @@ def get_offset(center, shape):
     return tuple([c - s // 2 for c, s in zip(center, shape)])
 
 
-def get_slices(center, shape):
+def get_slices(center, shape, img_shape=None):
     """
-    Gets the start and end indices of the chunk to be read.
+    Gets the start and end indices of the chunk to be read, clamped to the
+    image bounds.
 
     Parameters
     ----------
@@ -323,6 +324,9 @@ def get_slices(center, shape):
         Center of image patch to be read.
     shape : Tuple[int]
         Shape of image patch to be read.
+    img_shape : Tuple[int], optional
+        Spatial shape of the image. If provided, the end of each slice is
+        clamped to it. Default is None.
 
     Return
     ------
@@ -330,7 +334,10 @@ def get_slices(center, shape):
         Slice objects used to index into the image.
     """
     start = [max(0, int(c - d // 2)) for c, d in zip(center, shape)]
-    return tuple(slice(s, s + d) for s, d in zip(start, shape))
+    end = [s + d for s, d in zip(start, shape)]
+    if img_shape is not None:
+        end = [min(e, int(n)) for e, n in zip(end, img_shape)]
+    return tuple(slice(s, e) for s, e in zip(start, end))
 
 
 def get_storage_driver(img_path):
