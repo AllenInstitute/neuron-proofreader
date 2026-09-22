@@ -95,6 +95,8 @@ class LearnedSplitProofreader:
         img_config,
         output_dir,
         batch_size=32,
+        dataset_cls=FragmentsDataset,
+        dataset_kwargs=None,
         device="cuda",
         log_handle=None,
     ):
@@ -104,6 +106,13 @@ class LearnedSplitProofreader:
 
         Parameters
         ----------
+        dataset_cls : type, optional
+            Dataset class that wraps the graph and produces model inputs.
+            Models needing extra modalities (e.g. Arborist tree samples)
+            pass their own subclass of FragmentsDataset. Default is
+            FragmentsDataset.
+        dataset_kwargs : dict, optional
+            Extra keyword arguments for "dataset_cls". Default is None.
         ...
         """
         # Instance attributes
@@ -113,7 +122,7 @@ class LearnedSplitProofreader:
         self.output_dir = output_dir
 
         # Core datastructures
-        self.dataset = FragmentsDataset(graph, img_config)
+        self.dataset = dataset_cls(graph, img_config, **(dataset_kwargs or {}))
 
         # Logger
         log_path = os.path.join(self.output_dir, "summary.txt")

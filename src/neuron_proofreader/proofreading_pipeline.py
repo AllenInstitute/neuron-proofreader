@@ -154,6 +154,8 @@ class ProofreadPipeline:
         model,
         proposals_config,
         split_config,
+        dataset_cls=None,
+        dataset_kwargs=None,
         save_fragments=True,
     ):
         """
@@ -167,6 +169,12 @@ class ProofreadPipeline:
             Config object with settings for proposal generation.
         split_config : SplitInferenceConfig
             Config object with settings for split inference.
+        dataset_cls : type, optional
+            Dataset class forwarded to LearnedSplitProofreader for models
+            that need extra input modalities. Default is None, meaning
+            FragmentsDataset.
+        dataset_kwargs : dict, optional
+            Extra keyword arguments for "dataset_cls". Default is None.
         save_fragments : bool, optional
             If True, saves the corrected graph SWCs into the step directory.
             Default is True.
@@ -181,14 +189,17 @@ class ProofreadPipeline:
         step_output = self._step_dir(LearnedSplitProofreader.step_name)
 
         # Run proofreading
+        dataset_args = {"dataset_cls": dataset_cls} if dataset_cls else {}
         proofreader = LearnedSplitProofreader(
             self.graph,
             model,
             img_config,
             step_output,
             batch_size=split_config.batch_size,
+            dataset_kwargs=dataset_kwargs,
             device=self.device,
             log_handle=self.log_handle,
+            **dataset_args,
         )
         proofreader(
             proposals_config,
