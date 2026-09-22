@@ -27,7 +27,6 @@ from time import time
 from tqdm import tqdm
 
 import pandas as pd
-import rustworkx as rx
 import os
 import torch
 
@@ -323,8 +322,8 @@ class LearnedSplitProofreader:
             is False.
         """
         n_accepts = 0
-        proposals = self.dataset.sorted_proposals()
-        for proposal in [p for p in proposals if p in preds]:
+        proposals = [p for p in self.dataset.sorted_proposals() if p in preds]
+        for proposal in tqdm(proposals, desc="Adding Accepts"):
             # Check for leaf2leaf condition
             is_leaf2leaf = self.dataset.is_leaf2leaf(proposal)
             if only_leaf2leaf and not is_leaf2leaf:
@@ -336,7 +335,7 @@ class LearnedSplitProofreader:
 
             # Check if proposal creates a loop
             i, j = proposal
-            if not rx.graph_has_path(self.dataset.graph, i, j):
+            if self.dataset.node_component_id[i] != self.dataset.node_component_id[j]:
                 self.dataset.merge_proposal(proposal)
                 n_accepts += 1
             del preds[proposal]
