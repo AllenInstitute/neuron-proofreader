@@ -44,7 +44,7 @@ class CNN3D(nn.Module):
         dropout=0.1,
         learnable_center_sigma=True,
         max_channels=128,
-        num_single_blocks=2,
+        num_single_blocks=0,
         output_dim=1,
         output_hidden_dim=None,
         pool_stage_idxs=(2, -1),
