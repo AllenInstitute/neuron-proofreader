@@ -19,10 +19,6 @@ from neuron_proofreader.machine_learning.image_augmentation import (
 )
 from neuron_proofreader.utils import geometry_util, img_util, util
 
-# ----------------------------------------------------------------------------
-#  Image Class
-# ----------------------------------------------------------------------------
-
 
 class TensorStoreImage:
     """
@@ -31,10 +27,7 @@ class TensorStoreImage:
     Attributes
     ----------
     cache_bytes : int
-        Size of the decoded-chunk cache. A patch read touches 2-8 chunks
-        (128x256x256 voxels each for the ExaSPIM zarrs), so as long as
-        consecutive reads are spatially close most of them are served from
-        this cache instead of GCS. 8GB holds roughly 500 chunks.
+        Size of the decoded-chunk cache.
     """
 
     cache_bytes = 8_000_000_000
@@ -142,11 +135,6 @@ class TensorStoreImage:
             Shape of image.
         """
         return self.img.shape
-
-
-# ----------------------------------------------------------------------------
-#  PatchLoader Class
-# ----------------------------------------------------------------------------
 
 
 class PatchLoader(ABC):
@@ -282,11 +270,6 @@ class PatchLoader(ABC):
             img = img_util.pad_to_shape(img, mask.shape)
             patches = np.stack([img, mask], axis=0)
         return patches
-
-
-# ----------------------------------------------------------------------------
-#  PatchLoader Subclasses
-# ----------------------------------------------------------------------------
 
 
 class DetectionPatchLoader(PatchLoader):

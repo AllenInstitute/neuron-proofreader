@@ -21,21 +21,14 @@ class ImageTransforms:
     patch.
     """
 
-    _NOISE_SCALE = {"percentile": 0.2}
-
-    def __init__(self, normalization="percentile"):
+    def __init__(self):
         """
         Initializes an ImageTransforms instance that applies augmentation to
         an image and segmentation patch.
         """
         # Instance attributes
-        self.normalization = normalization
-        noise_std = self._NOISE_SCALE.get(normalization, 0.2)
         self.geometric_transform = [RandomFlip3D(), RandomRotation3D()]
-        self.intensity1_transform = [
-            RandomNoise3D(noise_std),
-            RandomContrast3D(),
-        ]
+        self.intensity1_transform = [RandomNoise3D(), RandomContrast3D()]
         self.intensity2_transform = [RandomSmooth3D(), RandomContrast3D()]
 
     def __call__(self, patches):
@@ -60,8 +53,7 @@ class ImageTransforms:
             ]
         )
         patches = self.apply(patches, transform)
-        if self.normalization == "percentile":
-            patches = np.clip(patches, 0, 1)
+        patches = np.clip(patches, 0, 1)
         return np.ascontiguousarray(patches)
 
     def apply(self, patches, transforms):

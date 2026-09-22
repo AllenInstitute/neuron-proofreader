@@ -94,7 +94,7 @@ class SubgraphSampler:
             if proposal not in visited:
                 # Get cluster containing proposal
                 cluster = self.extract_cluster(proposal)
-                visited = visited.union(cluster)
+                visited.update(cluster)
 
                 # Check whether to cache cluster
                 if len(cluster) >= k and len(cluster) < self.max_proposals:

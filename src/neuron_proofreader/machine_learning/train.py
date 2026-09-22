@@ -10,6 +10,7 @@ proofreading classification tasks.
 """
 
 import json
+import random
 
 from datetime import datetime
 from torch.nn.functional import sigmoid
@@ -71,7 +72,7 @@ class Trainer:
         lr=1e-4,
         max_epochs=200,
         pos_weight=None,
-        save_mistake_mips=False,
+        n_mips=0,
         use_amp=True,
     ):
         """
@@ -97,8 +98,10 @@ class Trainer:
             Weight applied to the positive class in BCEWithLogitsLoss. Values
             greater than 1 increase recall at the cost of precision. Default
             is None (no reweighting).
-        save_mistake_mips : bool, optional
-            Indication of whether to save MIPs of mistakes. Default is False.
+        n_mips : int, optional
+            Number of randomly sampled validation predictions to save as MIPs
+            each epoch, named by outcome (e.g. "false_positive{idx}.png").
+            Default is 0 (disabled).
         use_amp : bool, optional
             If True, enables automatic mixed precision (float16) training.
             Default is True.
@@ -115,9 +118,9 @@ class Trainer:
         self.enforced_recall = enforced_recall
         self.log_dir = log_dir
         self.max_epochs = max_epochs
-        self.mistakes_dir = os.path.join(log_dir, "mistakes")
+        self.mips_dir = os.path.join(log_dir, "mips")
         self.model_name = model_name
-        self.save_mistake_mips = save_mistake_mips
+        self.n_mips = n_mips
 
         pw = (
             torch.tensor([pos_weight], device=device)
@@ -151,7 +154,6 @@ class Trainer:
         print("\nExperiment:", exp_name)
         for epoch in range(self.max_epochs):
             # Train-Validate
-
             train_stats = self.train_step(train_dataloader, epoch)
             val_stats = self.validate_step(val_dataloader, epoch)
             new_best = self.check_model_performance(val_stats, epoch)
@@ -196,8 +198,10 @@ class Trainer:
             self.model.train()
         else:
             self.model.eval()
-            if self.save_mistake_mips:
-                util.mkdir(self.mistakes_dir, True)
+            if self.n_mips > 0:
+                util.mkdir(self.mips_dir, True)
+                n = len(dataloader.dataset)
+                self._mip_idxs = set(random.sample(range(n), min(self.n_mips, n)))
 
         metrics = ml_util.BinaryMetricAccumulator()
         for x, y in dataloader:
@@ -217,7 +221,7 @@ class Trainer:
             metrics.update(scores >= 0.5, y, loss, scores=scores)
 
             if not train:
-                self._save_mistake_mips(x, y, y_pred, idx_offset)
+                self._save_mips(x, y, y_pred, idx_offset)
                 idx_offset += len(y)
 
         stats = metrics.compute(min_recall=self.enforced_recall)
@@ -313,35 +317,36 @@ class Trainer:
             torch.load(model_path, map_location=self.device)
         )
 
-    def _save_mistake_mips(self, x, y, y_pred, idx_offset):
+    def _save_mips(self, x, y, y_pred, idx_offset):
         """
-        Saves MIPs of each false negative and false positive.
+        Saves MIPs of the sampled validation predictions in this batch, with
+        the outcome (e.g. false_positive) in the filename.
 
         Parameters
         ----------
-        x : numpy.ndarray
-            Input tensor with shape (B, 2, D, H, W).
-        y : numpy.ndarray
+        x : torch.Tensor or dict
+            Input tensor with shape (B, 2, D, H, W), or dict with "img" key.
+        y : torch.Tensor
             Ground truth labels with shape (B, 1).
-        y_pred : numpy.ndarray
-            Predicted labels with shape (B, 1).
+        y_pred : torch.Tensor
+            Predicted logits with shape (B, 1).
         """
-        if self.save_mistake_mips:
-            # Initializations
-            if isinstance(x, dict):
-                x = ml_util.to_cpu(x["img"], True)
-            else:
-                x = ml_util.to_cpu(x, True)
+        if self.n_mips == 0:
+            return
 
-            # Save MIPs
-            for i, (y_i, y_pred_i) in enumerate(zip(y, y_pred)):
-                mistake_type = classify_mistake(y_i, y_pred_i)
-                if mistake_type:
-                    filename = f"{mistake_type}{i + idx_offset}.png"
-                    output_path = os.path.join(self.mistakes_dir, filename)
-                    img_util.plot_image_and_segmentation_mips(
-                        x[i, 0], 2 * x[i, 1], output_path
-                    )
+        batch_idxs = [i for i in range(len(y)) if i + idx_offset in self._mip_idxs]
+        if not batch_idxs:
+            return
+
+        x = x["img"] if isinstance(x, dict) else x
+        x = ml_util.to_cpu(x, True)
+        for i in batch_idxs:
+            outcome = classify_prediction(y[i], y_pred[i])
+            filename = f"{outcome}{i + idx_offset}.png"
+            output_path = os.path.join(self.mips_dir, filename)
+            img_util.plot_image_and_segmentation_mips(
+                x[i, 0], 2 * x[i, 1], output_path
+            )
 
     def save_config(self):
         """
@@ -408,7 +413,7 @@ class DistributedTrainer(Trainer):
         lr=1e-3,
         max_epochs=200,
         pos_weight=None,
-        save_mistake_mips=False,
+        n_mips=0,
     ):
         """
         Instantiates a DistributedTrainer object.
@@ -438,7 +443,7 @@ class DistributedTrainer(Trainer):
             lr=lr,
             max_epochs=max_epochs,
             pos_weight=pos_weight,
-            save_mistake_mips=save_mistake_mips,
+            n_mips=n_mips,
         )
 
         # Check that multiple GPUs are available
@@ -531,24 +536,29 @@ class DistributedTrainer(Trainer):
 
 
 # --- Helpers ---
-def classify_mistake(y_i, y_pred_i):
+def classify_prediction(y_i, y_pred_i):
     """
-    Classify a prediction mistake for a single example.
+    Classify the outcome of a single prediction.
 
     Parameters
     ----------
     y_i : int
         Ground truth label.
     y_pred_i : float
-        Predicted label.
+        Predicted logit.
 
     Returns
     -------
-    str or None
-        Name of mistake or None if prediction is correct.
+    str
+        One of "true_positive", "true_negative", "false_positive",
+        "false_negative".
     """
-    if y_i == 1 and y_pred_i < 0:
+    is_pos = y_i == 1
+    pred_pos = y_pred_i > 0
+    if is_pos and pred_pos:
+        return "true_positive"
+    if is_pos:
         return "false_negative"
-    if y_i == 0 and y_pred_i > 0:
+    if pred_pos:
         return "false_positive"
-    return None
+    return "true_negative"

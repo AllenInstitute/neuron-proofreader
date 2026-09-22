@@ -41,8 +41,10 @@ class CNN3D(nn.Module):
         max_channels=256,
         num_single_blocks=2,
         output_dim=1,
+        output_hidden_dim=None,
         pool_stage_idxs=(2, -1),
         use_double=True,
+        use_output_head=True,
     ):
         # Call parent class
         nn.Module.__init__(self)
@@ -68,8 +70,10 @@ class CNN3D(nn.Module):
             "max_channels": max_channels,
             "num_single_blocks": num_single_blocks,
             "output_dim": output_dim,
+            "output_hidden_dim": output_hidden_dim,
             "pool_stage_idxs": tuple(pool_stage_idxs),
             "use_double": use_double,
+            "use_output_head": use_output_head,
         }
 
         # Encoder
@@ -100,7 +104,19 @@ class CNN3D(nn.Module):
         )
 
         total_dim = sum(c * 2 for c in stage_channels)
-        self.output = FeedForwardNet(total_dim, output_dim, 3)
+        self.feature_dim = total_dim
+        if not use_output_head:
+            # Return raw pooled features; the caller owns the projection
+            self.output = nn.Identity()
+        elif output_hidden_dim is None:
+            self.output = FeedForwardNet(total_dim, output_dim, 3)
+        else:
+            self.output = nn.Sequential(
+                nn.Linear(total_dim, output_hidden_dim),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(output_hidden_dim, output_dim),
+            )
         self.apply(self.init_weights)
 
     @staticmethod

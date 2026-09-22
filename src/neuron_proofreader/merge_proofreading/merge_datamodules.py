@@ -57,6 +57,9 @@ class BrainDataset:
     ----------
     brain_id : str
         Unique identifier for this brain.
+    annotated_only : bool
+        If True, negatives come only from the annotated nonmerge sites and
+        no random nonmerge sites are ever sampled for this brain.
     subgraph_depth : float
         Radius (in microns) used when extracting rooted subgraphs.
     """
@@ -69,6 +72,7 @@ class BrainDataset:
         brain_id,
         sites_prefix,
         swcs_path,
+        annotated_only=False,
         class_ratios=(0.5, 0.5),
         graph_config=None,
         img_config=None,
@@ -77,10 +81,13 @@ class BrainDataset:
         subgraph_depth=100,
     ):
         # Instance attributes
+        self.annotated_only = annotated_only
         self.brain_id = brain_id
         self.class_ratios = class_ratios
         self.ignore_fragments = set()
-        self.random_nonmerge_site_prob = random_nonmerge_site_prob
+        self.random_nonmerge_site_prob = (
+            0 if annotated_only else random_nonmerge_site_prob
+        )
         self.rebalance_classes = rebalance_classes
         self.subgraph_depth = subgraph_depth
 
@@ -92,7 +99,9 @@ class BrainDataset:
         self.nonmerge_sites = self.load_sites(
             os.path.join(sites_prefix, "nonmerge_sites")
         )
-        self.patch_loader = PatchLoader(self.graph, img_config)
+        self.patch_loader = (
+            PatchLoader(self.graph, img_config) if img_config else None
+        )
 
         # Store dataset info
         self.set_giant_components()
@@ -240,10 +249,16 @@ class BrainDataset:
                     visited.add(j)
         return False
 
+    def _num_neg_candidates(self):
+        n_neg = len(self.nonmerge_sites)
+        if self.annotated_only:
+            return n_neg
+        return n_neg or len(self.merge_sites)
+
     def _list_indices(self):
         # Compute target class counts
         n_pos = len(self.merge_sites)
-        n_neg = len(self.nonmerge_sites) or n_pos
+        n_neg = self._num_neg_candidates()
         pos_ratio, neg_ratio = self.class_ratios
         n_target_neg = min(int(n_pos * neg_ratio / pos_ratio), n_neg)
 
@@ -265,7 +280,7 @@ class BrainDataset:
             Number of examples in the dataset.
         """
         n_pos = len(self.merge_sites)
-        n_neg = len(self.nonmerge_sites) or n_pos
+        n_neg = self._num_neg_candidates()
         pos_ratio, neg_ratio = self.class_ratios
         n_target_neg = min(int(n_pos * neg_ratio / pos_ratio), n_neg)
         size = n_target_neg if self.rebalance_classes else n_neg
@@ -275,6 +290,7 @@ class BrainDataset:
         return (
             f"BrainDataset("
             f"brain_id={self.brain_id}, "
+            f"annotated_only={self.annotated_only}, "
             f"n_examples={len(self)}, "
             f"n_pos_examples={len(self.merge_sites)}, "
             f"n_neg_examples={len(self.nonmerge_sites)})"
@@ -352,6 +368,31 @@ class BrainDatasetCollection(Dataset):
 
         df = pd.DataFrame(rows)
         df.to_csv(os.path.join(output_dir, "val_summary.csv"), index=False)
+
+    def save_config(self, path):
+        """
+        Saves per-brain dataset parameters to a JSON file.
+
+        Parameters
+        ----------
+        path : str
+            Destination file path.
+        """
+        config = [
+            {
+                "brain_id": bd.brain_id,
+                "annotated_only": bd.annotated_only,
+                "class_ratios": list(bd.class_ratios),
+                "rebalance_classes": bd.rebalance_classes,
+                "random_nonmerge_site_prob": bd.random_nonmerge_site_prob,
+                "subgraph_depth": bd.subgraph_depth,
+                "n_merge_sites": len(bd.merge_sites),
+                "n_nonmerge_sites": len(bd.nonmerge_sites),
+                "n_examples": len(bd),
+            }
+            for bd in self.datasets
+        ]
+        util.write_json(path, config)
 
     # --- Dataset Interface ---
     def __len__(self):
@@ -663,6 +704,7 @@ def create_dataset_collection(
     img_prefixes_path,
     sites_root_path,
     swcs_root_path,
+    annotated_only_ids=(),
     class_ratios=(0.5, 0.5),
     graph_config=None,
     img_config=None,
@@ -674,12 +716,17 @@ def create_dataset_collection(
     print(f"\nLoading {dataset_mode} Dataset...")
     assert dataset_mode in ["Train", "Val"]
     if dataset_mode == "Train":
-        img_config.set_train_mode()
         rebalance_classes = True
     else:
-        img_config.set_val_mode()
         random_nonmerge_site_prob = 0
         rebalance_classes = False
+
+    # img_config is None for graph-only datasets
+    if img_config is not None:
+        if dataset_mode == "Train":
+            img_config.set_train_mode()
+        else:
+            img_config.set_val_mode()
 
     # Load image prefixes
     bucket, root_prefix = util.parse_cloud_path(sites_root_path)
@@ -689,7 +736,8 @@ def create_dataset_collection(
     datasets = list()
     for i, brain_id in enumerate(brain_ids, start=1):
         # Extract dataset info
-        img_config.set_img_path(os.path.join(img_prefixes[brain_id], "0"))
+        if img_config is not None:
+            img_config.set_img_path(os.path.join(img_prefixes[brain_id], "0"))
         segmentation_id = get_segmentation_id(sites_root_path, brain_id)
         sites_path = os.path.join(sites_root_path, brain_id, segmentation_id)
         swcs_path = os.path.join(
@@ -702,6 +750,7 @@ def create_dataset_collection(
             brain_id,
             sites_path,
             swcs_path,
+            annotated_only=brain_id in annotated_only_ids,
             class_ratios=class_ratios,
             graph_config=graph_config,
             img_config=img_config,
@@ -712,7 +761,7 @@ def create_dataset_collection(
         print(dataset)
 
         # Check whether to generate examples for validation
-        if dataset_mode == "Val":
+        if dataset_mode == "Val" and not dataset.annotated_only:
             num_target_neg = val_neg_multiplier * len(dataset.merge_sites)
             num_added_neg = num_target_neg - len(dataset.nonmerge_sites)
             if num_added_neg > 0:
