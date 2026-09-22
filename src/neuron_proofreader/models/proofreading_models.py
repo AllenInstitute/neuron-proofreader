@@ -227,7 +227,8 @@ class VisionOnlyMergeDetector(nn.Module):
             )
 
     def forward(self, x):
-        return self.vision(x["img"])
+        img = x["img"] if isinstance(x, dict) else x
+        return self.vision(img)
 
     def save(self, path):
         torch.save(
