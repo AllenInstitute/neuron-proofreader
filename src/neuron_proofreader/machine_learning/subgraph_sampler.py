@@ -12,6 +12,7 @@ batches suitable for GNN input.
 from collections import deque
 
 import numpy as np
+from tqdm import tqdm
 
 from neuron_proofreader.proposal_graph import ProposalComputationGraph
 from neuron_proofreader.utils import util
@@ -90,7 +91,7 @@ class SubgraphSampler:
     def set_proposal_clusters(self, k=2):
         self.clusters = dict()
         visited = set()
-        for proposal in self.proposals:
+        for proposal in tqdm(self.proposals, desc="Clustering proposals", leave=False):
             if proposal not in visited:
                 # Get cluster containing proposal
                 cluster = self.extract_cluster(proposal)
