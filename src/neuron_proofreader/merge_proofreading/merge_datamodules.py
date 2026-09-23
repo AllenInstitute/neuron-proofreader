@@ -76,6 +76,7 @@ class BrainDataset:
         class_ratios=(0.5, 0.5),
         graph_config=None,
         img_config=None,
+        max_brain_examples=None,
         random_nonmerge_site_prob=0.5,
         rebalance_classes=True,
         subgraph_depth=100,
@@ -85,6 +86,7 @@ class BrainDataset:
         self.brain_id = brain_id
         self.class_ratios = class_ratios
         self.ignore_fragments = set()
+        self.max_brain_examples = max_brain_examples
         self.random_nonmerge_site_prob = (
             0 if annotated_only else random_nonmerge_site_prob
         )
@@ -253,6 +255,10 @@ class BrainDataset:
         n_neg = len(self.nonmerge_sites)
         if self.annotated_only:
             return n_neg
+        if self.random_nonmerge_site_prob > 0:
+            pos_ratio, neg_ratio = self.class_ratios
+            n_target = int(len(self.merge_sites) * neg_ratio / pos_ratio)
+            return max(n_neg, n_target)
         return n_neg or len(self.merge_sites)
 
     def _list_indices(self):
@@ -263,9 +269,18 @@ class BrainDataset:
         n_target_neg = min(int(n_pos * neg_ratio / pos_ratio), n_neg)
 
         # Check whether to rebalance negative examples
+        n_pos_used = n_pos
         size = n_target_neg if self.rebalance_classes else n_neg
+
+        # Apply per-brain cap: subsample both classes proportionally each epoch
+        if self.max_brain_examples is not None and n_pos_used + size > self.max_brain_examples:
+            scale = self.max_brain_examples / (n_pos_used + size)
+            n_pos_used = max(1, int(n_pos_used * scale))
+            size = self.max_brain_examples - n_pos_used
+
+        pos_idxs = np.random.choice(n_pos, size=n_pos_used, replace=False)
         neg_idxs = np.random.choice(n_neg, size=size, replace=False)
-        return np.concatenate((-neg_idxs, np.arange(n_pos)))
+        return np.concatenate((-neg_idxs, pos_idxs))
 
     def __getattr__(self, name):
         return getattr(self.graph, name)
@@ -284,7 +299,10 @@ class BrainDataset:
         pos_ratio, neg_ratio = self.class_ratios
         n_target_neg = min(int(n_pos * neg_ratio / pos_ratio), n_neg)
         size = n_target_neg if self.rebalance_classes else n_neg
-        return n_pos + size
+        total = n_pos + size
+        if self.max_brain_examples is not None:
+            total = min(total, self.max_brain_examples)
+        return total
 
     def __repr__(self):
         return (
@@ -708,6 +726,7 @@ def create_dataset_collection(
     class_ratios=(0.5, 0.5),
     graph_config=None,
     img_config=None,
+    max_brain_examples=None,
     random_nonmerge_site_prob=0.5,
     subgraph_depth=100,
     val_neg_multiplier=5,
@@ -754,6 +773,7 @@ def create_dataset_collection(
             class_ratios=class_ratios,
             graph_config=graph_config,
             img_config=img_config,
+            max_brain_examples=max_brain_examples if rebalance_classes else None,
             subgraph_depth=subgraph_depth,
             random_nonmerge_site_prob=random_nonmerge_site_prob,
             rebalance_classes=rebalance_classes,
