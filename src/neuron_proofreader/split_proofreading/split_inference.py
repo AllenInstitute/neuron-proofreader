@@ -36,6 +36,16 @@ from neuron_proofreader.split_proofreading.split_datasets import (
 from neuron_proofreader.utils import ml_util, util
 
 
+def write_connections(merged_ids, output_dir):
+    """
+    Writes merged SWC ID pairs to connections.txt in output_dir.
+    """
+    path = os.path.join(output_dir, "connections.txt")
+    with open(path, "w") as f:
+        for id1, id2 in merged_ids:
+            f.write(f"{id1}, {id2}\n")
+
+
 class SomaSplitProofreader:
     """
     Heuristic split proofreader that reconnects fragments close to soma
@@ -74,6 +84,7 @@ class SomaSplitProofreader:
         self.log(summary)
         t, unit = util.time_writer(time() - t0)
         self.log(f"Module Runtime: {t:.2f} {unit}\n")
+        write_connections(self.graph.merged_ids, self.output_dir)
 
     def log(self, txt):
         print(txt)
@@ -409,10 +420,7 @@ class LearnedSplitProofreader:
         Writes accepted proposals to a text file. Each line contains the two
         SWC IDs as comma separated values.
         """
-        path = os.path.join(self.output_dir, "connections.txt")
-        with open(path, "w") as f:
-            for id1, id2 in self.dataset.merged_ids:
-                f.write(f"{id1}, {id2}" + "\n")
+        write_connections(self.dataset.merged_ids, self.output_dir)
 
     def save_model_predictions(self, preds_dict, suffix=""):
         summary = list()

@@ -12,7 +12,6 @@ a collection of neuron fragments and provides proofreading-specific operations.
 from tqdm import tqdm
 
 import numpy as np
-import rustworkx as rx
 
 from arborist.skeleton_graph import SkeletonGraph
 from arborist.utils.graph_loading import GraphLoader
@@ -60,6 +59,7 @@ class FragmentsGraph(SkeletonGraph):
             node_spacing=node_spacing,
             verbose=verbose,
         )
+        self.merged_ids = set()
         self.soma_centroids = list()
         self.soma_component_ids = list()
 
@@ -140,7 +140,8 @@ class FragmentsGraph(SkeletonGraph):
                         (self.node_xyz[nodes[idxs]] - soma_xyz) ** 2, axis=1
                     )
                     node = nodes[idxs[np.argmin(dists)]]
-                    if not rx.graph_has_path(self, node, soma_node):
+                    if self.node_component_id[node] != soma_component_id:
+                        self.merged_ids.add((self.node_swc_id(soma_node), self.node_swc_id(node)))
                         self.add_edge(node, soma_node, None)
                         self.update_component_ids(soma_component_id, node)
                         merge_cnt += 1

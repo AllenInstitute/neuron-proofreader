@@ -355,9 +355,6 @@ class ProofreadPipeline:
         self.save_graph("final_swcs")
 
     def save_graph(self, dirname):
-        # SWC formatting is GIL-bound, so the threaded writer was no faster
-        # than a single pass and its per-batch zips then had to be re-read
-        # and re-written by combine_zips. Write the archive directly instead.
         dirpath = os.path.join(self.output_dir, dirname)
         util.mkdir(dirpath)
         self.graph.to_zipped_swcs(
