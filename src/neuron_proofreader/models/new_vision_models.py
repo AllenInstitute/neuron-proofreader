@@ -28,9 +28,14 @@ class CNN3D(nn.Module):
     Convolutional neural network for 3D images.
     """
 
+    # Bumped when a change alters what an existing saved config means; see
+    # upgrade_config for how older configs are mapped onto the current one.
+    ARCH_VERSION = 2
+
     def __init__(
         self,
         input_shape,
+        arch_version=ARCH_VERSION,
         base_channels=16,
         block_type=None,
         center_pool_sigma=0.4,
@@ -38,8 +43,8 @@ class CNN3D(nn.Module):
         depth=5,
         dropout=0.1,
         learnable_center_sigma=True,
-        max_channels=256,
-        num_single_blocks=2,
+        max_channels=128,
+        num_single_blocks=0,
         output_dim=1,
         output_hidden_dim=None,
         pool_stage_idxs=(2, -1),
@@ -60,6 +65,7 @@ class CNN3D(nn.Module):
         # Save model config
         self.config = {
             "input_shape": tuple(input_shape),
+            "arch_version": self.ARCH_VERSION,
             "base_channels": base_channels,
             "block_type": block_name,
             "center_pool_sigma": center_pool_sigma,
@@ -175,7 +181,7 @@ class CNN3D(nn.Module):
         """
         ckpt = torch.load(path, map_location=map_location)
         if isinstance(ckpt, dict) and "config" in ckpt:
-            model = cls(**ckpt["config"])
+            model = cls(**cls.upgrade_config(ckpt["config"]))
             model.load_state_dict(ckpt["state_dict"])
         else:
             if config is None:
@@ -187,9 +193,36 @@ class CNN3D(nn.Module):
             elif isinstance(config, str):
                 with open(config) as f:
                     config = json.load(f)
-            model = cls(**config)
+            model = cls(**cls.upgrade_config(config))
             model.load_state_dict(ckpt)
         return model
+
+    @classmethod
+    def upgrade_config(cls, config):
+        """
+        Maps a config saved by an older CNN3D onto the current constructor so
+        the checkpoint reconstructs the architecture it was trained with.
+
+        arch_version 1 (no "arch_version" key): num_single_blocks was off by
+        one (n meant n + 1 single blocks) and max_channels defaulted to 256.
+
+        Parameters
+        ----------
+        config : dict
+            Constructor kwargs as saved in a checkpoint. May contain extra
+            keys (e.g. from ArboristVisionMergeDetector), which pass through.
+
+        Returns
+        -------
+        dict
+            Upgraded copy of config.
+        """
+        config = dict(config)
+        if config.get("arch_version", 1) < 2:
+            config["num_single_blocks"] = config.get("num_single_blocks", 2) + 1
+            config.setdefault("max_channels", 256)
+            config["arch_version"] = 2
+        return config
 
     @staticmethod
     def init_weights(m):
@@ -251,7 +284,7 @@ class Encoder3D(nn.Module):
         depth,
         block_type=None,
         channel_multiplier=2,
-        max_channels=256,
+        max_channels=128,
         num_single_blocks=2,
         stem_depth=0,
         stem_dilations=None,
@@ -270,10 +303,13 @@ class Encoder3D(nn.Module):
             Number of conv blocks in the encoder.
         channel_multiplier : float, optional
             Multiplicative channel growth factor per layer. Default is 2.
-        use_double : bool, optional
-            True if blocks use double convolution. Default is True.
         max_channels : int, optional
             Cap on channel growth across layers. Default is 128.
+        num_single_blocks : int, optional
+            Number of leading blocks that use a single convolution; the rest
+            use double convolution. Default is 2.
+        use_double : bool, optional
+            True if blocks use double convolution. Default is True.
         """
         # Call parent class
         super().__init__()
@@ -283,7 +319,7 @@ class Encoder3D(nn.Module):
         block_type = block_type or ConvBlock3D
         for i in range(depth):
             # Add block
-            use_double_i = i > num_single_blocks
+            use_double_i = i >= num_single_blocks
             block = block_type(
                 in_channels, out_channels, use_double=use_double_i
             )
