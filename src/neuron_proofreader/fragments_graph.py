@@ -161,7 +161,7 @@ class FragmentsGraph(SkeletonGraph):
         return soma_nodes
 
     def remove_merge_sites(
-        self, merge_site_nodes, max_depth=12, relabel_nodes=True
+        self, merge_site_nodes, max_depth=15, relabel_nodes=True
     ):
         """
         Removes detected merge sites and their local neighborhoods from the
@@ -173,7 +173,7 @@ class FragmentsGraph(SkeletonGraph):
             Node IDs identified as merge sites.
         max_depth : float, optional
             Radius (in microns) around each merge site to remove. Default
-            is 8.
+            is 15.
         relabel_nodes : bool, optional
             Whether to relabel nodes after removal. Pass False when another
             removal step follows immediately, so the graph is relabeled once.
