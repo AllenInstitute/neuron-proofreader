@@ -65,8 +65,7 @@ class GraphConfig(Config):
     prune_depth : int
         ...
     remove_doubles : bool
-        Indication of whether to remove fragments that are likely a double of
-        another.
+        True if doubled fragments should be removed.
     verbose : bool
         Indication of whether to display a progress bar.
     """
