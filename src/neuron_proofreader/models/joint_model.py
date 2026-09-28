@@ -54,6 +54,7 @@ class JointProofreader(nn.Module):
         geometry_embed_dim=64,
         split_heads=4,
         dropout=0.1,
+        split_dropout=None,
         **vision_backbone_kwargs,
     ):
         """
@@ -78,6 +79,9 @@ class JointProofreader(nn.Module):
         dropout : float, optional
             Dropout probability applied before the merge classification head.
             Default is 0.1.
+        split_dropout : float or None, optional
+            Dropout probability applied before the split classification head.
+            Defaults to `dropout` when None.
         **vision_backbone_kwargs
             Forwarded to CNN3D (e.g. base_channels, depth, block_type).
         """
@@ -93,8 +97,10 @@ class JointProofreader(nn.Module):
 
         # Merge head: Arborist morphology encoder + fusion MLP.
         _arborist_kwargs = arborist_kwargs or {}
+        _split_dropout = split_dropout if split_dropout is not None else dropout
         self.arborist = Arborist(latent_dim=arborist_latent_dim, **_arborist_kwargs)
         self.drop = nn.Dropout(dropout)
+        self.split_drop = nn.Dropout(_split_dropout)
         self.merge_head = FeedForwardNet(img_embed_dim + arborist_latent_dim, 1, 3)
 
         # Split head: node geometry embedding + heterogeneous GAT.
@@ -154,7 +160,7 @@ class JointProofreader(nn.Module):
         # Heterogeneous message passing.
         x_dict = self.gat1(x_dict, edge_index_dict)
         x_dict = self.gat2(x_dict, edge_index_dict)
-        return self.split_head(x_dict["proposal"])
+        return self.split_head(self.split_drop(x_dict["proposal"]))
 
     @torch._dynamo.disable
     def _encode_arborist(self, tree_samples, device):
