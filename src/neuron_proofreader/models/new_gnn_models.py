@@ -101,12 +101,60 @@ class ProposalTreeEncoder(nn.Module):
         torch.Tensor
             Shape (n_proposals, latent_dim).
         """
+        device = next(self.arborist.parameters()).device
+        latent_dim = self.arborist.config["latent_dim"]
+
+        # Collect unique curves across all proposals. CurveEncoder encodes
+        # each curve independently, so shared curves (same skeleton path in
+        # multiple proposals' subgraphs) only need to be encoded once.
+        curve_to_idx = {}
+        unique_curves = []
+        sample_curve_indices = []
+        for sample in tree_samples:
+            local_indices = []
+            for curve in sample.curves:
+                key = (curve.shape, curve.tobytes())
+                if key not in curve_to_idx:
+                    curve_to_idx[key] = len(unique_curves)
+                    unique_curves.append(curve)
+                local_indices.append(curve_to_idx[key])
+            sample_curve_indices.append(local_indices)
+
+        if not unique_curves:
+            return torch.zeros(len(tree_samples), latent_dim, device=device)
+
+        # Single CurveEncoder pass over all unique curves.
+        min_len = self.arborist.curve_encoder.segment_len
+        lengths = [len(c) for c in unique_curves]
+        t_max = max(max(lengths), min_len)
+        diffs = torch.zeros(len(unique_curves), t_max, 3, device=device)
+        mask = torch.ones(len(unique_curves), t_max, dtype=torch.bool, device=device)
+        for i, (c, length) in enumerate(zip(unique_curves, lengths)):
+            diffs[i, :length] = torch.as_tensor(c, dtype=torch.float32, device=device)
+            mask[i, :length] = False
+
         with torch.amp.autocast("cuda", enabled=False):
-            zs = []
-            for sample in tree_samples:
-                _, z_curves = self.arborist.encode(sample)
-                idx = sample.root_curve_indices or range(len(z_curves))
-                zs.append(z_curves[list(idx)].mean(dim=0))
+            z_all, _ = self.arborist.curve_encoder(diffs, mask)
+
+        # Per-sample GraphTransformer pass. GraphTransformer applies cross-curve
+        # attention using each proposal's unique tree topology, so it must run
+        # per sample. Curve embeddings are looked up from the shared z_all.
+        zs = []
+        for sample, local_indices in zip(tree_samples, sample_curve_indices):
+            if not sample.curves:
+                zs.append(torch.zeros(latent_dim, device=device))
+                continue
+
+            z = z_all[torch.tensor(local_indices, dtype=torch.long, device=device)]
+            edge_index = torch.as_tensor(
+                sample.edge_index, dtype=torch.long, device=device
+            )
+            with torch.amp.autocast("cuda", enabled=False):
+                z_curves = self.arborist.graph_transformer(z, edge_index)
+
+            root_idx = sample.root_curve_indices or range(len(z_curves))
+            zs.append(z_curves[list(root_idx)].mean(dim=0))
+
         return torch.stack(zs)
 
 
