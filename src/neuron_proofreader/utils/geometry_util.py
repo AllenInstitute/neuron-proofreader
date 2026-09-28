@@ -406,6 +406,11 @@ def is_double(graph, labels, sizes, query_nodes, hit_nodes, hit_dists):
     numpy.ndarray
         Boolean array indexed by component index.
     """
+    # Nothing projected onto another component, e.g. a sparse graph after
+    # heavy cable length filtering.
+    if len(query_nodes) == 0:
+        return np.zeros(len(sizes), dtype=bool)
+
     # Group projections by (component, hit component) pairs
     cid = graph.node_component_id
     keys = labels[query_nodes] * (cid.max() + 1) + cid[hit_nodes]

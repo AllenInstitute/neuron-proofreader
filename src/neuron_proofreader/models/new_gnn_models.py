@@ -13,9 +13,101 @@ from torch_geometric import nn as nn_geometric
 import torch
 import torch.nn as nn
 
+from arborist.models.arborist import Arborist
 from neuron_proofreader.models.new_vision_models import CNN3D
 from neuron_proofreader.split_proofreading import split_feature_extraction
 from neuron_proofreader.utils.ml_util import FeedForwardNet
+
+
+def proposal_length_feature(tree_samples, device, dtype=torch.float32):
+    """
+    Log-scaled proposal length, one scalar per sample. Length is a property
+    of the candidate edge that neither the rooted-subgraph curves nor the
+    resized image patch expose, so it is fed to models explicitly.
+
+    Parameters
+    ----------
+    tree_samples : List[TreeSample]
+        Samples produced by ProposalTreeFeatureExtractor.
+
+    Returns
+    -------
+    torch.Tensor
+        Shape (n_samples, 1), values log1p(length_in_microns).
+    """
+    lengths = torch.tensor(
+        [s.proposal_length for s in tree_samples], device=device, dtype=dtype
+    )
+    return torch.log1p(lengths).unsqueeze(1)
+
+
+class ProposalTreeEncoder(nn.Module):
+    """
+    Encodes proposal-rooted TreeSamples into fixed-size embeddings using
+    Arborist. The two curves incident to the root (one per side of the
+    proposal) are mean-pooled after the GraphTransformer has contextualized
+    them against the rest of the subgraph.
+
+    Parameters
+    ----------
+    latent_dim : int, optional
+        Arborist latent dimension and output embedding size. Default is 64.
+    pretrained_curve_encoder_path : str or None, optional
+        Path to a CurveAutoencoder checkpoint whose encoder weights are loaded
+        into the CurveEncoder. Default is None.
+    freeze_curve_encoder : bool, optional
+        If True and a pretrained path is provided, the CurveEncoder is frozen.
+        Default is True.
+    **arborist_kwargs
+        Forwarded to the Arborist constructor.
+    """
+
+    def __init__(
+        self,
+        latent_dim=64,
+        pretrained_curve_encoder_path=None,
+        freeze_curve_encoder=True,
+        **arborist_kwargs,
+    ):
+        super().__init__()
+        self.config = {"latent_dim": latent_dim, **arborist_kwargs}
+        self.arborist = Arborist(latent_dim=latent_dim, **arborist_kwargs)
+        if pretrained_curve_encoder_path is not None:
+            self._load_curve_encoder(pretrained_curve_encoder_path)
+            if freeze_curve_encoder:
+                for p in self.arborist.curve_encoder.parameters():
+                    p.requires_grad_(False)
+
+    def _load_curve_encoder(self, path):
+        ckpt = torch.load(path, weights_only=False)
+        state = ckpt.get("model_state", ckpt)
+        encoder_state = {
+            k[len("encoder."):]: v
+            for k, v in state.items()
+            if k.startswith("encoder.")
+        }
+        self.arborist.curve_encoder.load_state_dict(encoder_state)
+
+    @torch._dynamo.disable
+    def forward(self, tree_samples):
+        """
+        Parameters
+        ----------
+        tree_samples : List[TreeSample]
+            One sample per proposal, in proposal-index order.
+
+        Returns
+        -------
+        torch.Tensor
+            Shape (n_proposals, latent_dim).
+        """
+        with torch.amp.autocast("cuda", enabled=False):
+            zs = []
+            for sample in tree_samples:
+                _, z_curves = self.arborist.encode(sample)
+                idx = sample.root_curve_indices or range(len(z_curves))
+                zs.append(z_curves[list(idx)].mean(dim=0))
+        return torch.stack(zs)
 
 
 class NewVisionHGAT(nn.Module):
@@ -38,7 +130,7 @@ class NewVisionHGAT(nn.Module):
     def __init__(
         self,
         patch_shape,
-        geometry_embed_dim=64,
+        gnn_hidden_dim=64,
         img_embed_dim=64,
         heads=4,
     ):
@@ -49,7 +141,7 @@ class NewVisionHGAT(nn.Module):
         ----------
         patch_shape : Tuple[int]
             Spatial shape of image patches (D, H, W) — no channel dimension.
-        geometry_embed_dim : int, optional
+        gnn_hidden_dim : int, optional
             Hidden dimension for branch and proposal geometry embeddings.
             Default is 64.
         img_embed_dim : int, optional
@@ -61,12 +153,12 @@ class NewVisionHGAT(nn.Module):
 
         feats = split_feature_extraction.get_feature_dict()
 
-        # Node feature embeddings: branch→geometry_embed_dim,
-        # proposal→geometry_embed_dim//2 (img features fill the other half).
+        # Node feature embeddings: branch→gnn_hidden_dim,
+        # proposal→gnn_hidden_dim//2 (img features fill the other half).
         self.node_embedding = nn.ModuleDict({
-            "branch": FeedForwardNet(feats["branch"], geometry_embed_dim, 3),
+            "branch": FeedForwardNet(feats["branch"], gnn_hidden_dim, 3),
             "proposal": FeedForwardNet(
-                feats["proposal"], geometry_embed_dim // 2, 3
+                feats["proposal"], gnn_hidden_dim // 2, 3
             ),
         })
 
@@ -79,12 +171,19 @@ class NewVisionHGAT(nn.Module):
 
         # Heterogeneous GAT layers.
         # After node embedding + image fusion, proposal nodes have dim
-        # geometry_embed_dim//2 + img_embed_dim; branch nodes have dim
-        # geometry_embed_dim.  GATv2Conv handles mismatched dims via lazy
+        # gnn_hidden_dim//2 + img_embed_dim; branch nodes have dim
+        # gnn_hidden_dim.  GATv2Conv handles mismatched dims via lazy
         # (-1) input initialisation.
-        self.gat1 = _build_hetero_gat(geometry_embed_dim, heads)
-        self.gat2 = _build_hetero_gat(geometry_embed_dim * heads, heads)
-        self.output = nn.Linear(geometry_embed_dim * heads ** 2, 1)
+        self.gat1 = _build_hetero_gat(gnn_hidden_dim, heads)
+        self.gat2 = _build_hetero_gat(gnn_hidden_dim * heads, heads)
+        self.output = nn.Linear(gnn_hidden_dim * heads ** 2, 1)
+
+        self.config = {
+            "patch_shape": tuple(patch_shape),
+            "gnn_hidden_dim": gnn_hidden_dim,
+            "img_embed_dim": img_embed_dim,
+            "heads": heads,
+        }
 
         self._init_weights()
 
@@ -130,6 +229,16 @@ class NewVisionHGAT(nn.Module):
         x_dict = self.gat1(x_dict, edge_index_dict)
         x_dict = self.gat2(x_dict, edge_index_dict)
         return self.output(x_dict["proposal"])
+
+    def save(self, path):
+        torch.save({"config": self.config, "state_dict": self.state_dict()}, path)
+
+    @classmethod
+    def load(cls, path, map_location=None):
+        ckpt = torch.load(path, map_location=map_location, weights_only=True)
+        model = cls(**ckpt["config"])
+        model.load_state_dict(ckpt["state_dict"])
+        return model
 
 
 def _build_hetero_gat(out_dim, heads):
