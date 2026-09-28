@@ -73,6 +73,7 @@ class Trainer:
         max_epochs=200,
         pos_weight=None,
         n_mips=0,
+        n_mistake_mips=64,
         use_amp=True,
     ):
         """
@@ -102,6 +103,10 @@ class Trainer:
             Number of randomly sampled validation predictions to save as MIPs
             each epoch, named by outcome (e.g. "false_positive{idx}.png").
             Default is 0 (disabled).
+        n_mistake_mips : int, optional
+            Number of mistake MIPs (false positives and false negatives) to
+            save per epoch via reservoir sampling. Saved under
+            mistake_mips/epoch_NNN/ in the log directory. Default is 64.
         use_amp : bool, optional
             If True, enables automatic mixed precision (float16) training.
             Default is True.
@@ -119,8 +124,10 @@ class Trainer:
         self.log_dir = log_dir
         self.max_epochs = max_epochs
         self.mips_dir = os.path.join(log_dir, "mips")
+        self.mistake_mips_dir = os.path.join(log_dir, "mistake_mips")
         self.model_name = model_name
         self.n_mips = n_mips
+        self.n_mistake_mips = n_mistake_mips
 
         pw = (
             torch.tensor([pos_weight], device=device)
@@ -202,6 +209,9 @@ class Trainer:
                 util.mkdir(self.mips_dir, True)
                 n = len(dataloader.dataset)
                 self._mip_idxs = set(random.sample(range(n), min(self.n_mips, n)))
+            if self.n_mistake_mips > 0:
+                self._mistake_buf = []
+                self._mistake_seen = 0
 
         metrics = ml_util.BinaryMetricAccumulator()
         for x, y in dataloader:
@@ -222,10 +232,13 @@ class Trainer:
 
             if not train:
                 self._save_mips(x, y, y_pred, idx_offset)
+                self._collect_mistakes(x, y, y_pred)
                 idx_offset += len(y)
 
         stats = metrics.compute(min_recall=self.enforced_recall)
         self.update_tensorboard(stats, epoch, prefix)
+        if not train and self.n_mistake_mips > 0:
+            self._flush_mistake_mips(epoch)
         return stats
 
     def forward_pass(self, x, y):
@@ -348,6 +361,37 @@ class Trainer:
                 x[i, 0], 2 * x[i, 1], output_path
             )
 
+    def _collect_mistakes(self, x, y, y_pred):
+        """
+        Adds false positives and false negatives from this batch to a
+        reservoir-sampled buffer capped at n_mistake_mips images.
+        """
+        if self.n_mistake_mips == 0:
+            return
+        imgs = ml_util.to_cpu(x["img"] if isinstance(x, dict) else x, True)
+        for i in range(len(y)):
+            outcome = classify_prediction(y[i], y_pred[i])
+            if outcome not in ("false_positive", "false_negative"):
+                continue
+            self._mistake_seen += 1
+            item = (imgs[i], outcome)
+            if len(self._mistake_buf) < self.n_mistake_mips:
+                self._mistake_buf.append(item)
+            else:
+                j = random.randint(0, self._mistake_seen - 1)
+                if j < self.n_mistake_mips:
+                    self._mistake_buf[j] = item
+
+    def _flush_mistake_mips(self, epoch):
+        """
+        Saves the buffered mistake MIPs for this epoch to disk.
+        """
+        epoch_dir = os.path.join(self.mistake_mips_dir, f"epoch_{epoch:03d}")
+        util.mkdir(epoch_dir)
+        for i, (img, outcome) in enumerate(self._mistake_buf):
+            path = os.path.join(epoch_dir, f"{outcome}_{i:02d}.png")
+            img_util.plot_image_and_segmentation_mips(img[0], 2 * img[1], path)
+
     def save_config(self):
         """
         Saves trainer configuration to a JSON file in the log directory.
@@ -414,6 +458,7 @@ class DistributedTrainer(Trainer):
         max_epochs=200,
         pos_weight=None,
         n_mips=0,
+        n_mistake_mips=64,
     ):
         """
         Instantiates a DistributedTrainer object.
@@ -433,6 +478,8 @@ class DistributedTrainer(Trainer):
         pos_weight : float or None, optional
             Weight applied to the positive class in BCEWithLogitsLoss. Default
             is None (no reweighting).
+        n_mistake_mips : int, optional
+            Number of mistake MIPs to save per epoch. Default is 64.
         """
         # Call parent class
         super().__init__(
@@ -444,6 +491,7 @@ class DistributedTrainer(Trainer):
             max_epochs=max_epochs,
             pos_weight=pos_weight,
             n_mips=n_mips,
+            n_mistake_mips=n_mistake_mips,
         )
 
         # Check that multiple GPUs are available

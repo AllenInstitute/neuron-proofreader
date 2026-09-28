@@ -189,6 +189,7 @@ class ProofreadPipeline:
             batch_size=split_config.batch_size,
             device=self.device,
             log_handle=self.log_handle,
+            use_tree_features=split_config.use_tree_features,
         )
         proofreader(
             proposals_config,
@@ -283,6 +284,7 @@ class ProofreadPipeline:
         dataset = DatasetClass(
             self.graph,
             img_config,
+            modality=merge_config.modality,
             min_search_size=merge_config.min_search_size,
             prefetch=merge_config.prefetch,
         )

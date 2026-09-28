@@ -60,6 +60,7 @@ def plot_image_and_segmentation_mips(img, segmentation, output_path=None):
         Path to save MIPs as a PNG if provided. Default is None.
     """
     # Initializations
+    img = np.asarray(img, dtype=np.float32)
     vmax = np.percentile(img, 99.9)
     axes_names = ["XY", "XZ", "YZ"]
     cmap = make_segmentation_colormap(segmentation)
