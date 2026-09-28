@@ -41,6 +41,7 @@ class ProposalGraph(FragmentsGraph):
         node_spacing=1,
         prune_depth=20.0,
         verbose=True,
+        **kwargs,
     ):
         """
         Instantiates a ProposalGraph object.

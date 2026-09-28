@@ -276,13 +276,15 @@ class DetectionPatchLoader(PatchLoader):
 
     # --- Implementation of Abstract Inferface ---
     def __call__(self, node):
-        # Get patches
         center, shape = self.compute_patch_specs(node)
         img = self.read_image(center, shape)
         mask = self.create_mask(center, shape, node)
-        patches = self.stack(img, mask)
 
-        # Check whether to apply image augmentation
+        if self.fov_merge is not None:
+            img = img_util.resize(img, self.patch_shape)
+            mask = img_util.resize_nearest(mask, self.patch_shape)
+
+        patches = self.stack(img, mask)
         if self.transform:
             patches = self.transform(patches)
         return node, patches
@@ -290,7 +292,7 @@ class DetectionPatchLoader(PatchLoader):
     def compute_patch_specs(self, node):
         voxel = self.graph.node_voxel(node)
         voxel = self.adjust_voxel(voxel)
-        return voxel, self.patch_shape
+        return voxel, self.fov_merge or self.patch_shape
 
 
 class DetectionBatchLoader(PatchLoader):

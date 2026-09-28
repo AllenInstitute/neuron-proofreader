@@ -290,7 +290,7 @@ class DenseSearchDataset(SearchDataset):
             s = img_util.get_slices(center, self.patch_shape)
             patch = img[(slice(0, 2), *s)]
             subgraph = self.graph.rooted_subgraph(node, self.subgraph_radius)
-            tree_sample = subgraph_to_tree_sample(subgraph, node)
+            tree_sample = subgraph_to_tree_sample(subgraph, 0)
             yield node, patch, tree_sample
 
     # --- Helpers ---
@@ -353,5 +353,5 @@ class SparseSearchDataset(SearchDataset):
     def get_patch_and_arborist(self, node, img):
         patch = torch.from_numpy(img).float()
         subgraph = self.graph.rooted_subgraph(node, self.subgraph_radius)
-        tree_sample = subgraph_to_tree_sample(subgraph, node)
+        tree_sample = subgraph_to_tree_sample(subgraph, 0)
         yield node, patch, tree_sample
