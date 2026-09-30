@@ -225,31 +225,6 @@ def compute_iou3d(c1, c2, s1, s2):
     return np.prod(overlap) / union if union > 0 else 0
 
 
-def find_img_path(root_prefix, brain_id):
-    """
-    Finds the path to a whole-brain dataset stored in a GCS bucket.
-
-    Parameters:
-    ----------
-    root_prefrix : str
-        Path to the directory in the GCS bucket where the image is expected to
-        be located.
-    dataset_name : str
-        Name of the dataset to be searched for within the subdirectories.
-
-    Returns:
-    -------
-    str
-        Path of the found dataset subdirectory within the specified GCS bucket.
-    """
-    bucket_name, _ = util.parse_cloud_path(root_prefix)
-    for prefix in util.list_gcs_subprefixes(root_prefix):
-        if brain_id in prefix:
-            img_path = f"gs://{bucket_name}/{prefix}whole-brain/fused.zarr"
-            return img_path
-    raise f"Dataset not found in {root_prefix}"
-
-
 def get_contained_voxels(voxels, shape, buffer=0):
     """
     Gets voxels from the given list contained in an image specifed by "shape"

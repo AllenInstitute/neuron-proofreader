@@ -356,6 +356,12 @@ class LearnedSplitProofreader:
             if self.dataset.node_component_id[i] != self.dataset.node_component_id[j]:
                 self.dataset.merge_proposal(proposal)
                 n_accepts += 1
+            else:
+                # Loop-forming now, and components only ever merge (never
+                # split) for the rest of this run, so it will always be
+                # loop-forming here on — remove it instead of letting it
+                # linger and get rescored by the GNN every future round.
+                self.dataset.remove_proposal(proposal)
             del preds[proposal]
         return n_accepts
 
