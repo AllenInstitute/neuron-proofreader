@@ -142,8 +142,8 @@ class FragmentsGraph(SkeletonGraph):
                     node = nodes[idxs[np.argmin(dists)]]
                     if self.node_component_id[node] != soma_component_id:
                         self.merged_ids.add((self.node_swc_id(soma_node), self.node_swc_id(node)))
-                        self.add_edge(node, soma_node, None)
                         self.update_component_ids(soma_component_id, node)
+                        self.add_edge(node, soma_node, None)
                         merge_cnt += 1
                         somas_connected.append(soma_component_id)
 
