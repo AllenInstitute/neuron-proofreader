@@ -9,6 +9,8 @@ Code for parallelizing reading image patches from the cloud.
 """
 
 from abc import ABC, abstractmethod
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import tensorstore as ts
@@ -18,6 +20,61 @@ from neuron_proofreader.machine_learning.image_augmentation import (
     ImageTransforms,
 )
 from neuron_proofreader.utils import geometry_util, img_util, util
+
+
+class ThreadedPrefetchLoader:
+    """
+    Sequential batch loader that fetches items with a thread pool and keeps
+    ``prefetch`` batches in flight ahead of the consumer.
+
+    Threads share the dataset (and its graph) in-process, so unlike
+    ``DataLoader(num_workers>0)`` nothing is forked or pickled. Suited to
+    I/O-bound datasets such as GraphVisionSearchDataset.
+
+    Parameters
+    ----------
+    dataset : Dataset
+    batch_size : int
+    collate_fn : callable
+        Assembles a list of dataset items into a batch.
+    prefetch : int, optional
+        Number of batches to keep in flight. Default is 4.
+    max_workers : int, optional
+        Thread pool size. Default is 16.
+    """
+
+    def __init__(self, dataset, batch_size, collate_fn, prefetch=4, max_workers=16):
+        self.dataset = dataset
+        self.batch_size = batch_size
+        self.collate_fn = collate_fn
+        self.prefetch = prefetch
+        self.max_workers = max_workers
+
+    def __len__(self):
+        return (len(self.dataset) + self.batch_size - 1) // self.batch_size
+
+    def __iter__(self):
+        n = len(self.dataset)
+        starts = iter(range(0, n, self.batch_size))
+
+        def submit(executor, start):
+            idxs = range(start, min(start + self.batch_size, n))
+            return [executor.submit(self.dataset.__getitem__, i) for i in idxs]
+
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            pending = deque()
+            for start in starts:
+                pending.append(submit(executor, start))
+                if len(pending) >= self.prefetch:
+                    break
+
+            while pending:
+                futures = pending.popleft()
+                try:
+                    pending.append(submit(executor, next(starts)))
+                except StopIteration:
+                    pass
+                yield self.collate_fn([f.result() for f in futures])
 
 
 class TensorStoreImage:
@@ -276,13 +333,15 @@ class DetectionPatchLoader(PatchLoader):
 
     # --- Implementation of Abstract Inferface ---
     def __call__(self, node):
-        # Get patches
         center, shape = self.compute_patch_specs(node)
         img = self.read_image(center, shape)
         mask = self.create_mask(center, shape, node)
-        patches = self.stack(img, mask)
 
-        # Check whether to apply image augmentation
+        if self.fov_merge is not None:
+            img = img_util.resize(img, self.patch_shape)
+            mask = img_util.resize_nearest(mask, self.patch_shape)
+
+        patches = self.stack(img, mask)
         if self.transform:
             patches = self.transform(patches)
         return node, patches
@@ -290,7 +349,7 @@ class DetectionPatchLoader(PatchLoader):
     def compute_patch_specs(self, node):
         voxel = self.graph.node_voxel(node)
         voxel = self.adjust_voxel(voxel)
-        return voxel, self.patch_shape
+        return voxel, self.fov_merge or self.patch_shape
 
 
 class DetectionBatchLoader(PatchLoader):

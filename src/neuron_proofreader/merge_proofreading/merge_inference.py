@@ -25,7 +25,6 @@ from collections import defaultdict, deque
 from scipy.spatial import KDTree
 from time import time
 from torch.nn.functional import sigmoid
-from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 import numpy as np
@@ -34,6 +33,9 @@ import pandas as pd
 import torch
 
 from arborist.utils.swc_loading import to_zipped_points
+from neuron_proofreader.machine_learning.image_dataloader import (
+    ThreadedPrefetchLoader,
+)
 from neuron_proofreader.merge_proofreading.search_datasets import (
     DenseSearchDataset,
     SparseSearchDataset,
@@ -127,6 +129,8 @@ class MLMergeProofreader(MergeProofreader):
         log_handle=None,
         save_result=True,
         threshold=0.5,
+        prefetch=4,
+        max_workers=16,
     ):
         """
         Initializes an MLMergeProofreader.
@@ -152,15 +156,25 @@ class MLMergeProofreader(MergeProofreader):
         threshold : float, optional
             Confidence threshold above which a site is flagged as a merge.
             Default is 0.5.
+        prefetch : int, optional
+            Number of batches to keep in flight ahead of the GPU, so patch
+            construction for the next batch overlaps the current forward
+            pass. Default is 4.
+        max_workers : int, optional
+            Thread pool size used to build patches concurrently. Default is
+            16.
         """
         super().__init__(dataset.graph, output_dir, log_handle)
         self.dataset = dataset
         self.batch_size = batch_size
         self.device = device
+        self.prefetch = prefetch
+        self.max_workers = max_workers
         self.model = model
         self.save_result = save_result
         self.node_preds = np.zeros((len(dataset.graph.node_xyz)))
         self.patch_shape = dataset.patch_shape
+        self.patch_shape_um = np.asarray(self.patch_shape) * dataset.graph.anisotropy
         self.threshold = threshold
         self.visited_sites = list()
         self.merge_sites_xyz = list()
@@ -193,8 +207,12 @@ class MLMergeProofreader(MergeProofreader):
         # Detect merge errors with classification
         t0 = time()
         self.model.eval()
-        dataloader = DataLoader(
-            self.dataset, batch_size=self.batch_size, collate_fn=self.dataset.collate_fn
+        dataloader = ThreadedPrefetchLoader(
+            self.dataset,
+            batch_size=self.batch_size,
+            collate_fn=self.dataset.collate_fn,
+            prefetch=self.prefetch,
+            max_workers=self.max_workers,
         )
         pbar = tqdm(total=self.dataset.estimate_iterations())
         for nodes, x_nodes in dataloader:
@@ -269,7 +287,7 @@ class MLMergeProofreader(MergeProofreader):
                 if i in merge_sites_set:
                     xyz_i = self.graph.node_xyz[i]
                     iou = img_util.compute_iou3d(
-                        xyz_i, xyz_root, self.patch_shape, self.patch_shape
+                        xyz_i, xyz_root, self.patch_shape_um, self.patch_shape_um
                     )
                     if iou > 0.3 and self.graph.degree(i) == 2:
                         merge_sites_set.remove(i)
@@ -278,7 +296,7 @@ class MLMergeProofreader(MergeProofreader):
                 # Populate queue
                 for j in self.graph.neighbors(i):
                     dist_j = dist_i + self.graph.dist(i, j)
-                    if j not in visited and dist_j < self.patch_shape[0]:
+                    if j not in visited and dist_j < self.patch_shape_um[0]:
                         queue.append((j, dist_j))
                         visited.add(j)
         return filtered_merge_sites
@@ -311,9 +329,14 @@ class MLMergeProofreader(MergeProofreader):
                 path_dists = self.graph.path_distances_within(
                     root, max_dist + 4
                 )
+                root_frag = self.graph.node_component_id[root]
                 hits = [root]
                 for node in nodes:
-                    if node != root and node in path_dists:
+                    if (
+                        node != root
+                        and node in path_dists
+                        and self.graph.node_component_id[node] == root_frag
+                    ):
                         hits.append(node)
                         visited.add(node)
 

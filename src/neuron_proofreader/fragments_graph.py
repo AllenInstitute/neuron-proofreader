@@ -182,9 +182,14 @@ class FragmentsGraph(SkeletonGraph):
         rm_nodes = set()
         for root in merge_site_nodes:
             nbhd = set(self.nodes_within_distance(root, max_depth))
-            for i in list(nbhd):
-                if i != root and self.degree(i) >= 3:
-                    nbhd.update(self.nodes_within_distance(i, max_depth))
+            frontier = [i for i in nbhd if i != root and self.degree(i) >= 3]
+            while frontier:
+                i = frontier.pop()
+                new_nodes = set(self.nodes_within_distance(i, max_depth)) - nbhd
+                nbhd.update(new_nodes)
+                frontier.extend(
+                    j for j in new_nodes if j != root and self.degree(j) >= 3
+                )
             rm_nodes |= nbhd
         self.remove_nodes(rm_nodes, relabel_nodes=relabel_nodes)
 

@@ -376,21 +376,21 @@ def generate_dataset_example_ids(bucket_name, dataset_prefix):
     Tuple[str]
         Dataset example ID formatted as (brain_id, segmentation_id, block_id).
     """
-    brain_prefixes = util.list_gcs_subdirectories(bucket_name, dataset_prefix)
+    brain_prefixes = util.list_gcs_subprefixes(f"gs://{bucket_name}/{dataset_prefix}")
     for brain_prefix in brain_prefixes:
         # Extract brain id
         brain_id = brain_prefix.split("/")[-2]
 
         # Iterate over segmentations
-        pred_prefix = os.path.join(brain_prefix, "pred_swcs/")
-        prefixes = util.list_gcs_subdirectories(bucket_name, pred_prefix)
+        pred_prefix = brain_prefix + "pred_swcs/"
+        prefixes = util.list_gcs_subprefixes(f"gs://{bucket_name}/{pred_prefix}")
         for brain_segmentation_prefix in prefixes:
             # Extract segmentation id
             segmentation_id = brain_segmentation_prefix.split("/")[-2]
 
             # Iterate over blocks
-            block_prefixes = util.list_gcs_subdirectories(
-                bucket_name, brain_segmentation_prefix
+            block_prefixes = util.list_gcs_subprefixes(
+                f"gs://{bucket_name}/{brain_segmentation_prefix}"
             )
             for block_prefix in block_prefixes:
                 # Extract block id
