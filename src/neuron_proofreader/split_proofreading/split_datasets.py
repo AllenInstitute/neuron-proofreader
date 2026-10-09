@@ -77,6 +77,7 @@ class FragmentsDataset(IterableDataset):
             mask_sigma=img_config.mask_sigma,
             patch_shape=img_config.patch_shape,
             percentiles=img_config.percentiles,
+            transform=self.transform,
         )
 
     # --- Get Data ---
