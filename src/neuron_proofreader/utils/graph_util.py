@@ -13,7 +13,7 @@ from collections import defaultdict
 
 import numpy as np
 
-from arborist.data.datasets import TreeSample
+from arborist.data.datasets import build_tree_sample
 from arborist.utils.graph_utils import topological_decomposition
 
 
@@ -49,8 +49,7 @@ def subgraph_to_tree_sample(subgraph, root):
             xyz[1:] -= xyz[:-1].copy()
         curves.append(xyz)
 
-    edge_index = build_line_graph_edge_index(topo_edge_index)
-    return TreeSample(curves, edge_index)
+    return build_tree_sample(curves, topo_edge_index)
 
 
 def build_line_graph_edge_index(topo_edge_index):
