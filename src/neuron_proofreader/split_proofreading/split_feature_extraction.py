@@ -416,26 +416,7 @@ class ImageFeatureExtractor:
 
     # --- Helpers ---
     def create_segment_mask(self, proposal, shape, offset):
-        # Find edges between nearby nodes
-        center = self.graph.proposal_midpoint(proposal)
-        nodes = self.graph.kdtree.query_ball_point(center, self.padding + 10)
-        node_set = set(nodes)
-        edges = [
-            (i, j)
-            for i in nodes
-            for j in self.graph.neighbors(i)
-            if i < j and j in node_set
-        ]
-
-        # Rasterize all edges at once
-        mask = np.zeros(shape, dtype=np.float32)
-        if edges:
-            edges = np.asarray(edges, dtype=int)
-            v = self.graph.nodes_local_voxels(edges.ravel(), offset)
-            v = v.reshape(-1, 2, 3)
-            voxels = geometry_util.make_digital_lines(v[:, 0], v[:, 1])
-            img_util.annotate_voxels(mask, voxels, fill_val=0.25)
-        return mask
+        return np.zeros(shape, dtype=np.float32)
 
 
 class PatchFeatureExtractor:
@@ -572,7 +553,7 @@ class PatchFeatureExtractor:
         node : int
             Node ID used to get branch to be annotated.
         """
-        img_util.annotate_voxels(self.mask, self.voxels[node], fill_val=0.5)
+        img_util.annotate_voxels(self.mask, self.voxels[node], fill_val=1)
 
     def annotate_proposal(self):
         """

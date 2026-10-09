@@ -50,6 +50,7 @@ def run(gt_graph, pred_graph):
     """
     # Initializations
     pred_to_gt = get_pred_to_gt_mapping(gt_graph, pred_graph)
+    on_gt_ids = {frag_id for frag_id, gt_id in pred_to_gt.items() if gt_id is not None}
 
     # Main
     gt_accepts = list()
@@ -59,8 +60,12 @@ def run(gt_graph, pred_graph):
         id1 = pred_graph.node_component_id[i]
         id2 = pred_graph.node_component_id[j]
 
+        # Skip proposals where either fragment is not on any GT skeleton
+        if id1 not in on_gt_ids or id2 not in on_gt_ids:
+            continue
+
         # Check if fragments are aligned to the same GT skeletons
-        if pred_to_gt[id1] != pred_to_gt[id2] or pred_to_gt[id1] is None:
+        if pred_to_gt[id1] != pred_to_gt[id2]:
             continue
 
         # Check proposal projection distance
@@ -72,7 +77,7 @@ def run(gt_graph, pred_graph):
         gt_id = pred_to_gt[id1]
         if is_structure_consistent(gt_graph, pred_graph, gt_id, proposal):
             gt_accepts.append(proposal)
-    return gt_accepts
+    return gt_accepts, on_gt_ids
 
 
 def merge_duplicate_tracings(

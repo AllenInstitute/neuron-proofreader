@@ -154,7 +154,21 @@ class ProposalGraph(FragmentsGraph):
         if self.gt_path:
             gt_graph = FragmentsGraph(anisotropy=self.anisotropy)
             gt_graph.load(self.gt_path)
-            self.gt_accepts = groundtruth_generation.run(gt_graph, self)
+            self.gt_accepts, on_gt_ids = groundtruth_generation.run(gt_graph, self)
+            # Remove proposals where either fragment has no GT alignment —
+            # their labels are unknown and would corrupt training.
+            unlabeled = set()
+            for p in self.proposals:
+                i, j = tuple(p)
+                if (self.node_component_id[i] not in on_gt_ids
+                        or self.node_component_id[j] not in on_gt_ids):
+                    unlabeled.add(p)
+            for p in unlabeled:
+                i, j = tuple(p)
+                self.proposals.discard(p)
+                self.node_proposals[i].discard(j)
+                self.node_proposals[j].discard(i)
+            self.n_proposals_blocked += len(unlabeled)
 
     def keep_fragments(self, swc_ids):
         """

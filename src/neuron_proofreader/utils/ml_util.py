@@ -153,7 +153,7 @@ class BinaryMetricAccumulator:
 
         del pred, y, loss
 
-    def compute(self, min_recall=None):
+    def compute(self, min_recall=None, min_precision=None):
         precision = self.tp / (self.tp + self.fp + 1e-8)
         recall = self.tp / (self.tp + self.fn + 1e-8)
         f1 = 2 * precision * recall / (precision + recall + 1e-8)
@@ -169,18 +169,27 @@ class BinaryMetricAccumulator:
             "loss": self.loss / max(self.n, 1),
         }
 
-        if self.all_scores and min_recall is not None:
+        if self.all_scores and (min_recall is not None or min_precision is not None):
             scores = torch.cat(self.all_scores).numpy()
             labels = torch.cat(self.all_labels).numpy()
             if labels.min() < labels.max():
                 prec_curve, rec_curve, _ = precision_recall_curve(labels, scores)
-                mask = rec_curve >= min_recall
-                if mask.any():
-                    idx = prec_curve[mask].argmax()
-                    p, r = prec_curve[mask][idx], rec_curve[mask][idx]
-                    stats["f1_at_recall"] = float(2 * p * r / (p + r + 1e-8))
-                else:
-                    stats["f1_at_recall"] = 0.0
+                if min_recall is not None:
+                    mask = rec_curve >= min_recall
+                    if mask.any():
+                        idx = prec_curve[mask].argmax()
+                        p, r = prec_curve[mask][idx], rec_curve[mask][idx]
+                        stats["f1_at_recall"] = float(2 * p * r / (p + r + 1e-8))
+                    else:
+                        stats["f1_at_recall"] = 0.0
+                if min_precision is not None:
+                    mask = prec_curve >= min_precision
+                    if mask.any():
+                        idx = rec_curve[mask].argmax()
+                        p, r = prec_curve[mask][idx], rec_curve[mask][idx]
+                        stats["f1_at_precision"] = float(2 * p * r / (p + r + 1e-8))
+                    else:
+                        stats["f1_at_precision"] = 0.0
 
         return stats
 
