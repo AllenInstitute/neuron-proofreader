@@ -208,7 +208,6 @@ class PatchLoader(ABC):
         # Initializations
         offset = img_util.get_offset(center, shape)
         depth = np.sqrt(2) * np.max(shape) / (2 * self.graph.anisotropy.min())
-        nodes = self.get_foreground_nodes(node, depth)
         subgraph = self.graph.rooted_subgraph(node, depth)
 
         # Annotate mask

@@ -18,7 +18,7 @@ from threading import Thread
 import numpy as np
 from scipy.interpolate import splev, splprep
 
-from arborist.data.datasets import TreeSample, _build_line_graph_edge_index
+from arborist.data.datasets import build_tree_sample
 from arborist.skeleton_graph import SkeletonGraph
 from arborist.utils.graph_utils import topological_decomposition
 
@@ -296,10 +296,8 @@ class ProposalTreeFeatureExtractor:
         curves = []
         for path in paths:
             xyz = subgraph.node_xyz[path].copy()
-            if self.transform:
-                xyz = self.transform(xyz)
             xyz -= xyz[0]
-            xyz[1:] -= xyz[:-1].copy()
+            xyz[-1:0:-1] -= xyz[-2::-1]
             if len(xyz) < self.min_curve_len:
                 pad = np.zeros(
                     (self.min_curve_len - len(xyz), 3), dtype=xyz.dtype
@@ -307,15 +305,7 @@ class ProposalTreeFeatureExtractor:
                 xyz = np.concatenate([xyz, pad], axis=0)
             curves.append(xyz)
 
-        edge_index = _build_line_graph_edge_index(topo_edge_index)
-        root_curve_indices = [
-            k for k, (src, _) in enumerate(topo_edge_index) if src == 0
-        ]
-        sample = TreeSample(
-            curves=curves,
-            edge_index=edge_index,
-            root_curve_indices=root_curve_indices,
-        )
+        sample = build_tree_sample(curves, topo_edge_index)
         sample.proposal_length = float(graph.dist(*tuple(proposal)))
         return sample
 
