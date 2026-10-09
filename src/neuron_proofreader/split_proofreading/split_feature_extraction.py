@@ -261,6 +261,7 @@ class ImageFeatureExtractor:
         graph,
         img_path,
         brightness_clip=400,
+        mask_sigma=1.5,
         patch_shape=(96, 96, 96),
         padding=40,
         percentiles=(1, 99.5),
@@ -276,6 +277,9 @@ class ImageFeatureExtractor:
             Path to image of whole-brain dataset.
         brightness_clip : int, optional
             Intensity value that voxel brightnesses are clipped to.
+        mask_sigma : float, optional
+            Gaussian tube width (voxels) rendered around the skeleton in the
+            mask channel; see ImageConfig.mask_sigma. Default is 1.5.
         patch_shape : Tuple[int], optional
             Shape of image patch expected by the vision model. Default is (96,
             96, 96).
@@ -289,6 +293,7 @@ class ImageFeatureExtractor:
         img_config = ImageConfig(
             brightness_clip=brightness_clip,
             img_path=img_path,
+            mask_sigma=mask_sigma,
             patch_shape=patch_shape,
             percentiles=percentiles,
         )
@@ -410,7 +415,8 @@ class ImageFeatureExtractor:
         img, offset = self.patch_loader(proposal, read=read)
         mask = self.create_segment_mask(proposal, img.shape, offset)
         extractor = PatchFeatureExtractor(
-            self.graph, img, mask, proposal, offset, self.patch_shape
+            self.graph, img, mask, proposal, offset, self.patch_shape,
+            mask_sigma=self.patch_loader.mask_sigma,
         )
         return extractor.get_intensity_profile(), extractor.get_input_patch()
 
@@ -426,7 +432,14 @@ class PatchFeatureExtractor:
     """
 
     def __init__(
-        self, graph, img, mask, proposal, offset, patch_shape=(96, 96, 96)
+        self,
+        graph,
+        img,
+        mask,
+        proposal,
+        offset,
+        patch_shape=(96, 96, 96),
+        mask_sigma=1.5,
     ):
         """
         Instantiates a PatchFeatureExtractor object.
@@ -445,6 +458,9 @@ class PatchFeatureExtractor:
             Offset used to map global coordinates into the local mask.
         patch_shape : Tuple[int], optional
             Shape of image patch expected by model. Default is (96, 96, 96).
+        mask_sigma : float, optional
+            Gaussian tube width (voxels) rendered around the skeleton in the
+            mask channel; see ImageConfig.mask_sigma. Default is 1.5.
         """
         # Instance attributes
         self.graph = graph
@@ -453,6 +469,7 @@ class PatchFeatureExtractor:
         self.proposal = proposal
         self.offset = offset
         self.patch_shape = patch_shape
+        self.mask_sigma = mask_sigma
 
         # Annotate mask
         i, j = self.proposal
@@ -476,6 +493,7 @@ class PatchFeatureExtractor:
         """
         img = img_util.resize(self.img, self.patch_shape)
         mask = resize_segmentation(self.mask, self.patch_shape)
+        mask = img_util.soften_mask(mask, self.mask_sigma)
         patch = torch.from_numpy(np.stack([img, mask], axis=0))
         return patch.to(torch.float16).numpy()
 

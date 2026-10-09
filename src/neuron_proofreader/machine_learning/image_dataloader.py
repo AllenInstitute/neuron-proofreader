@@ -282,6 +282,7 @@ class DetectionPatchLoader(PatchLoader):
         if self.fov_merge is not None:
             img = img_util.resize(img, self.patch_shape)
             mask = img_util.resize_nearest(mask, self.patch_shape)
+        mask = img_util.soften_mask(mask, self.mask_sigma)
 
         patches = self.stack(img, mask)
         if self.transform:

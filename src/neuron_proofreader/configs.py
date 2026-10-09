@@ -99,6 +99,12 @@ class ImageConfig(Config):
     fov_merge : Tuple[int], optional
         Patch shape loaded from the image for merge detection. Resized to
         patch_shape before the model. None loads at patch_shape directly.
+    mask_sigma : float
+        Width in voxels of the Gaussian tube rendered around the skeleton in
+        the mask channel, applied after resizing to patch_shape. A one-voxel
+        skeleton is nearly erased by the first pooling layer, so the tube
+        gives the convolutions a gradient to relate the skeleton to the
+        image. 0 or None keeps the binary mask.
     percentiles : Tuple[float], optional
         Percentiles used to normalize patches.
     patch_shape : Tuple[int]
@@ -110,6 +116,7 @@ class ImageConfig(Config):
     brightness_clip: int = 400
     fov_merge: Tuple[int, int, int] = None
     img_path: str = None
+    mask_sigma: float = 1.5
     name: str = "image_config"
     percentiles: Tuple[float, float] = (1, 99.5)
     patch_shape: Tuple[int, int, int] = (128, 128, 128)

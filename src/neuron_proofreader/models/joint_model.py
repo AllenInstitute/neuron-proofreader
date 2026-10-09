@@ -44,8 +44,9 @@ class JointProofreader(nn.Module):
 
     Merge head
         merge_vision_proj: projects shared backbone features → img_embed_dim.
-        arborist: encodes the full proposal subgraph → z_graph (graph-level).
-        merge_head MLP: classifies from cat(z_img, z_tree).
+        arborist: encodes the full site subgraph → z_tree (CLS, graph-level)
+            and z_root (mean of the root-adjacent curve embeddings).
+        merge_head MLP: classifies from cat(z_img, z_tree, z_root).
 
     Split head
         split_vision_proj: projects shared backbone features → img_embed_dim.
@@ -146,10 +147,13 @@ class JointProofreader(nn.Module):
             nn.Dropout(dropout),
         )
 
-        # Merge encoder: graph-level Arborist embedding + MLP classifier.
+        # Merge encoder: Arborist CLS embedding concatenated with the pooled
+        # root-adjacent curve embeddings, then an MLP classifier. The merge
+        # site is the root, so the local geometry of the curves meeting there
+        # is read out directly rather than only through CLS attention.
         self.arborist = Arborist(latent_dim=arborist_latent_dim, **_arborist_kwargs)
         self.drop = nn.Dropout(dropout)
-        self.merge_head = FeedForwardNet(img_embed_dim + arborist_latent_dim, 1, 3)
+        self.merge_head = FeedForwardNet(img_embed_dim + 2 * arborist_latent_dim, 1, 3)
 
         # Split encoder: curve-level ProposalTreeEncoder + HGAT classifier.
         # Shares the low-level curve encoder with self.arborist; the graph
@@ -251,7 +255,11 @@ class JointProofreader(nn.Module):
     @torch._dynamo.disable
     def _encode_merge_tree(self, tree_samples, device):
         with torch.amp.autocast("cuda", enabled=False):
-            z_trees = [self.arborist.encode(s)[0] for s in tree_samples]
+            z_trees = []
+            for s in tree_samples:
+                z_tree, z_curves = self.arborist.encode(s)
+                idx = list(s.root_curve_indices or range(len(z_curves)))
+                z_trees.append(torch.cat([z_tree, z_curves[idx].mean(dim=0)]))
         return torch.stack(z_trees).to(device)
 
     def save(self, path):

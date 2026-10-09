@@ -17,6 +17,8 @@ import tensorstore as ts
 import torch
 import torch.nn.functional as F
 
+from scipy.ndimage import distance_transform_edt
+
 from neuron_proofreader.utils import util
 
 
@@ -576,6 +578,30 @@ def resize_nearest(mask, new_shape):
     x = torch.from_numpy(np.ascontiguousarray(mask, dtype=np.float32))
     out = F.interpolate(x[None, None], size=new_shape, mode="nearest-exact")
     return out[0, 0].numpy().astype(mask.dtype)
+
+
+def soften_mask(mask, sigma):
+    """
+    Replaces a binary skeleton mask with a Gaussian tube of width sigma:
+    exp(-d^2 / (2 sigma^2)) where d is the Euclidean distance (in voxels) to
+    the nearest foreground voxel. Foreground voxels keep the value 1.
+
+    Parameters
+    ----------
+    mask : numpy.ndarray
+        Binary mask (nonzero = foreground).
+    sigma : float or None
+        Tube width in voxels. 0 or None returns the mask unchanged.
+
+    Returns
+    -------
+    numpy.ndarray
+        Soft mask with the same shape and dtype as the input.
+    """
+    if not sigma or sigma <= 0 or not mask.any():
+        return mask
+    d = distance_transform_edt(mask == 0)
+    return np.exp(-0.5 * (d / sigma) ** 2).astype(mask.dtype)
 
 
 def to_physical(voxel, anisotropy, offset=(0, 0, 0)):
