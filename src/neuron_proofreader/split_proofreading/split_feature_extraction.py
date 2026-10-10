@@ -37,9 +37,11 @@ class FeaturePipeline:
         graph,
         img_path,
         brightness_clip=400,
+        mask_sigma=1.5,
         padding=50,
         patch_shape=(96, 96, 96),
         percentiles=(1, 99.5),
+        transform=None,
     ):
         """
         Instantiates a FeaturePipeline object.
@@ -52,6 +54,9 @@ class FeaturePipeline:
             Path to image of whole-brain dataset.
         brightness_clip : int, optional
             ...
+        mask_sigma : float, optional
+            Gaussian tube width (voxels) rendered around the skeleton in the
+            mask channel; see ImageConfig.mask_sigma. Default is 1.5.
         padding : int, optional
             Number of voxels to be added in each dimension from start and end
             point of proposal for image patch extraction. Default is 40.
@@ -61,15 +66,20 @@ class FeaturePipeline:
         percentiles : Tuple[float], optional
             Upper and lower percentiles used to normalize image patches.
             Default is (1, 99.5).
+        transform : callable, optional
+            Augmentation applied to each (2, *patch_shape) image/mask patch,
+            e.g. ImageTransforms. Default is None.
         """
         self.skeleton_extractor = SkeletonFeatureExtractor(graph)
         self.image_extractor = ImageFeatureExtractor(
             graph,
             img_path,
             brightness_clip=brightness_clip,
+            mask_sigma=mask_sigma,
             patch_shape=patch_shape,
             padding=padding,
             percentiles=percentiles,
+            transform=transform,
         )
 
     def __call__(self, subgraph, reads=None):
@@ -261,9 +271,11 @@ class ImageFeatureExtractor:
         graph,
         img_path,
         brightness_clip=400,
+        mask_sigma=1.5,
         patch_shape=(96, 96, 96),
         padding=40,
         percentiles=(1, 99.5),
+        transform=None,
     ):
         """
         Instantiates an ImageExtractor object.
@@ -276,6 +288,9 @@ class ImageFeatureExtractor:
             Path to image of whole-brain dataset.
         brightness_clip : int, optional
             Intensity value that voxel brightnesses are clipped to.
+        mask_sigma : float, optional
+            Gaussian tube width (voxels) rendered around the skeleton in the
+            mask channel; see ImageConfig.mask_sigma. Default is 1.5.
         patch_shape : Tuple[int], optional
             Shape of image patch expected by the vision model. Default is (96,
             96, 96).
@@ -285,10 +300,14 @@ class ImageFeatureExtractor:
         percentiles : Tuple[float], optional
             Upper and lower percentiles used to normalize image patches.
             Default is (1, 99.5).
+        transform : callable, optional
+            Augmentation applied to each (2, *patch_shape) image/mask patch.
+            Default is None.
         """
         img_config = ImageConfig(
             brightness_clip=brightness_clip,
             img_path=img_path,
+            mask_sigma=mask_sigma,
             patch_shape=patch_shape,
             percentiles=percentiles,
         )
@@ -298,6 +317,7 @@ class ImageFeatureExtractor:
         )
         self.patch_shape = patch_shape
         self.padding = padding
+        self.transform = transform
 
         # Patches are resized with torch ops from "max_workers" Python
         # threads. Each thread would otherwise spin up its own intra-op
@@ -410,32 +430,15 @@ class ImageFeatureExtractor:
         img, offset = self.patch_loader(proposal, read=read)
         mask = self.create_segment_mask(proposal, img.shape, offset)
         extractor = PatchFeatureExtractor(
-            self.graph, img, mask, proposal, offset, self.patch_shape
+            self.graph, img, mask, proposal, offset, self.patch_shape,
+            mask_sigma=self.patch_loader.mask_sigma,
+            transform=self.transform,
         )
         return extractor.get_intensity_profile(), extractor.get_input_patch()
 
     # --- Helpers ---
     def create_segment_mask(self, proposal, shape, offset):
-        # Find edges between nearby nodes
-        center = self.graph.proposal_midpoint(proposal)
-        nodes = self.graph.kdtree.query_ball_point(center, self.padding + 10)
-        node_set = set(nodes)
-        edges = [
-            (i, j)
-            for i in nodes
-            for j in self.graph.neighbors(i)
-            if i < j and j in node_set
-        ]
-
-        # Rasterize all edges at once
-        mask = np.zeros(shape, dtype=np.float32)
-        if edges:
-            edges = np.asarray(edges, dtype=int)
-            v = self.graph.nodes_local_voxels(edges.ravel(), offset)
-            v = v.reshape(-1, 2, 3)
-            voxels = geometry_util.make_digital_lines(v[:, 0], v[:, 1])
-            img_util.annotate_voxels(mask, voxels, fill_val=0.25)
-        return mask
+        return np.zeros(shape, dtype=np.float32)
 
 
 class PatchFeatureExtractor:
@@ -445,7 +448,15 @@ class PatchFeatureExtractor:
     """
 
     def __init__(
-        self, graph, img, mask, proposal, offset, patch_shape=(96, 96, 96)
+        self,
+        graph,
+        img,
+        mask,
+        proposal,
+        offset,
+        patch_shape=(96, 96, 96),
+        mask_sigma=1.5,
+        transform=None,
     ):
         """
         Instantiates a PatchFeatureExtractor object.
@@ -464,6 +475,12 @@ class PatchFeatureExtractor:
             Offset used to map global coordinates into the local mask.
         patch_shape : Tuple[int], optional
             Shape of image patch expected by model. Default is (96, 96, 96).
+        mask_sigma : float, optional
+            Gaussian tube width (voxels) rendered around the skeleton in the
+            mask channel; see ImageConfig.mask_sigma. Default is 1.5.
+        transform : callable, optional
+            Augmentation applied to the stacked (2, *patch_shape) image/mask
+            patch after resizing. Default is None.
         """
         # Instance attributes
         self.graph = graph
@@ -472,6 +489,8 @@ class PatchFeatureExtractor:
         self.proposal = proposal
         self.offset = offset
         self.patch_shape = patch_shape
+        self.mask_sigma = mask_sigma
+        self.transform = transform
 
         # Annotate mask
         i, j = self.proposal
@@ -495,8 +514,11 @@ class PatchFeatureExtractor:
         """
         img = img_util.resize(self.img, self.patch_shape)
         mask = resize_segmentation(self.mask, self.patch_shape)
-        patch = torch.from_numpy(np.stack([img, mask], axis=0))
-        return patch.to(torch.float16).numpy()
+        mask = img_util.soften_mask(mask, self.mask_sigma)
+        patch = np.stack([img, mask], axis=0)
+        if self.transform is not None:
+            patch = self.transform(patch)
+        return torch.from_numpy(patch).to(torch.float16).numpy()
 
     def get_intensity_profile(self):
         """
@@ -572,7 +594,7 @@ class PatchFeatureExtractor:
         node : int
             Node ID used to get branch to be annotated.
         """
-        img_util.annotate_voxels(self.mask, self.voxels[node], fill_val=0.5)
+        img_util.annotate_voxels(self.mask, self.voxels[node], fill_val=1)
 
     def annotate_proposal(self):
         """

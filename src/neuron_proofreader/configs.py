@@ -23,6 +23,12 @@ from neuron_proofreader.utils import util
 
 class Config(ABC):
 
+    def keys(self):
+        return asdict(self).keys()
+
+    def __getitem__(self, key):
+        return asdict(self)[key]
+
     def to_dict(self):
         """
         Converts configuration attributes to a dictionary.
@@ -89,16 +95,27 @@ class ImageConfig(Config):
     ----------
     brightness_clip : int
         Intensity value that voxel brightness is clipped to.
+    fov_merge : Tuple[int], optional
+        Patch shape loaded from the image for merge detection. Resized to
+        patch_shape before the model. None loads at patch_shape directly.
+    mask_sigma : float
+        Width in voxels of the Gaussian tube rendered around the skeleton in
+        the mask channel, applied after resizing to patch_shape. A one-voxel
+        skeleton is nearly erased by the first pooling layer, so the tube
+        gives the convolutions a gradient to relate the skeleton to the
+        image. 0 or None keeps the binary mask.
     percentiles : Tuple[float], optional
         Percentiles used to normalize patches.
     patch_shape : Tuple[int]
-        Shape of patch to be read from image.
+        Shape of patch expected by the model.
     transform : bool
         Indication of whether to use image augmentation.
     """
 
     brightness_clip: int = 400
+    fov_merge: Tuple[int, int, int] = None
     img_path: str = None
+    mask_sigma: float = 1.5
     name: str = "image_config"
     percentiles: Tuple[float, float] = (1, 99.5)
     patch_shape: Tuple[int, int, int] = (128, 128, 128)
@@ -126,6 +143,10 @@ class MergeInferenceConfig(Config):
         memory; must be set before running learned merge detection.
     min_search_size : float
         Minimum fragment cable length (in microns) to include in the search.
+    modality : str
+        Input modality expected by the merge model. Options are "image" for
+        image-only models and "image_graph" for models that also consume a
+        skeleton TreeSample per site (e.g. JointProofreader).
     model_config_path : str, optional
         Path to the merge model config JSON file.
     model_path : str, optional
@@ -144,6 +165,7 @@ class MergeInferenceConfig(Config):
 
     batch_size: int = None
     min_search_size: float = 0
+    modality: str = "image"
     model_config_path: str = None
     model_path: str = None
     name: str = "merge_inference_config"
@@ -166,6 +188,8 @@ class SplitInferenceConfig(Config):
         Increment that acceptance threshold is lowered by each round.
     min_threshold : float
         Minimum confidence threshold for accepting a proposal.
+    model_config_path : str, optional
+        Path to the split model config JSON file.
     patch_shape : Tuple[int], optional
         Patch shape for image sampling, overrides ImageConfig.patch_shape if
         set.
@@ -175,16 +199,22 @@ class SplitInferenceConfig(Config):
         split model was trained with.
     removal_threshold : float
         Proposals with model predictions below this value are removed.
+    use_tree_features : bool
+        If True, each proposal carries an Arborist TreeSample alongside its
+        image patch. Required by models whose split head encodes skeleton
+        geometry (e.g. JointProofreader).
     """
 
     batch_size: int = None
     dt: float = 0.05
     min_threshold: float = 0.8
+    model_config_path: str = None
     model_path: str = None
     name: str = "split_inference_config"
     patch_shape: Tuple[int, int, int] = None
     percentiles: Tuple[float, float] = (1, 99.9)
     removal_threshold: float = 0.3
+    use_tree_features: bool = False
 
 
 @dataclass

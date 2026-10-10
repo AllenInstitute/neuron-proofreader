@@ -27,10 +27,20 @@ class TensorStoreImage:
     Attributes
     ----------
     cache_bytes : int
-        Size of the decoded-chunk cache.
+        Size of the decoded-chunk cache shared by all images.
     """
 
     cache_bytes = 8_000_000_000
+
+    # One context for every image so the cache pool and request concurrency
+    # limits are global; ts.open otherwise gives each image its own pool.
+    context = ts.Context(
+        {
+            "cache_pool": {"total_bytes_limit": cache_bytes},
+            "data_copy_concurrency": {"limit": 8},
+            "gcs_request_concurrency": {"limit": 64},
+        }
+    )
 
     def __init__(self, img_path):
         """
@@ -52,13 +62,9 @@ class TensorStoreImage:
                     "bucket": bucket_name,
                     "path": inner_path,
                 },
-                "context": {
-                    "cache_pool": {"total_bytes_limit": self.cache_bytes},
-                    "data_copy_concurrency": {"limit": 8},
-                    "gcs_request_concurrency": {"limit": 64},
-                },
                 "recheck_cached_data": "open",
-            }
+            },
+            context=self.context,
         ).result()
 
         # Check for Google segmentation
@@ -208,7 +214,6 @@ class PatchLoader(ABC):
         # Initializations
         offset = img_util.get_offset(center, shape)
         depth = np.sqrt(2) * np.max(shape) / (2 * self.graph.anisotropy.min())
-        nodes = self.get_foreground_nodes(node, depth)
         subgraph = self.graph.rooted_subgraph(node, depth)
 
         # Annotate mask
@@ -276,13 +281,16 @@ class DetectionPatchLoader(PatchLoader):
 
     # --- Implementation of Abstract Inferface ---
     def __call__(self, node):
-        # Get patches
         center, shape = self.compute_patch_specs(node)
         img = self.read_image(center, shape)
         mask = self.create_mask(center, shape, node)
-        patches = self.stack(img, mask)
 
-        # Check whether to apply image augmentation
+        if self.fov_merge is not None:
+            img = img_util.resize(img, self.patch_shape)
+            mask = img_util.resize_nearest(mask, self.patch_shape)
+        mask = img_util.soften_mask(mask, self.mask_sigma)
+
+        patches = self.stack(img, mask)
         if self.transform:
             patches = self.transform(patches)
         return node, patches
@@ -290,7 +298,7 @@ class DetectionPatchLoader(PatchLoader):
     def compute_patch_specs(self, node):
         voxel = self.graph.node_voxel(node)
         voxel = self.adjust_voxel(voxel)
-        return voxel, self.patch_shape
+        return voxel, self.fov_merge or self.patch_shape
 
 
 class DetectionBatchLoader(PatchLoader):

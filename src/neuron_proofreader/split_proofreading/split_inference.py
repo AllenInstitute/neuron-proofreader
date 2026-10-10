@@ -30,6 +30,9 @@ import pandas as pd
 import os
 import torch
 
+from neuron_proofreader.split_proofreading.new_split_feature_extraction import (
+    ArboristSplitDataset,
+)
 from neuron_proofreader.split_proofreading.split_datasets import (
     FragmentsDataset,
 )
@@ -107,6 +110,7 @@ class LearnedSplitProofreader:
         batch_size=32,
         device="cuda",
         log_handle=None,
+        use_tree_features=False,
     ):
         """
         Initializes an object that executes the full split correction
@@ -117,7 +121,10 @@ class LearnedSplitProofreader:
         ...
         """
         # Instance attributes
-        self.dataset = FragmentsDataset(
+        DatasetClass = (
+            ArboristSplitDataset if use_tree_features else FragmentsDataset
+        )
+        self.dataset = DatasetClass(
             graph,
             img_config,
             batch_size=batch_size,

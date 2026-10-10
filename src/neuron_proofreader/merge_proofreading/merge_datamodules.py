@@ -38,9 +38,6 @@ import torch
 from neuron_proofreader.machine_learning.image_dataloader import (
     DetectionPatchLoader as PatchLoader,
 )
-from neuron_proofreader.models.point_cloud_models import (
-    subgraph_to_point_cloud,
-)
 from neuron_proofreader.fragments_graph import FragmentsGraph
 from arborist.data.augmentation import GraphTransforms
 from arborist.utils.swc_loading import Reader
@@ -602,47 +599,6 @@ class ThreadedDataLoader(DataLoader):
             }
         )
         return batch, torch.from_numpy(y).pin_memory()
-
-    def _load_image_pc_batch(self, batch_idxs):
-        """
-        Loads a batch of samples from the dataset using multithreading.
-
-        Parameters
-        ----------
-        batch_idxs : List[int]
-            Indices of the dataset items to include in the batch.
-
-        Returns
-        -------
-        batch : Dict[str, torch.Tensor]
-            Dictionary that maps modality names to batch features.
-        targets : torch.Tensor
-            Target labels corresponding to each patch.
-        """
-        with ThreadPoolExecutor() as executor:
-            # Assign threads
-            pending = dict()
-            for i, idx in enumerate(batch_idxs):
-                thread = executor.submit(self.dataset.__getitem__, idx)
-                pending[thread] = i
-
-            # Store results
-            patches = np.zeros((len(batch_idxs),) + self.shape)
-            targets = np.zeros((len(batch_idxs), 1))
-            point_clouds = np.zeros((len(batch_idxs), 3, 3600))
-            for thread in as_completed(pending.keys()):
-                i = pending.pop(thread)
-                patches[i], subgraph, targets[i] = thread.result()
-                point_clouds[i] = subgraph_to_point_cloud(subgraph)
-
-        # Set batch dictionary
-        batch = ml_util.TensorDict(
-            {
-                "img": ml_util.to_tensor(patches),
-                "point_cloud": ml_util.to_tensor(point_clouds),
-            }
-        )
-        return batch, ml_util.to_tensor(targets)
 
     def _load_image_graph_batch(self, idxs):
         """
