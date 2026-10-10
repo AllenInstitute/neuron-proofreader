@@ -27,10 +27,20 @@ class TensorStoreImage:
     Attributes
     ----------
     cache_bytes : int
-        Size of the decoded-chunk cache.
+        Size of the decoded-chunk cache shared by all images.
     """
 
     cache_bytes = 8_000_000_000
+
+    # One context for every image so the cache pool and request concurrency
+    # limits are global; ts.open otherwise gives each image its own pool.
+    context = ts.Context(
+        {
+            "cache_pool": {"total_bytes_limit": cache_bytes},
+            "data_copy_concurrency": {"limit": 8},
+            "gcs_request_concurrency": {"limit": 64},
+        }
+    )
 
     def __init__(self, img_path):
         """
@@ -52,13 +62,9 @@ class TensorStoreImage:
                     "bucket": bucket_name,
                     "path": inner_path,
                 },
-                "context": {
-                    "cache_pool": {"total_bytes_limit": self.cache_bytes},
-                    "data_copy_concurrency": {"limit": 8},
-                    "gcs_request_concurrency": {"limit": 64},
-                },
                 "recheck_cached_data": "open",
-            }
+            },
+            context=self.context,
         ).result()
 
         # Check for Google segmentation
