@@ -231,7 +231,7 @@ class BrainDataset:
         # Site is valid
         return True
 
-    def _has_nearby_branching(self, root, max_depth=100):
+    def _has_nearby_branching(self, root, max_depth=10):
         queue = [(root, 0)]
         visited = {root}
         while queue:
