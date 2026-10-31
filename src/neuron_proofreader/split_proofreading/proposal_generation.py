@@ -8,6 +8,7 @@ Code that generates edge proposals for a given graph.
 
 """
 
+from collections import defaultdict
 from scipy.spatial import KDTree
 from tqdm import tqdm
 
@@ -25,6 +26,8 @@ class ProposalGenerator:
         self,
         graph,
         allow_nonleaf_proposals=False,
+        cone_depth=64,
+        max_angle=None,
         max_attempts=2,
         max_proposals_per_leaf=3,
         min_size_with_proposals=0,
@@ -40,6 +43,13 @@ class ProposalGenerator:
         allow_nonleaf_proposals : bool, optional
             Indication of whether to generate proposals between leaf and nodes
             with degree 2. Default is False.
+        cone_depth : float, optional
+            Path length (in microns) from a leaf used to estimate its tangent
+            when "max_angle" is set. Default is 64.
+        max_angle : float, optional
+            If set, proposals are only generated from leaves whose branch is
+            straight and only to candidates within this angle (in degrees)
+            of the leaf's outward tangent. Default is None.
         max_attempts : int, optional
             Number of attempts made to generate proposals from a node with
             increasing search radii. Default is 2.
@@ -54,14 +64,20 @@ class ProposalGenerator:
         """
         # Instance attributes
         self.allow_nonleaf_proposals = allow_nonleaf_proposals
+        self.cone_depth = cone_depth
+        self.excluded = defaultdict(set)
         self.graph = graph
         self.kdtree = None
+        self.leaf_tangents = dict()
+        self.max_angle = max_angle
         self.max_attempts = max_attempts
         self.max_proposals_per_leaf = max_proposals_per_leaf
         self.min_size_with_proposals = min_size_with_proposals
         self.search_scaling_factor = search_scaling_factor
+        if max_angle is not None:
+            self.cos_max_angle = np.cos(np.deg2rad(max_angle))
 
-    def __call__(self, initial_radius):
+    def __call__(self, initial_radius, proposals=None):
         """
         Generates edge proposals between fragments within the given search
         radius.
@@ -71,9 +87,14 @@ class ProposalGenerator:
         initial_radius : float
             Initial search radius used to generate proposals between endpoints
             of proposal.
+        proposals : Iterable[Frozenset[int]], optional
+            Existing proposals to keep. Each component pair retains a single
+            (shortest) proposal, so these are seeded before searching.
+            Default is None.
         """
         # Initializations
         self.set_kdtree()
+        self.set_excluded()
         iterator = self.graph.leaf_nodes()
         if self.graph.verbose:
             iterator = tqdm(iterator, desc="Proposal Generation")
@@ -84,10 +105,19 @@ class ProposalGenerator:
 
         # Main
         connections = dict()
-        proposals = set()
+        proposals = set(proposals or ())
+        for proposal in proposals:
+            connections[self.component_pair(*proposal)] = proposal
         for leaf in iterator:
             # Check if fragment satisfies size requirement
             if node_cable_length[leaf] < self.min_size_with_proposals:
+                continue
+            n_open = self.max_proposals_per_leaf - len(
+                self.graph.node_proposals[leaf]
+            )
+            if n_open <= 0:
+                continue
+            if self.max_angle is not None and not self.is_straight(leaf):
                 continue
 
             # Generate proposals
@@ -95,19 +125,17 @@ class ProposalGenerator:
             node_candidates = list()
             while len(node_candidates) == 0 and cnt < self.max_attempts:
                 # Search for candidates
-                cnt += 1
                 radius = initial_radius * self.search_scaling_factor**cnt
-                node_candidates = self.find_node_candidates(leaf, radius)
+                cnt += 1
+                node_candidates = self.find_node_candidates(
+                    leaf, radius, n_open
+                )
 
                 # Parse candidates
                 for i in node_candidates:
                     # Candidate info
                     pair_id = frozenset({int(leaf), int(i)})
-                    leaf_component_id = self.graph.node_component_id[leaf]
-                    node_component_id = self.graph.node_component_id[i]
-                    pair_component_id = frozenset(
-                        (leaf_component_id, node_component_id)
-                    )
+                    pair_component_id = self.component_pair(leaf, i)
 
                     # Determine whether to keep
                     if pair_component_id in connections:
@@ -124,7 +152,7 @@ class ProposalGenerator:
                     connections[pair_component_id] = pair_id
         return proposals
 
-    def find_node_candidates(self, leaf, radius):
+    def find_node_candidates(self, leaf, radius, max_candidates=None):
         """
         Finds valid node proposal candidates for a given leaf within a search
         radius.
@@ -135,6 +163,9 @@ class ProposalGenerator:
             Leaf node to generate proposals from.
         radius : float
             Search radius used to generate proposals.
+        max_candidates : int, optional
+            Maximum number of candidates to return. Default is
+            "max_proposals_per_leaf".
 
         Returns
         -------
@@ -142,13 +173,13 @@ class ProposalGenerator:
             Node IDs that are valid proposal candidates for the given leaf.
         """
         node_candidates = list()
-        for node in self.get_nearby_nodes(leaf, radius):
+        for node in self.get_nearby_nodes(leaf, radius, max_candidates):
             node = self.adjust_position(leaf, node, radius)
-            if self.is_valid_proposal(leaf, node):
+            if self.is_valid_proposal(leaf, node) and self.is_aligned(leaf, node):
                 node_candidates.append(node)
         return node_candidates
 
-    def get_nearby_nodes(self, leaf, radius):
+    def get_nearby_nodes(self, leaf, radius, max_components=None):
         """
         Gets nearby spatial points for a leaf node within a given radius.
 
@@ -158,6 +189,9 @@ class ProposalGenerator:
             Leaf node to generate proposals from.
         radius : float
             Search radius used to generate proposals.
+        max_components : int, optional
+            Maximum number of components to return a node from. Default is
+            "max_proposals_per_leaf".
 
         Returns
         -------
@@ -168,18 +202,91 @@ class ProposalGenerator:
         pts_dict = dict()
         for node in self.query_nbhd(leaf, radius):
             component_id = self.graph.node_component_id[node]
-            if component_id != self.graph.node_component_id[leaf]:
+            if component_id == self.graph.node_component_id[leaf]:
+                continue
+            if component_id in self.excluded[leaf]:
+                continue
+            if self.in_cone(leaf, node):
                 dist = self.graph.dist(leaf, node)
+                if dist > radius:
+                    continue
                 if component_id not in pts_dict:
                     pts_dict[component_id] = {"dist": dist, "node": node}
                 elif dist < pts_dict[component_id]["dist"]:
                     pts_dict[component_id] = {"dist": dist, "node": node}
 
         # Choose best proposals wrt proposal limit
-        pts_dict = self.select_closest_components(pts_dict)
+        pts_dict = self.select_closest_components(pts_dict, max_components)
         return [val["node"] for val in pts_dict.values()]
 
+    # --- Tangent Cone ---
+    def outward_tangent(self, leaf):
+        """
+        Unit vector pointing from a leaf away from its fragment, cached per
+        leaf for the duration of one call.
+        """
+        if leaf not in self.leaf_tangents:
+            tangent = self.graph.tangent_from_leaf(
+                leaf, max_depth=self.cone_depth
+            )
+            self.leaf_tangents[leaf] = -tangent
+        return self.leaf_tangents[leaf]
+
+    def is_straight(self, leaf):
+        """
+        Checks that the branch ending at a leaf has near-zero curvature, i.e.
+        its tangent over a short depth agrees with its tangent over
+        "cone_depth" to within "max_angle".
+        """
+        short = self.graph.tangent_from_leaf(
+            leaf, max_depth=self.cone_depth / 4
+        )
+        return np.dot(short, -self.outward_tangent(leaf)) >= self.cos_max_angle
+
+    def in_cone(self, leaf, node):
+        """
+        Checks whether a node lies within "max_angle" of the outward tangent
+        at a leaf. Always True when no angle is set.
+        """
+        if self.max_angle is None:
+            return True
+        direction = self.graph.node_xyz[node] - self.graph.node_xyz[leaf]
+        norm = np.linalg.norm(direction)
+        if norm == 0:
+            return False
+        cos = np.dot(self.outward_tangent(leaf), direction / norm)
+        return cos >= self.cos_max_angle
+
+    def is_aligned(self, leaf, node):
+        """
+        Checks the tangent cone constraint on a final candidate. When the
+        candidate is itself a leaf, it must be straight and point back at
+        "leaf" so that both fragments are collinear across the gap.
+        """
+        if self.max_angle is None:
+            return True
+        if not self.in_cone(leaf, node):
+            return False
+        if self.graph.degree(node) == 1:
+            return self.is_straight(node) and self.in_cone(node, leaf)
+        return True
+
     # --- Helpers ---
+    def component_pair(self, i, j):
+        return frozenset(
+            (self.graph.node_component_id[i], self.graph.node_component_id[j])
+        )
+
+    def set_excluded(self):
+        """
+        Maps each node of a previously rejected proposal to the current
+        component of its partner, so the pair is not proposed again.
+        """
+        self.excluded = defaultdict(set)
+        for i, j in getattr(self.graph, "rejected", ()):
+            self.excluded[i].add(self.graph.node_component_id[j])
+            self.excluded[j].add(self.graph.node_component_id[i])
+
     def adjust_position(self, leaf, node, radius):
         """
         Adjusts a candidate node by searching for a nearby leaf, or falling
@@ -290,6 +397,11 @@ class ProposalGenerator:
             Node IDs within the specified radius.
         """
         xyz = self.graph.node_xyz[node]
+        if self.max_angle is not None:
+            # Smallest ball enclosing the truncated cone, centered halfway
+            # along its axis; far smaller than the full ball for small angles
+            xyz = xyz + 0.5 * radius * self.outward_tangent(node)
+            radius = radius * np.sqrt(1.25 - self.cos_max_angle)
         if self.allow_nonleaf_proposals:
             return self.kdtree.query_ball_point(xyz, radius)
         else:
@@ -299,9 +411,9 @@ class ProposalGenerator:
                 nodes.append(node)
             return nodes
 
-    def select_closest_components(self, pts_dict):
+    def select_closest_components(self, pts_dict, max_components=None):
         """
-        Retains only the closest components up to "max_proposals_per_leaf".
+        Retains only the closest components up to "max_components".
 
         Parameters
         ----------
@@ -309,14 +421,18 @@ class ProposalGenerator:
             Dictionary that maps component IDs to a dictionary containing a
             node ID and its distance from the leaf from which proposals are
             generated.
+        max_components : int, optional
+            Number of components to keep. Default is "max_proposals_per_leaf".
 
         Returns
         -------
         pts_dict : Dict[int, dict]
-            Filtered dictionary containing up to "self.max_proposals_per_leaf"
+            Filtered dictionary containing up to "max_components"
             components, corresponding to the smallest distances.
         """
-        while len(pts_dict) > self.max_proposals_per_leaf:
+        if max_components is None:
+            max_components = self.max_proposals_per_leaf
+        while len(pts_dict) > max_components:
             farthest_key = None
             for key, val in pts_dict.items():
                 if farthest_key is None:

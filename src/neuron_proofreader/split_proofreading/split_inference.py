@@ -176,24 +176,82 @@ class LearnedSplitProofreader:
             Proposals with model predictions less than this value are removed.
             Default is 0.3.
         """
-        # Generate proposals
-        self.generate_proposals(proposals_config)
-        total_proposals = self.dataset.n_proposals()
+        # Length features are normalized by this radius, which must not
+        # change between stages.
+        self.dataset.graph.search_radius = proposals_config.max_search_radius
 
-        # Run inference. Scores are kept across rounds; a proposal is only
-        # re-scored once an accepted merge lands within reach of its features
-        # (image patch or tree subgraph), since nothing else changes them.
-        cnt = 0
+        # Staged search: proposals are generated at increasing radii and the
+        # splits found at each radius are corrected before searching farther,
+        # so a leaf resolved by a short proposal never spawns long ones.
+        # Scores of unresolved proposals carry over between stages.
         t0 = time()
         preds = dict()
-        stale = set(self.dataset.list_proposals())
+        total_proposals = 0
+        for radius, max_angle in proposals_config.search_schedule():
+            old_to_new = self.generate_proposals(
+                proposals_config, radius, max_angle=max_angle
+            )
+            preds = self.remap_preds(preds, old_to_new)
+            n_new = len(set(self.dataset.list_proposals()) - preds.keys())
+            total_proposals += n_new
+            self.log(f"# New Proposals: {format(n_new, ',')}\n")
+            preds = self.correct_splits(
+                preds,
+                dt,
+                min_threshold,
+                removal_threshold,
+                suffix=f"_radius={radius:g}",
+            )
+
+        # Report results
+        t, unit = util.time_writer(time() - t0)
+        p_accepts = 100 * len(self.dataset.accepts) / max(total_proposals, 1)
+        self.log(f"Overall Accepted: {p_accepts:.2f}%")
+        self.log(f"Total Runtime: {t:.2f} {unit}\n")
+        self.save_connections()
+
+        # Drop unresolved proposals: nothing downstream uses them, and every
+        # later relabel_nodes (e.g. after merge removal) would re-add them.
+        self.dataset.reset_proposals()
+
+    def correct_splits(
+        self, preds, dt, min_threshold, removal_threshold, suffix=""
+    ):
+        """
+        Scores and merges the graph's current proposals with a decreasing
+        threshold schedule, first leaf-to-leaf proposals only, then all.
+
+        Parameters
+        ----------
+        preds : Dict[Frozenset[int], float]
+            Scores of proposals already scored in an earlier stage.
+        dt : float
+            Increment that acceptance threshold is lowered by.
+        min_threshold : float
+            Minimum threshold for accepting proposals.
+        removal_threshold : float
+            Proposals with model predictions less than this are removed.
+        suffix : str, optional
+            Suffix for saved prediction files. Default is "".
+
+        Returns
+        -------
+        preds : Dict[Frozenset[int], float]
+            Scores of the proposals left unresolved.
+        """
+        # Scores are kept across rounds; a proposal is only re-scored once an
+        # accepted merge lands within reach of its features (image patch or
+        # tree subgraph), since nothing else changes them.
+        cnt = 0
+        stale = set(self.dataset.list_proposals()) - preds.keys()
         reach = self.feature_reach()
         for only_leaf2leaf in [True, False]:
             # Reset threshold
             name = "_leaf2leaf" if only_leaf2leaf else ""
             new_threshold = 0.99
+            pass_min_threshold = min_threshold
             if not only_leaf2leaf:
-                min_threshold += dt
+                pass_min_threshold += dt
 
             # Generate predictions
             while self.dataset.proposals:
@@ -207,7 +265,8 @@ class LearnedSplitProofreader:
                     f"# Proposals Scored: {len(stale)} of {self.dataset.n_proposals()}"
                 )
                 self.save_model_predictions(
-                    preds, suffix=f"{name}_round={cnt}_threshold={new_threshold}"
+                    preds,
+                    suffix=f"{suffix}{name}_round={cnt}_threshold={new_threshold}",
                 )
 
                 # Merge accepted proposals
@@ -228,38 +287,40 @@ class LearnedSplitProofreader:
                 stale |= self.proposals_within(accepted, remaining, reach)
 
                 # Update acceptance threshold
-                if cur_threshold <= min_threshold:
+                if cur_threshold <= pass_min_threshold:
                     break
-                new_threshold = max(cur_threshold - dt, min_threshold)
-
-        # Report results
-        t, unit = util.time_writer(time() - t0)
-        p_accepts = 100 * len(self.dataset.accepts) / total_proposals
-        self.log(f"Overall Accepted: {p_accepts:.2f}%")
-        self.log(f"Total Runtime: {t:.2f} {unit}\n")
-        self.save_connections()
-
-        # Drop unresolved proposals: nothing downstream uses them, and every
-        # later relabel_nodes (e.g. after merge removal) would re-add them.
-        self.dataset.reset_proposals()
+                new_threshold = max(cur_threshold - dt, pass_min_threshold)
+        return preds
 
     # --- Core Routines ---
-    def generate_proposals(self, proposals_config):
+    def generate_proposals(self, proposals_config, radius, max_angle=None):
         """
-        Generates proposals for the fragments graph based on the specified
-        configuration.
+        Generates proposals for the fragments graph at the given radius,
+        keeping existing proposals and skipping rejected pairs.
 
         Parameters
         ----------
         proposals_config : ProposalsConfig
             Config object with settings for proposal generation.
+        radius : float
+            Search radius (in microns).
+        max_angle : float, optional
+            Tangent cone angle (in degrees) for long-range search. Default is
+            None.
+
+        Returns
+        -------
+        old_to_new : dict or None
+            Node ID remapping if trimming relabeled nodes, otherwise None.
         """
         # Main
         t0 = time()
-        self.log("Generate Proposals...")
-        self.dataset.generate_proposals(
-            proposals_config.search_radius,
+        self.log(f"\nGenerate Proposals (radius={radius:g})...")
+        old_to_new = self.dataset.generate_proposals(
+            radius,
             allow_nonleaf_proposals=proposals_config.allow_nonleaf_proposals,
+            max_angle=max_angle,
+            max_attempts=1,
             max_proposals_per_leaf=proposals_config.max_proposals_per_leaf,
             min_size_with_proposals=proposals_config.min_size_with_proposals,
         )
@@ -269,10 +330,29 @@ class LearnedSplitProofreader:
         n_proposals_blocked = self.dataset.n_proposals_blocked
         t, unit = util.time_writer(time() - t0)
 
-        self.log(f"Search Radius: {proposals_config.search_radius}")
+        self.log(f"Search Radius: {radius:g}")
+        if max_angle is not None:
+            self.log(f"Tangent Cone Angle: {max_angle:g}")
         self.log(f"# Proposals: {n_proposals}")
         self.log(f"# Proposals Blocked: {n_proposals_blocked}")
-        self.log(f"Module Runtime: {t:.2f} {unit}\n")
+        self.log(f"Module Runtime: {t:.2f} {unit}")
+        return old_to_new
+
+    @staticmethod
+    def remap_preds(preds, old_to_new):
+        """
+        Applies a node ID remapping to scored proposals, dropping any whose
+        endpoint was removed.
+        """
+        if old_to_new is None:
+            return preds
+        remapped = dict()
+        for proposal, pred in preds.items():
+            i, j = proposal
+            if i in old_to_new and j in old_to_new:
+                key = frozenset({int(old_to_new[i]), int(old_to_new[j])})
+                remapped[key] = pred
+        return remapped
 
     def merge_with_threshold_schedule(
         self, preds, min_threshold, dt=0.05, only_leaf2leaf=False
@@ -422,12 +502,18 @@ class LearnedSplitProofreader:
             is_valid = self.dataset.is_mergeable(*proposal)
             if pred < threshold or not is_valid:
                 self.dataset.remove_proposal(proposal)
+                self.dataset.rejected.add(proposal)
                 cnt += 1
 
-        # Sanity check
+        # Sanity check. Proposals within one component can never merge, so
+        # drop them rather than re-score them.
         for proposal in self.dataset.list_proposals():
             i, j = proposal
-            if self.dataset.degree(i) > 2 or self.dataset.degree(j) > 2:
+            same_component = (
+                self.dataset.node_component_id[i]
+                == self.dataset.node_component_id[j]
+            )
+            if same_component or self.dataset.degree(i) > 2 or self.dataset.degree(j) > 2:
                 self.dataset.remove_proposal(proposal)
                 cnt += 1
 

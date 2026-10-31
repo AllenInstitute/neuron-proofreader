@@ -82,6 +82,8 @@ class ProposalGraph(FragmentsGraph):
         self.merged_ids = set()
         self.n_merges_blocked = 0
         self.n_proposals_blocked = 0
+        self.rejected = set()
+        self.search_radius = None
         self.reset_proposals()
 
     # --- Update Structure ---
@@ -91,6 +93,7 @@ class ProposalGraph(FragmentsGraph):
         """
         # Call parent class
         old_proposals = self.list_proposals()
+        old_rejected = list(self.rejected)
         old_to_new = super().relabel_nodes()
 
         # Update proposals, dropping any whose endpoint was removed
@@ -98,6 +101,12 @@ class ProposalGraph(FragmentsGraph):
         for i, j in old_proposals:
             if i in old_to_new and j in old_to_new:
                 self.add_proposal(int(old_to_new[i]), int(old_to_new[j]))
+        self.rejected = {
+            frozenset({int(old_to_new[i]), int(old_to_new[j])})
+            for i, j in old_rejected
+            if i in old_to_new and j in old_to_new
+        }
+        return old_to_new
 
     # --- Proposal Operations ---
     def add_proposal(self, i, j):
@@ -121,11 +130,15 @@ class ProposalGraph(FragmentsGraph):
         self,
         search_radius,
         allow_nonleaf_proposals=False,
+        max_angle=None,
+        max_attempts=2,
         max_proposals_per_leaf=3,
         min_size_with_proposals=0,
     ):
         """
-        Generates proposals from leaf nodes.
+        Generates proposals from leaf nodes. Existing proposals are kept and
+        previously rejected pairs are not regenerated, so this can be called
+        repeatedly with increasing radii.
 
         Parameters
         ----------
@@ -134,25 +147,41 @@ class ProposalGraph(FragmentsGraph):
         allow_nonleaf_proposals : bool, optional
             Indication of whether to generate proposals between leaf and nodes
             with degree 2. Default is False.
+        max_angle : float, optional
+            If set, restricts proposals to a tangent cone of this angle (in
+            degrees) at straight leaves. Default is None.
+        max_attempts : int, optional
+            Number of searches with increasing radii made per leaf. Default
+            is 2.
         min_size_with_proposals : float
             Minimum cable length (in microns) of connected components that
             proposals are generated from. Default is 0.
+
+        Returns
+        -------
+        old_to_new : dict or None
+            Node ID remapping if trimming relabeled nodes, otherwise None.
         """
         # Proposal generation
         if self.num_nodes() == 0:
-            return
+            return None
         assert len(self.kdtree.data) == self.num_nodes()
         proposal_generator = ProposalGenerator(
             self,
             allow_nonleaf_proposals=allow_nonleaf_proposals,
+            max_angle=max_angle,
+            max_attempts=max_attempts,
             max_proposals_per_leaf=max_proposals_per_leaf,
             min_size_with_proposals=min_size_with_proposals,
         )
-        proposals = proposal_generator(search_radius)
+        proposals = proposal_generator(search_radius, proposals=self.proposals)
+        new_proposals = proposals - self.proposals
 
-        self.search_radius = search_radius
+        # Feature normalization uses the first radius seen
+        if self.search_radius is None:
+            self.search_radius = search_radius
         self.store_proposals(proposals)
-        self.trim_proposals()
+        old_to_new = self.trim_proposals(new_proposals)
 
         # Set groundtruth (if applicable)
         if self.gt_path:
@@ -173,6 +202,7 @@ class ProposalGraph(FragmentsGraph):
                 self.node_proposals[i].discard(j)
                 self.node_proposals[j].discard(i)
             self.n_proposals_blocked += len(unlabeled)
+        return old_to_new
 
     def keep_fragments(self, swc_ids):
         """
@@ -331,18 +361,32 @@ class ProposalGraph(FragmentsGraph):
         return [proposals[i] for i in np.argsort(lengths)]
 
     def store_proposals(self, proposals):
-        self.node_proposals = defaultdict(set)
+        self.reset_proposals()
         for proposal in proposals:
             i, j = proposal
             self.add_proposal(i, j)
 
-    def trim_proposals(self):
-        for proposal in self.list_proposals():
+    def trim_proposals(self, proposals=None):
+        """
+        Trims the endpoints of isolated leaf-to-leaf proposals.
+
+        Parameters
+        ----------
+        proposals : Iterable[Frozenset[int]], optional
+            Proposals to consider. Default is all proposals.
+        """
+        if proposals is None:
+            proposals = self.list_proposals()
+        for proposal in list(proposals):
             is_leaf2leaf = self.is_leaf2leaf(proposal)
             is_single = self.is_single_proposal(proposal)
             if is_leaf2leaf and is_single:
                 trim_proposal_endpoints(self, proposal)
-        self.relabel_nodes()
+
+        # Relabeling rebuilds the whole graph, only needed if nodes were cut
+        if self.num_nodes() < len(self.node_xyz):
+            return self.relabel_nodes()
+        return None
 
     # --- Proposal Feature Generation ---
     def proposal_directionals(self, proposal, depth):

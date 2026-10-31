@@ -252,17 +252,52 @@ class ProposalsConfig(Config):
     allow_nonleaf_proposals : bool
         Indication of whether to generate proposals between leaf and nodes
         with degree 2.
-    proposals_per_leaf : int
+    delta_search_radius : float
+        Step (in microns) between successive short-range search radii.
+    long_range_angle : float
+        Half-angle (in degrees) of the tangent cone used by the long-range
+        search stage.
+    long_range_multiplier : float
+        Long-range search radius as a multiple of "max_search_radius". Values
+        of 1 or less disable the long-range stage.
+    max_proposals_per_leaf : int
         Maximum number of proposals generated at leaf nodes.
+    max_search_radius : float
+        Largest short-range search radius (in microns). Also normalizes
+        length features.
+    min_search_radius : float
+        First short-range search radius (in microns).
     trim_endpoints_bool : bool
         Indication of whether trim endpoints of isolated leaf-to-leaf
         proposals.
     """
 
     allow_nonleaf_proposals: bool = False
+    delta_search_radius: float = 10
+    long_range_angle: float = 20
+    long_range_multiplier: float = 0
     max_proposals_per_leaf: int = 3
+    max_search_radius: float = 30
+    min_search_radius: float = 10
     min_size_with_proposals: float = 0
     name: str = "proposals_config"
     trim_endpoints_bool: bool = True
-    search_radius: float = 25
-    search_scaling_factor: float = 1.5
+
+    def search_schedule(self):
+        """
+        Returns the staged search as (radius, max_angle) pairs: short-range
+        radii from min to max in steps of delta with no angular restriction,
+        then one long-range radius restricted to the tangent cone.
+        """
+        radii = list()
+        radius = self.min_search_radius
+        while radius < self.max_search_radius and self.delta_search_radius > 0:
+            radii.append(float(radius))
+            radius += self.delta_search_radius
+        radii.append(float(self.max_search_radius))
+
+        schedule = [(radius, None) for radius in radii]
+        if self.long_range_multiplier > 1:
+            long_range_radius = self.long_range_multiplier * self.max_search_radius
+            schedule.append((float(long_range_radius), self.long_range_angle))
+        return schedule
