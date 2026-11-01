@@ -1,55 +1,90 @@
 # Neuron Proofreader
 
 [![License](https://img.shields.io/badge/license-MIT-brightgreen)](LICENSE)
-![Code Style](https://img.shields.io/badge/code%20style-black-black)
-[![semantic-release: angular](https://img.shields.io/badge/semantic--release-angular-e10079?logo=semantic-release)](https://github.com/semantic-release/semantic-release)
-![Interrogate](https://img.shields.io/badge/interrogate-79.3%25-yellow)
-![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen?logo=codecov)
 ![Python](https://img.shields.io/badge/python->=3.7-blue?logo=python)
 
+**Neuron Proofreader** automatically corrects errors in large-scale neuron reconstructions. Given a set of neuron fragments as SWC files and the image they were traced from, it fixes two kinds of mistakes:
 
-<b> NeuronProofreader</b> is a Python library for automated proofreading of neuron reconstructions. It corrects both <b>split</b>  (over-fragmented neurons) and <b>merge</b>  (erroneously joined neurons) errors in large-scale connectomics datasets. The library processes neuron fragments in SWC format using a multimodal pipeline that identifies and corrects topological errors in whole-brain reconstructions.
+- **Splits** — one neuron broken into several fragments, which are reconnected.
+- **Merges** — two neurons joined into one fragment, which are cut apart.
 
-<p>
-  <img src="imgs/result.png" width="900" alt="">
-  <br>
-   <b> Figure: </b>NeuronProofreader reconnects fragmented neuron segments into coherent traces.
-</p>
-
-## Split Proofreading
-
-The split correction proofreading pipeline consists of three main steps:
-
-<blockquote>
-  <p>a. <strong>Graph Construction</strong>: Reads neuron fragments stored as SWC files and loads them into a Networkx graph.</p>
-  <p>b. <strong>Proposal Generation</strong>: Generates potential connections between nearby fragments.</p>
-  <p>c. <strong>GNN-Based Inference</strong>: Predicts whether to accept or reject proposals based on the geometric and image-based features.</p>
-</blockquote>
-<br>
+Both tasks are handled by a single model that combines a 3D CNN on image patches with an [Arborist](https://github.com/AllenInstitute/arborist) encoder on the local skeleton geometry.
 
 <p align="center">
-  <img src="imgs/pipeline.png" width="800" alt="pipeline">
-    <br>
-  <b> Figure: </b>Visualization of split correction pipeline.
+  <img src="imgs/result.png" width="900" alt="Fragments before and after proofreading">
+  <br>
+  <b>Figure:</b> fragmented neuron segments reconnected into coherent traces.
 </p>
 
+## How it works
 
-## Merge Proofreading
+Fragments are loaded into a graph, then proofread in five steps:
 
-In progress...
+1. **Learned merge detection** — a CNN scores sites along every fragment and splits the fragment at predicted merge errors.
+2. **Soma-based merge detection** — fragments that touch more than one soma are split between them.
+3. **Soma split correction** — fragments ending within a short distance of a soma are connected to it.
+4. **Learned split correction** — proposals (candidate connections between nearby fragment endpoints) are generated at increasing search radii and scored by a graph neural network; accepted proposals become edges. A final long-range pass searches a narrow cone along each straight fragment's tangent.
+5. **Final merge detection** — the corrected graph is rescored for merges, for QC only.
+
+<p align="center">
+  <img src="imgs/pipeline.png" width="800" alt="Split correction pipeline">
+  <br>
+  <b>Figure:</b> split correction pipeline.
+</p>
 
 ## Installation
-To use the software, in the root directory, run
+
 ```bash
-pip install -e .
+git clone https://github.com/AllenInstitute/arborist.git
+pip install -e arborist
+
+git clone https://github.com/AllenInstitute/neuron-proofreader.git
+pip install -e neuron-proofreader
 ```
+
+A CUDA GPU is strongly recommended for inference.
 
 ## Usage
 
-To do...
+```python
+from neuron_proofreader import configs
+from neuron_proofreader.models.joint_model import JointProofreader
+from neuron_proofreader.proofreading_pipeline import ProofreadPipeline
 
-## Contact Information
-For any inquiries, feedback, or contributions, please do not hesitate to contact us. You can reach us via email at anna.grim@alleninstitute.org or connect on [LinkedIn](https://www.linkedin.com/in/anna-m-grim/).
+model = JointProofreader.load("model.pth", map_location="cuda").to("cuda").eval()
+
+graph_config = configs.GraphConfig(anisotropy=(0.748, 0.748, 1.0), node_spacing=5)
+img_config = configs.ImageConfig(img_path="s3://bucket/brain/image.zarr", patch_shape=(96, 96, 96))
+merge_config = configs.MergeInferenceConfig(modality="image_graph", patch_shape=(96, 96, 96), batch_size=32)
+split_config = configs.SplitInferenceConfig(patch_shape=(96, 96, 96), batch_size=32)
+proposals_config = configs.ProposalsConfig(min_search_radius=10, max_search_radius=30, delta_search_radius=10)
+
+pipeline = ProofreadPipeline("fragments/", graph_config, img_config, "results/", soma_centroids=somas)
+pipeline.learned_merge_detection(model.as_merge_model(), merge_config)
+pipeline.merge_proofreading("connected_somas")
+pipeline.soma_split_proofreading()
+pipeline.learned_split_detection(model.as_split_model(), proposals_config, split_config)
+pipeline.save_final_result()
+```
+
+Each step writes its corrected SWCs and a log to a subdirectory of `results/`.
+
+## Repository layout
+
+| Package | Contents |
+|---|---|
+| `proofreading_pipeline.py` | `ProofreadPipeline`, the end-to-end driver |
+| `proposal_graph.py`, `fragments_graph.py` | Graph of fragments and the proposals between them |
+| `split_proofreading/` | Proposal generation, feature extraction and GNN inference for splits |
+| `merge_proofreading/` | Site search, inference and training data for merges |
+| `models/` | `JointProofreader` and its vision / skeleton components |
+| `machine_learning/` | Image loading, augmentation, subgraph sampling, training loop |
+| `configs.py` | Dataclasses for every tunable parameter |
+
+## Contact
+
+Anna Grim — anna.grim@alleninstitute.org
 
 ## License
-NeuronProofer is licensed under the MIT License.
+
+MIT. See [LICENSE](LICENSE).
