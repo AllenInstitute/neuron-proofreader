@@ -139,8 +139,8 @@ class FragmentsGraph(SkeletonGraph):
                     node = nodes[idxs[np.argmin(dists)]]
                     if self.node_component_id[node] != soma_component_id:
                         self.merged_ids.add((self.node_swc_id(soma_node), self.node_swc_id(node)))
-                        self.add_edge(node, soma_node, None)
                         self.update_component_ids(soma_component_id, node)
+                        self.add_edge(node, soma_node, None)
                         merge_cnt += 1
                         somas_connected.append(soma_component_id)
 
@@ -158,7 +158,7 @@ class FragmentsGraph(SkeletonGraph):
         return soma_nodes
 
     def remove_merge_sites(
-        self, merge_site_nodes, max_depth=12, relabel_nodes=True
+        self, merge_site_nodes, max_depth=15, relabel_nodes=True
     ):
         """
         Removes detected merge sites and their local neighborhoods from the
@@ -170,7 +170,7 @@ class FragmentsGraph(SkeletonGraph):
             Node IDs identified as merge sites.
         max_depth : float, optional
             Radius (in microns) around each merge site to remove. Default
-            is 8.
+            is 15.
         relabel_nodes : bool, optional
             Whether to relabel nodes after removal. Pass False when another
             removal step follows immediately, so the graph is relabeled once.
