@@ -432,7 +432,7 @@ class LearnedSplitProofreader:
         bounded by the longest proposal plus the larger of the two.
         """
         dataset = self.dataset
-        padding = dataset.feature_extractor.image_extractor.patch_loader.padding
+        padding = dataset.patch_extractor.patch_loader.padding
         padding *= np.max(dataset.anisotropy)
         depth = getattr(dataset, "tree_extractor", None)
         depth = depth.max_depth if depth else 0
