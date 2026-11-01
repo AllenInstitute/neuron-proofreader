@@ -15,7 +15,7 @@ from neuron_proofreader.models.vision_models import CNN3D, ViT3D
 from neuron_proofreader.utils.ml_util import FeedForwardNet
 
 
-class ArboristVisionMergeDetector(nn.Module):
+class ArboristMergeDetector(nn.Module):
     """
     Multimodal merge detector combining a 3D vision backbone with the Arborist
     morphology encoder.
@@ -29,13 +29,11 @@ class ArboristVisionMergeDetector(nn.Module):
         arborist_kwargs=None,
         vision_backbone="CNN3D",
         vision_latent_dim=128,
-        freeze_curve_encoder=False,
-        pretrained_curve_encoder_path=None,
         dropout=0.2,
         **vision_backbone_kwargs,
     ):
         """
-        Instantiates an ArboristVisionMergeDetector object.
+        Instantiates an ArboristMergeDetector object.
 
         Parameters
         ----------
@@ -53,12 +51,6 @@ class ArboristVisionMergeDetector(nn.Module):
         arborist_kwargs : dict or None, optional
             Extra keyword arguments forwarded to Arborist.__init__. Uses
             Arborist defaults when not specified.
-        freeze_curve_encoder : bool, optional
-            If True, freeze the curve encoder after loading pretrained weights.
-            Default is False.
-        pretrained_curve_encoder_path : str or None, optional
-            Path to a curve autoencoder checkpoint. If given, the encoder
-            weights are extracted and loaded into Arborist.curve_encoder.
         **vision_backbone_kwargs
             Extra keyword arguments forwarded to the image backbone constructor.
         """
@@ -67,7 +59,7 @@ class ArboristVisionMergeDetector(nn.Module):
         _arborist_kwargs = arborist_kwargs or {}
 
         self.config = {
-            "model_type": "ArboristVisionMergeModel",
+            "model_type": "ArboristMergeDetector",
             "vision_input_shape": tuple(vision_input_shape),
             "vision_latent_dim": vision_latent_dim,
             "output_dim": output_dim,
@@ -106,13 +98,6 @@ class ArboristVisionMergeDetector(nn.Module):
             latent_dim=arborist_latent_dim, **_arborist_kwargs
         )
 
-        # Load pre-trained curve encoder weights if provided
-        if pretrained_curve_encoder_path:
-            self._load_curve_encoder(pretrained_curve_encoder_path)
-        if freeze_curve_encoder:
-            for p in self.arborist.curve_encoder.parameters():
-                p.requires_grad_(False)
-
         # Fusion classification head
         self.drop = nn.Dropout(dropout)
         self.head = FeedForwardNet(
@@ -127,15 +112,6 @@ class ArboristVisionMergeDetector(nn.Module):
         return self.head(self.drop(torch.cat([z_img, z_tree], dim=1)))
 
     # --- Helpers
-    def _load_curve_encoder(self, path):
-        ckpt = torch.load(path, map_location="cpu")
-        encoder_state = {
-            k[len("encoder."):]: v
-            for k, v in ckpt.items()
-            if k.startswith("encoder.")
-        }
-        self.arborist.curve_encoder.load_state_dict(encoder_state)
-
     def save(self, path):
         torch.save(
             {"config": self.config, "state_dict": self.state_dict()}, path

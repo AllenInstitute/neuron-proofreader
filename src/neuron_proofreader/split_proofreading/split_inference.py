@@ -32,11 +32,8 @@ import pandas as pd
 import os
 import torch
 
-from neuron_proofreader.split_proofreading.new_split_feature_extraction import (
-    ArboristSplitDataset,
-)
 from neuron_proofreader.split_proofreading.split_datasets import (
-    FragmentsDataset,
+    ArboristSplitDataset,
 )
 from neuron_proofreader.utils import ml_util, util
 
@@ -59,7 +56,7 @@ class SomaSplitProofreader:
 
     step_name = "soma_split_correction"
 
-    def __init__(self, graph, output_dir, max_dist=25, log_handle=None):
+    def __init__(self, graph, output_dir, max_dist=30, log_handle=None):
         """
         Initializes a SomaSplitProofreader.
 
@@ -71,7 +68,7 @@ class SomaSplitProofreader:
             Directory where results will be saved.
         max_dist : float, optional
             Maximum distance (in microns) to search for fragments near each
-            soma. Default is 25.
+            soma. Default is 30.
         log_handle : file-like, optional
             Open file handle to write log messages to. If None, a new
             summary.txt is opened in output_dir. Default is None.
@@ -112,7 +109,6 @@ class LearnedSplitProofreader:
         batch_size=32,
         device="cuda",
         log_handle=None,
-        use_tree_features=False,
     ):
         """
         Initializes an object that executes the full split correction
@@ -123,10 +119,7 @@ class LearnedSplitProofreader:
         ...
         """
         # Instance attributes
-        DatasetClass = (
-            ArboristSplitDataset if use_tree_features else FragmentsDataset
-        )
-        self.dataset = DatasetClass(
+        self.dataset = ArboristSplitDataset(
             graph,
             img_config,
             batch_size=batch_size,
@@ -144,10 +137,7 @@ class LearnedSplitProofreader:
         """
         Puts the model in inference mode with the 3D CNN weights in
         channels-last layout, which makes its fp16 convolutions about 1.3x
-        faster on tensor cores when the input patches use the same layout
-        (see "predict"). cuDNN autotuning is deliberately left off: it gave
-        no further speedup here and costs ~10s for every distinct batch size,
-        and partially filled batches make batch sizes vary.
+        faster on tensor cores when the input patches use the same layout.
         """
         model.eval()
         if hasattr(model, "patch_embedding"):
@@ -176,24 +166,87 @@ class LearnedSplitProofreader:
             Proposals with model predictions less than this value are removed.
             Default is 0.3.
         """
-        # Generate proposals
-        self.generate_proposals(proposals_config)
-        total_proposals = self.dataset.n_proposals()
+        def run_stage(preds, radius, max_angle=None):
+            old_to_new = self.generate_proposals(
+                proposals_config, radius, max_angle=max_angle
+            )
+            preds = self.remap_preds(preds, old_to_new)
+            n_new = len(set(self.dataset.list_proposals()) - preds.keys())
+            self.log(f"# New Proposals: {format(n_new, ',')}\n")
+            preds = self.correct_splits(
+                preds,
+                dt,
+                min_threshold,
+                removal_threshold,
+                suffix=f"_radius={radius:g}",
+            )
+            return preds, n_new
 
-        # Run inference. Scores are kept across rounds; a proposal is only
-        # re-scored once an accepted merge lands within reach of its features
-        # (image patch or tree subgraph), since nothing else changes them.
-        cnt = 0
+        # Iterative proposal generation and classification
         t0 = time()
         preds = dict()
-        stale = set(self.dataset.list_proposals())
+        total_proposals = 0
+        for radius in proposals_config.search_radii():
+            preds, n_new = run_stage(preds, radius)
+            total_proposals += n_new
+
+        # Long-range proposal generation and classification
+        if proposals_config.long_range_radius:
+            preds, n_new = run_stage(
+                preds,
+                proposals_config.long_range_radius,
+                max_angle=proposals_config.long_range_angle,
+            )
+            total_proposals += n_new
+
+        # Report results
+        t, unit = util.time_writer(time() - t0)
+        p_accepts = 100 * len(self.dataset.accepts) / max(total_proposals, 1)
+        self.log(f"Overall Accepted: {p_accepts:.2f}%")
+        self.log(f"Total Runtime: {t:.2f} {unit}\n")
+        self.save_connections()
+
+        # Drop unresolved proposals
+        self.dataset.reset_proposals()
+
+    def correct_splits(
+        self, preds, dt, min_threshold, removal_threshold, suffix=""
+    ):
+        """
+        Scores and merges the graph's current proposals with a decreasing
+        threshold schedule, first leaf-to-leaf proposals only, then all.
+
+        Parameters
+        ----------
+        preds : Dict[Frozenset[int], float]
+            Scores of proposals already scored in an earlier stage.
+        dt : float
+            Increment that acceptance threshold is lowered by.
+        min_threshold : float
+            Minimum threshold for accepting proposals.
+        removal_threshold : float
+            Proposals with model predictions less than this are removed.
+        suffix : str, optional
+            Suffix for saved prediction files. Default is "".
+
+        Returns
+        -------
+        preds : Dict[Frozenset[int], float]
+            Scores of the proposals left unresolved.
+        """
+        # Scores are kept across rounds; a proposal is only re-scored once an
+        # accepted merge lands within reach of its features (image patch or
+        # tree subgraph), since nothing else changes them.
+        cnt = 0
+        stale = set(self.dataset.list_proposals()) - preds.keys()
         reach = self.feature_reach()
         for only_leaf2leaf in [True, False]:
             # Reset threshold
             name = "_leaf2leaf" if only_leaf2leaf else ""
             new_threshold = 0.99
+            pass_min_threshold = min_threshold
             if not only_leaf2leaf:
-                min_threshold += dt
+                pass_min_threshold += dt
 
             # Generate predictions
             while self.dataset.proposals:
@@ -207,7 +260,8 @@ class LearnedSplitProofreader:
                     f"# Proposals Scored: {len(stale)} of {self.dataset.n_proposals()}"
                 )
                 self.save_model_predictions(
-                    preds, suffix=f"{name}_round={cnt}_threshold={new_threshold}"
+                    preds,
+                    suffix=f"{suffix}{name}_round={cnt}_threshold={new_threshold}",
                 )
 
                 # Merge accepted proposals
@@ -228,51 +282,73 @@ class LearnedSplitProofreader:
                 stale |= self.proposals_within(accepted, remaining, reach)
 
                 # Update acceptance threshold
-                if cur_threshold <= min_threshold:
+                if cur_threshold <= pass_min_threshold:
                     break
-                new_threshold = max(cur_threshold - dt, min_threshold)
-
-        # Report results
-        t, unit = util.time_writer(time() - t0)
-        p_accepts = 100 * len(self.dataset.accepts) / total_proposals
-        self.log(f"Overall Accepted: {p_accepts:.2f}%")
-        self.log(f"Total Runtime: {t:.2f} {unit}\n")
-        self.save_connections()
-
-        # Drop unresolved proposals: nothing downstream uses them, and every
-        # later relabel_nodes (e.g. after merge removal) would re-add them.
-        self.dataset.reset_proposals()
+                new_threshold = max(cur_threshold - dt, pass_min_threshold)
+        return preds
 
     # --- Core Routines ---
-    def generate_proposals(self, proposals_config):
+    def generate_proposals(self, proposals_config, radius, max_angle=None):
         """
-        Generates proposals for the fragments graph based on the specified
-        configuration.
+        Generates proposals for the fragments graph at the given radius,
+        keeping existing proposals and skipping rejected pairs.
 
         Parameters
         ----------
         proposals_config : ProposalsConfig
             Config object with settings for proposal generation.
+        radius : float
+            Search radius (in microns).
+        max_angle : float, optional
+            Tangent cone angle (in degrees) for long-range search. Default is
+            None.
+
+        Returns
+        -------
+        old_to_new : dict or None
+            Node ID remapping if trimming relabeled nodes, otherwise None.
         """
         # Main
         t0 = time()
-        self.log("Generate Proposals...")
-        self.dataset.generate_proposals(
-            proposals_config.search_radius,
+        cone = f", cone={max_angle:g}°" if max_angle is not None else ""
+        self.log(f"\nGenerate Proposals (radius={radius:g}{cone})...")
+        kwargs = dict(
             allow_nonleaf_proposals=proposals_config.allow_nonleaf_proposals,
             max_proposals_per_leaf=proposals_config.max_proposals_per_leaf,
             min_size_with_proposals=proposals_config.min_size_with_proposals,
         )
+        if max_angle is None:
+            old_to_new = self.dataset.generate_proposals(radius, **kwargs)
+        else:
+            old_to_new = self.dataset.generate_long_range_proposals(
+                radius, max_angle, **kwargs
+            )
 
         # Report results
         n_proposals = format(self.dataset.n_proposals(), ",")
         n_proposals_blocked = self.dataset.n_proposals_blocked
         t, unit = util.time_writer(time() - t0)
 
-        self.log(f"Search Radius: {proposals_config.search_radius}")
         self.log(f"# Proposals: {n_proposals}")
         self.log(f"# Proposals Blocked: {n_proposals_blocked}")
-        self.log(f"Module Runtime: {t:.2f} {unit}\n")
+        self.log(f"Module Runtime: {t:.2f} {unit}")
+        return old_to_new
+
+    @staticmethod
+    def remap_preds(preds, old_to_new):
+        """
+        Applies a node ID remapping to scored proposals, dropping any whose
+        endpoint was removed.
+        """
+        if old_to_new is None:
+            return preds
+        remapped = dict()
+        for proposal, pred in preds.items():
+            i, j = proposal
+            if i in old_to_new and j in old_to_new:
+                key = frozenset({int(old_to_new[i]), int(old_to_new[j])})
+                remapped[key] = pred
+        return remapped
 
     def merge_with_threshold_schedule(
         self, preds, min_threshold, dt=0.05, only_leaf2leaf=False
@@ -397,7 +473,7 @@ class LearnedSplitProofreader:
         """
         n_accepts = 0
         proposals = [p for p in self.dataset.sorted_proposals() if p in preds]
-        for proposal in tqdm(proposals, desc="Adding Accepts"):
+        for proposal in proposals:
             # Check for leaf2leaf condition
             is_leaf2leaf = self.dataset.is_leaf2leaf(proposal)
             if only_leaf2leaf and not is_leaf2leaf:
@@ -422,12 +498,18 @@ class LearnedSplitProofreader:
             is_valid = self.dataset.is_mergeable(*proposal)
             if pred < threshold or not is_valid:
                 self.dataset.remove_proposal(proposal)
+                self.dataset.rejected.add(proposal)
                 cnt += 1
 
-        # Sanity check
+        # Sanity check. Proposals within one component can never merge, so
+        # drop them rather than re-score them.
         for proposal in self.dataset.list_proposals():
             i, j = proposal
-            if self.dataset.degree(i) > 2 or self.dataset.degree(j) > 2:
+            same_component = (
+                self.dataset.node_component_id[i]
+                == self.dataset.node_component_id[j]
+            )
+            if same_component or self.dataset.degree(i) > 2 or self.dataset.degree(j) > 2:
                 self.dataset.remove_proposal(proposal)
                 cnt += 1
 
@@ -464,8 +546,7 @@ class LearnedSplitProofreader:
         Dict[Frozenset[int], float]
             Dictionary that maps proposal IDs to model predictions.
         """
-        # Generate predictions. No autocast: it keeps GroupNorm in fp32 so
-        # it never sped up the backbone, and it would undo "half_vision".
+        # Generate predictions
         with torch.inference_mode():
             x = data.get_inputs().to(self.device)
             x["img"] = x["img"].contiguous(

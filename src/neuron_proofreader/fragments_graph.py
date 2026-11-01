@@ -85,9 +85,6 @@ class FragmentsGraph(SkeletonGraph):
     def resize_node_feats(self, num_nodes):
         """
         Resizes every array in "node_feats" to hold "num_nodes" entries.
-
-        Resizing the whole dictionary at once keeps the features aligned with
-        each other as new ones are added upstream in SkeletonGraph.
         """
         for key, values in self.node_feats.items():
             resized = np.empty((num_nodes,), dtype=values.dtype)
@@ -126,7 +123,7 @@ class FragmentsGraph(SkeletonGraph):
 
         self.relabel_nodes()
 
-    def connect_soma_fragments(self, max_dist=25):
+    def connect_soma_fragments(self, max_dist=30):
         merge_cnt, somas_connected = 0, list()
         for soma_node in self.soma_nodes():
             soma_xyz = self.node_xyz[soma_node]
