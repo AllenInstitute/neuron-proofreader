@@ -26,12 +26,11 @@ ThreadedDataLoader
 
 from collections import deque
 from scipy.spatial import KDTree
-from concurrent.futures import as_completed, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from torch.utils.data import Dataset, DataLoader
 
 import numpy as np
 import os
-import rustworkx as rx
 import pandas as pd
 import torch
 
@@ -61,8 +60,7 @@ class BrainDataset:
         Radius (in microns) used when extracting rooted subgraphs.
     """
 
-    giant_component_cable_length = 30000
-    random_branching_site_probability = 0.70
+    random_branching_site_probability = 0.7
 
     def __init__(
         self,
@@ -82,7 +80,6 @@ class BrainDataset:
         self.annotated_only = annotated_only
         self.brain_id = brain_id
         self.class_ratios = class_ratios
-        self.ignore_fragments = set()
         self.max_brain_examples = max_brain_examples
         self.random_nonmerge_site_prob = (
             0 if annotated_only else random_nonmerge_site_prob
@@ -102,8 +99,6 @@ class BrainDataset:
             PatchLoader(self.graph, img_config) if img_config else None
         )
 
-        # Store dataset info
-        self.set_giant_components()
         self.set_merge_site_info()
 
     def load_fragments(self, config, swcs_path):
@@ -131,26 +126,8 @@ class BrainDataset:
 
     def set_merge_site_info(self):
         if len(self.merge_sites) > 0:
-            # Build kdtree of merge sites
             xyz_arr = np.vstack(self.merge_sites["xyz"])
             self.merge_sites_kdtree = KDTree(xyz_arr)
-
-            # Store fragment IDs corresponding to merge sites
-            for xyz in self.merge_sites["xyz"]:
-                _, ii = self.kdtree.query(xyz)
-                # self.ignore_fragments.add(self.node_component_id[ii])
-
-    def set_giant_components(self):
-        for nodes in map(list, rx.connected_components(self.graph)):
-            # Compute cable length
-            root = util.sample_once(nodes)
-            cable_length = self.cable_length(
-                max_depth=self.giant_component_cable_length, root=root
-            )
-
-            # Check if giant component
-            if cable_length > self.giant_component_cable_length:
-                self.ignore_fragments.add(self.node_component_id[root])
 
     # --- Site Retrieval ---
     def __getitem__(self, idx):
@@ -215,10 +192,6 @@ class BrainDataset:
         if self.degree(node) > 3:
             return False
 
-        # Reject if node belongs to ignored fragment
-        if self.node_component_id[node] in self.ignore_fragments:
-            return False
-
         # Reject if branching and near another branching node
         if self._has_nearby_branching(node):
             return False
@@ -258,45 +231,38 @@ class BrainDataset:
             return max(n_neg, n_target)
         return n_neg or len(self.merge_sites)
 
-    def _list_indices(self):
-        # Compute target class counts
+    def _class_sizes(self):
+        """
+        Number of positive and negative examples per epoch (before the
+        per-brain cap), plus the size of the negative candidate pool.
+        """
         n_pos = len(self.merge_sites)
         n_neg = self._num_neg_candidates()
         pos_ratio, neg_ratio = self.class_ratios
         n_target_neg = min(int(n_pos * neg_ratio / pos_ratio), n_neg)
+        n_neg_used = n_target_neg if self.rebalance_classes else n_neg
+        return n_pos, n_neg_used, n_neg
 
-        # Check whether to rebalance negative examples
-        n_pos_used = n_pos
-        size = n_target_neg if self.rebalance_classes else n_neg
+    def _list_indices(self):
+        n_pos, n_neg_used, n_neg = self._class_sizes()
 
         # Apply per-brain cap: subsample both classes proportionally each epoch
-        if self.max_brain_examples is not None and n_pos_used + size > self.max_brain_examples:
-            scale = self.max_brain_examples / (n_pos_used + size)
-            n_pos_used = max(1, int(n_pos_used * scale))
-            size = self.max_brain_examples - n_pos_used
+        n_pos_used = n_pos
+        if self.max_brain_examples is not None and n_pos + n_neg_used > self.max_brain_examples:
+            scale = self.max_brain_examples / (n_pos + n_neg_used)
+            n_pos_used = max(1, int(n_pos * scale))
+            n_neg_used = self.max_brain_examples - n_pos_used
 
         pos_idxs = np.random.choice(n_pos, size=n_pos_used, replace=False)
-        neg_idxs = np.random.choice(n_neg, size=size, replace=False)
+        neg_idxs = np.random.choice(n_neg, size=n_neg_used, replace=False)
         return np.concatenate((-neg_idxs, pos_idxs))
 
     def __getattr__(self, name):
         return getattr(self.graph, name)
 
     def __len__(self):
-        """
-        Counts the number of examples in the dataset.
-
-        Returns
-        -------
-        int
-            Number of examples in the dataset.
-        """
-        n_pos = len(self.merge_sites)
-        n_neg = self._num_neg_candidates()
-        pos_ratio, neg_ratio = self.class_ratios
-        n_target_neg = min(int(n_pos * neg_ratio / pos_ratio), n_neg)
-        size = n_target_neg if self.rebalance_classes else n_neg
-        total = n_pos + size
+        n_pos, n_neg_used, _ = self._class_sizes()
+        total = n_pos + n_neg_used
         if self.max_brain_examples is not None:
             total = min(total, self.max_brain_examples)
         return total
@@ -355,34 +321,21 @@ class BrainDatasetCollection(Dataset):
         output_dir : str
             Directory to save the CSV file in.
         """
-        rows = []
-        for brain_dataset in self.datasets:
-            brain_id = brain_dataset.brain_id
-
-            # Merge sites
-            for _, row in brain_dataset.merge_sites.iterrows():
-                rows.append(
-                    {
-                        "brain_id": brain_id,
-                        "swc_name": row["filename"],
-                        "xyz": row["xyz"],
-                        "label": "merge",
-                    }
-                )
-
-            # Nonmerge sites
-            for _, row in brain_dataset.nonmerge_sites.iterrows():
-                rows.append(
-                    {
-                        "brain_id": brain_id,
-                        "swc_name": row["filename"],
-                        "xyz": row["xyz"],
-                        "label": "nonmerge",
-                    }
-                )
-
-        df = pd.DataFrame(rows)
-        df.to_csv(os.path.join(output_dir, "val_summary.csv"), index=False)
+        rows = list()
+        for bd in self.datasets:
+            for label, sites in [("merge", bd.merge_sites), ("nonmerge", bd.nonmerge_sites)]:
+                for _, row in sites.iterrows():
+                    rows.append(
+                        {
+                            "brain_id": bd.brain_id,
+                            "swc_name": row["filename"],
+                            "xyz": row["xyz"],
+                            "label": label,
+                        }
+                    )
+        pd.DataFrame(rows).to_csv(
+            os.path.join(output_dir, "val_summary.csv"), index=False
+        )
 
     def save_config(self, path):
         """
@@ -459,7 +412,7 @@ class BrainDatasetCollection(Dataset):
 # --- DataLoader ---
 class ThreadedDataLoader(DataLoader):
 
-    _VALID_MODALITIES = {"image", "graph", "image_graph", "pointcloud"}
+    _VALID_MODALITIES = {"image", "graph", "image_graph"}
 
     def __init__(
         self,
@@ -502,16 +455,6 @@ class ThreadedDataLoader(DataLoader):
                 for idx in batch_idxs
             ]
 
-        def assemble_batch(futures):
-            if self.modality == "graph":
-                return self._assemble_graph_batch(futures)
-            elif self.modality == "image_graph":
-                return self._assemble_image_graph_batch(futures)
-            elif self.modality == "pointcloud":
-                return self._assemble_pointcloud_batch(futures)
-            else:
-                return self._assemble_image_batch(futures)
-
         # Main
         with ThreadPoolExecutor(
             max_workers=min(32, self.prefetch)
@@ -538,122 +481,31 @@ class ThreadedDataLoader(DataLoader):
                 except StopIteration:
                     pass
 
-                yield assemble_batch(futures)
+                yield self.assemble_batch(futures)
 
-    def _assemble_image_batch(self, futures):
-        n = len(futures)
-        x = self._x_buf[:n]
-        y = self._y_buf[:n]
-        future_to_idx = {f: i for i, f in enumerate(futures)}
-        for future in as_completed(futures):
-            i = future_to_idx[future]
-            x[i], _, y[i] = future.result()
-        return (
-            torch.from_numpy(x).pin_memory(),
-            torch.from_numpy(y).pin_memory(),
-        )
+    def assemble_batch(self, futures):
+        imgs = self._x_buf[:len(futures)]
+        y = self._y_buf[:len(futures)]
+        subgraphs = list()
+        for i, future in enumerate(futures):
+            imgs[i], subgraph, y[i] = future.result()
+            subgraphs.append(subgraph)
 
-    def _assemble_graph_batch(self, futures):
-        n = len(futures)
-        y = self._y_buf[:n]
-        future_to_idx = {f: i for i, f in enumerate(futures)}
-
-        subgraphs = {}
-        for future in as_completed(futures):
-            i = future_to_idx[future]
-            _, subgraphs[i], y[i] = future.result()
+        imgs = torch.from_numpy(imgs).pin_memory()
+        y = torch.from_numpy(y).pin_memory()
+        if self.modality == "image":
+            return imgs, y
 
         if self.graph_transform is not None:
-            for i in range(n):
-                subgraphs[i].node_xyz = self.graph_transform(subgraphs[i].node_xyz)
+            for subgraph in subgraphs:
+                subgraph.node_xyz = self.graph_transform(subgraph.node_xyz)
 
         # rooted_subgraph always remaps the root to node 0
-        tree_samples = [
-            subgraph_to_tree_sample(subgraphs[i], 0) for i in range(n)
-        ]
-        return tree_samples, torch.from_numpy(y).pin_memory()
-
-    def _assemble_image_graph_batch(self, futures):
-        n = len(futures)
-        imgs = self._x_buf[:n]
-        y = self._y_buf[:n]
-        future_to_idx = {f: i for i, f in enumerate(futures)}
-
-        subgraphs = {}
-        for future in as_completed(futures):
-            i = future_to_idx[future]
-            imgs[i], subgraphs[i], y[i] = future.result()
-
-        if self.graph_transform is not None:
-            for i in range(n):
-                subgraphs[i].node_xyz = self.graph_transform(subgraphs[i].node_xyz)
-
-        # rooted_subgraph always remaps the root to node 0
-        tree_samples = [
-            subgraph_to_tree_sample(subgraphs[i], 0) for i in range(n)
-        ]
-        batch = ml_util.TensorDict(
-            {
-                "img": torch.from_numpy(imgs).pin_memory(),
-                "tree_sample": tree_samples,
-            }
-        )
-        return batch, torch.from_numpy(y).pin_memory()
-
-    def _load_image_graph_batch(self, idxs):
-        """
-        Loads a batch of samples from the dataset using multithreading.
-
-        Parameters
-        ----------
-        idxs : List[int]
-            Indices of the dataset items to include in the batch.
-
-        Returns
-        -------
-        batch : Dict[str, torch.Tensor]
-            Dictionary that maps modality names to batch features.
-        targets : torch.Tensor
-            Target labels corresponding to each patch.
-        """
-        with ThreadPoolExecutor() as executor:
-            # Assign threads
-            threads = list()
-            for idx in idxs:
-                threads.append(executor.submit(self.dataset.__getitem__, idx))
-
-            # Store results
-            targets = np.zeros((len(idxs), 1))
-            patches = np.zeros((len(idxs),) + self.img_shape)
-            h, x, edge_index, batches = list(), list(), list(), list()
-            node_offset = 0
-            for i, thread in enumerate(as_completed(threads)):
-                patches[i], subgraph, targets[i] = thread.result()
-                h_i, x_i, edge_index_i = subgraph_to_data(subgraph)
-                n_i = h_i.size(0)
-
-                edge_index_i += node_offset
-                h.append(h_i)
-                x.append(x_i)
-                edge_index.append(edge_index_i)
-                batches.append(torch.full((n_i,), i, dtype=torch.long))
-
-                node_offset += n_i
-
-        # Combine subgraph batches
-        h = torch.cat(h, dim=0)
-        x = torch.cat(x, dim=0)
-        edge_index = torch.cat(edge_index, dim=1)
-        batches = torch.cat(batches, dim=0)
-
-        # Set batch dictionary
-        batch = ml_util.TensorDict(
-            {
-                "img": ml_util.to_tensor(patches),
-                "graph": (h, x, edge_index, batches),
-            }
-        )
-        return batch, ml_util.to_tensor(targets)
+        tree_samples = [subgraph_to_tree_sample(g, 0) for g in subgraphs]
+        if self.modality == "graph":
+            return tree_samples, y
+        batch = ml_util.TensorDict({"img": imgs, "tree_sample": tree_samples})
+        return batch, y
 
     # --- Helpers ---
     def create_batch_iter(self):

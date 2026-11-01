@@ -19,6 +19,7 @@ import rustworkx as rx
 from neuron_proofreader.fragments_graph import FragmentsGraph
 from neuron_proofreader.split_proofreading import groundtruth_generation
 from neuron_proofreader.split_proofreading.proposal_generation import (
+    ConeProposalGenerator,
     ProposalGenerator,
     trim_proposal_endpoints,
 )
@@ -126,15 +127,7 @@ class ProposalGraph(FragmentsGraph):
         self.node_proposals[j].add(i)
         self.proposals.add(frozenset({i, j}))
 
-    def generate_proposals(
-        self,
-        search_radius,
-        allow_nonleaf_proposals=False,
-        max_angle=None,
-        max_attempts=2,
-        max_proposals_per_leaf=3,
-        min_size_with_proposals=0,
-    ):
+    def generate_proposals(self, search_radius, **kwargs):
         """
         Generates proposals from leaf nodes. Existing proposals are kept and
         previously rejected pairs are not regenerated, so this can be called
@@ -144,37 +137,44 @@ class ProposalGraph(FragmentsGraph):
         ----------
         search_radius : float
             Search radius used to generate proposals.
-        allow_nonleaf_proposals : bool, optional
-            Indication of whether to generate proposals between leaf and nodes
-            with degree 2. Default is False.
-        max_angle : float, optional
-            If set, restricts proposals to a tangent cone of this angle (in
-            degrees) at straight leaves. Default is None.
-        max_attempts : int, optional
-            Number of searches with increasing radii made per leaf. Default
-            is 2.
-        min_size_with_proposals : float
-            Minimum cable length (in microns) of connected components that
-            proposals are generated from. Default is 0.
+        **kwargs
+            Forwarded to ProposalGenerator.
 
         Returns
         -------
         old_to_new : dict or None
             Node ID remapping if trimming relabeled nodes, otherwise None.
         """
-        # Proposal generation
+        generator = ProposalGenerator(self, **kwargs)
+        return self.run_proposal_generator(generator, search_radius)
+
+    def generate_long_range_proposals(self, search_radius, max_angle, **kwargs):
+        """
+        Generates long-range proposals from straight leaves to candidates
+        within a tangent cone, see ConeProposalGenerator.
+
+        Parameters
+        ----------
+        search_radius : float
+            Search radius used to generate proposals.
+        max_angle : float
+            Half-angle (in degrees) of the tangent cone.
+        **kwargs
+            Forwarded to ProposalGenerator.
+
+        Returns
+        -------
+        old_to_new : dict or None
+            Node ID remapping if trimming relabeled nodes, otherwise None.
+        """
+        generator = ConeProposalGenerator(self, max_angle, **kwargs)
+        return self.run_proposal_generator(generator, search_radius)
+
+    def run_proposal_generator(self, generator, search_radius):
         if self.num_nodes() == 0:
             return None
         assert len(self.kdtree.data) == self.num_nodes()
-        proposal_generator = ProposalGenerator(
-            self,
-            allow_nonleaf_proposals=allow_nonleaf_proposals,
-            max_angle=max_angle,
-            max_attempts=max_attempts,
-            max_proposals_per_leaf=max_proposals_per_leaf,
-            min_size_with_proposals=min_size_with_proposals,
-        )
-        proposals = proposal_generator(search_radius, proposals=self.proposals)
+        proposals = generator(search_radius, proposals=self.proposals)
         new_proposals = proposals - self.proposals
 
         # Feature normalization uses the first radius seen

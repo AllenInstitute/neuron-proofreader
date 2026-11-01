@@ -117,7 +117,7 @@ class ProofreadPipeline:
         self.log(f"Module Runtime: {elapsed:.2f} {unit}\n")
 
     # --- Split Proofreading ---
-    def soma_split_proofreading(self, max_dist=25, save_fragments=True):
+    def soma_split_proofreading(self, max_dist=30, save_fragments=True):
         """
         Runs soma-based split proofreading by connecting fragments near somas.
 
@@ -125,7 +125,7 @@ class ProofreadPipeline:
         ----------
         max_dist : float, optional
             Maximum distance (in microns) to search for fragments near each
-            soma. Default is 25.
+            soma. Default is 30.
         save_fragments : bool, optional
             If True, saves the corrected graph SWCs into the step directory.
             Default is True.
@@ -190,7 +190,6 @@ class ProofreadPipeline:
             batch_size=split_config.batch_size,
             device=self.device,
             log_handle=self.log_handle,
-            use_tree_features=split_config.use_tree_features,
         )
         proofreader(
             proposals_config,

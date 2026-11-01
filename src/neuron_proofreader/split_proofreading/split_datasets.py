@@ -4,36 +4,30 @@ Created on Fri April 11 11:00:00 2024
 @author: Anna Grim
 @email: anna.grim@alleninstitute.org
 
-Implementation of dataset objects that contain graphs and facilitate feature
-generation for training and inference in split-correction tasks.
+Dataset that iterates over the proposals of a fragments graph in batches and
+extracts the model inputs for each batch on a background thread.
 
 """
 
-from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
 from threading import Thread
 from torch.utils.data import IterableDataset
-from tqdm import tqdm
-
-import os
-import pandas as pd
 
 from neuron_proofreader.machine_learning.subgraph_sampler import (
     SubgraphSampler,
 )
 from neuron_proofreader.split_proofreading.split_feature_extraction import (
-    FeaturePipeline,
     HeteroGraphData,
+    ProposalPatchExtractor,
+    ProposalTreeFeatureExtractor,
 )
-from neuron_proofreader.utils import io_util, util
 
 
-# --- Datasets ---
-class FragmentsDataset(IterableDataset):
+class ArboristSplitDataset(IterableDataset):
     """
-    A dataset object that contains a graph built from fragments corresponding
-    to a single brain. Note that this dataset supports fragments extracted
-    from either a block or whole-brain.
+    Yields one HeteroGraphData per batch of proposals, with an image patch
+    and an Arborist TreeSample per proposal. Attribute lookups that are not
+    found on the dataset fall through to the underlying graph.
     """
 
     def __init__(
@@ -41,386 +35,93 @@ class FragmentsDataset(IterableDataset):
         fragments_graph,
         img_config,
         batch_size=32,
-        gt_path=None,
         prefetch=2,
+        **tree_kwargs,
     ):
         """
-        Instantiates a FragmentsDataset object.
-
         Parameters
         ----------
-        fragments_path : str
-            Path to predicted SWC files to be loaded.
-        img_path : str
-            Path to the raw image associated with the fragments.
-        graph_config : GraphConfig
-            ...
-        gt_path : str, optional
-            Path to ground-truth SWC files to be loaded. Default is None.
+        fragments_graph : ProposalGraph
+            Graph with proposals generated.
+        img_config : ImageConfig
+            Image configuration.
+        batch_size : int, optional
+            Maximum number of proposals per batch. Default is 32.
         prefetch : int, optional
             Number of batches to extract features for ahead of the caller.
             Note: each queued batch holds its image patches in memory, which
             is roughly 7MB per proposal. Default is 2.
+        **tree_kwargs
+            Forwarded to ProposalTreeFeatureExtractor.
         """
-        # Instance attributes
         self.batch_size = batch_size
         self.graph = fragments_graph
-        self.gt_path = gt_path
         self.prefetch = prefetch
-        self.transform = img_config.transform
+        self.patch_extractor = ProposalPatchExtractor(fragments_graph, img_config)
+        self.tree_extractor = ProposalTreeFeatureExtractor(**tree_kwargs)
         self._proposal_subset = None
 
-        # Feature extractor
-        self.feature_extractor = FeaturePipeline(
-            self.graph,
-            img_config.img_path,
-            brightness_clip=img_config.brightness_clip,
-            mask_sigma=img_config.mask_sigma,
-            patch_shape=img_config.patch_shape,
-            percentiles=img_config.percentiles,
-            transform=self.transform,
-        )
+    def __getattr__(self, name):
+        return getattr(self.graph, name)
 
-    # --- Get Data ---
     def __iter__(self):
         """
-        Iterates over the dataset and yields model-ready inputs and targets.
-
-        Note: features are extracted on a background thread so that reading
-        image patches overlaps the caller's forward pass. At most "prefetch"
-        batches are held in memory at once. The image reads of the next batch
-        are issued before the current batch is processed, so the cloud
-        latency of a batch is hidden behind the CPU work of the previous one.
-
-        Yields
-        ------
-        inputs : HeteroGraphData
-            Input data.
-        targets : torch.Tensor
-            Ground truth labels.
+        Features are extracted on a background thread so that reading image
+        patches overlaps the caller's forward pass. At most "prefetch"
+        batches are held in memory at once.
         """
         queue = Queue(maxsize=self.prefetch)
         sentinel = object()
 
         def producer():
             try:
-                sampler = self.get_sampler()
-                subgraph = next(sampler, None)
-                reads = self.feature_extractor.issue_reads(subgraph) if subgraph else None
-                while subgraph is not None:
-                    next_subgraph = next(sampler, None)
-                    next_reads = (
-                        self.feature_extractor.issue_reads(next_subgraph)
-                        if next_subgraph is not None else None
-                    )
-                    features = self.feature_extractor(subgraph, reads)
-                    queue.put(HeteroGraphData(features))
-                    subgraph, reads = next_subgraph, next_reads
+                for data in self.extract_batches():
+                    queue.put(data)
             except Exception as e:
                 queue.put(e)
             finally:
                 queue.put(sentinel)
 
         Thread(target=producer, daemon=True).start()
-        while True:
-            item = queue.get()
-            if item is sentinel:
-                break
+        while (item := queue.get()) is not sentinel:
             if isinstance(item, Exception):
                 raise item
             yield item
 
-    # --- Helpers ---
-    def __getattr__(self, name):
-        return getattr(self.graph, name)
-
-    def get_sampler(self):
+    def extract_batches(self):
         """
-        Gets a subgraph sampler used to iterate over dataset.
-
-        Returns
-        -------
-        sampler : SubgraphSampler
-            Subgraph sampler that is used to iterate over dataset.
+        The image reads of the next batch are issued before the current batch
+        is processed, so the cloud latency of a batch is hidden behind the
+        CPU work of the previous one.
         """
         sampler = SubgraphSampler(
             self.graph,
             max_proposals=self.batch_size,
             proposals=self._proposal_subset,
         )
-        return iter(sampler)
+        sampler = iter(sampler)
+        subgraph = next(sampler, None)
+        reads = self.issue_reads(subgraph)
+        while subgraph is not None:
+            next_subgraph = next(sampler, None)
+            next_reads = self.issue_reads(next_subgraph)
+            patches = self.patch_extractor(subgraph, reads)
+            trees = {p: self.tree_extractor(self.graph, p) for p in subgraph.proposals}
+            yield HeteroGraphData(subgraph, patches, trees)
+            subgraph, reads = next_subgraph, next_reads
+
+    def issue_reads(self, subgraph):
+        if subgraph is None:
+            return None
+        return self.patch_extractor.issue_reads(subgraph)
 
     def iter_proposals(self, proposals):
         """
         Iterates over only the given proposals, otherwise exactly as
         "__iter__" does.
-
-        Parameters
-        ----------
-        proposals : Iterable[Frozenset[int]]
-            Proposals to extract features for.
-
-        Yields
-        ------
-        HeteroGraphData
-            Input data.
         """
         self._proposal_subset = list(proposals)
         try:
             yield from self
         finally:
             self._proposal_subset = None
-
-
-class FragmentsDatasetCollection(IterableDataset):
-    """
-    A dataset class for storing a set of FragmentDataset objects corresponding
-    to different whole-brain images.
-    """
-
-    def __init__(self, shuffle=True):
-        """
-        Instantiates a FragmentsDatasetCollection object.
-
-        Parameters
-        ----------
-        shuffle : bool, optional
-            Indication of whether to shuffle examples. Default is True.
-        """
-        self.datasets = dict()
-        self.shuffle = shuffle
-
-    def add_dataset(
-        self,
-        key,
-        fragments_path,
-        img_path,
-        config,
-        gt_path=None,
-        metadata_path=None,
-        prefetch=4,
-        soma_centroids=list(),
-    ):
-        """
-        Adds a dataset to the collection of datasets.
-
-        Parameters
-        ----------
-        key : hashable
-            Unique identifier of the dataset to be added.
-        fragments_path : str
-            Path to predicted SWC files to be loaded.
-        img_path : str
-            Path to the raw image associated with the fragments.
-        config : Config
-            Configuration object containing parameters and settings.
-        gt_path : str, optional
-            Path to ground-truth SWC files to be loaded. Default is None.
-        metadata_path : str, optional
-            Patch to JSON file containing metadata on block that fragments
-            were extracted from. Default is None.
-        prefetch : int, optional
-            Number of batches to prefetch. Default is 4.
-        soma_centroids : List[Tuple[int]], optional
-            Phyiscal coordinates of soma centroids. Default is an empty list.
-        """
-        assert key not in self.datasets, "Key has been used!"
-        self.datasets[key] = FragmentsDataset(
-            fragments_path,
-            img_path,
-            config,
-            gt_path=gt_path,
-            metadata_path=metadata_path,
-            prefetch=prefetch,
-            soma_centroids=soma_centroids,
-        )
-
-    def __iter__(self):
-        """
-        Iterates over the datasets and yields model-ready inputs and targets.
-
-        Yields
-        ------
-        inputs : TensorDict
-            Heterogeneous graph data.
-        targets : torch.Tensor
-            Ground truth labels.
-        """
-        # Initializations
-        samplers = self.init_samplers()
-        queue = Queue(maxsize=self.prefetch * len(samplers))
-        active_keys = set(samplers.keys())
-
-        # Launch one prefetch thread per dataset
-        with ThreadPoolExecutor(max_workers=len(samplers)) as executor:
-            for key, sampler in samplers.items():
-                executor.submit(self._worker, key, sampler, queue)
-
-            # Consume from queue until all datasets exhausted
-            while active_keys:
-                key, inputs, targets = queue.get()
-                if inputs is StopIteration:
-                    active_keys.discard(key)
-                    continue
-                if isinstance(inputs, Exception):
-                    raise inputs
-                yield inputs, targets
-
-    def _worker(self, key, sampler, queue):
-        """
-        Runs in a background thread, prefetches extracted features into queue.
-        """
-        try:
-            for subgraph in sampler:
-                features = self.datasets[key].feature_extractor(subgraph)
-                data = HeteroGraphData(features)
-                queue.put((key, data.get_inputs(), data.get_targets()))
-        except Exception as e:
-            queue.put((key, e, None))
-        finally:
-            queue.put((key, StopIteration, None))
-
-    def generate_proposals(self, search_radius):
-        """
-        Generates proposals for each dataset.
-
-        Parameters
-        ----------
-        search_radius : float
-            Search radius used to generate proposals.
-        """
-        for key in tqdm(self.datasets, desc="Generate Proposals"):
-            self.datasets[key].graph.generate_proposals(
-                search_radius, allow_nonleaf_proposals=True
-            )
-
-    # --- Helpers ---
-    def __len__(self):
-        """
-        Returns the number of datasets in self.
-
-        Returns
-        -------
-        float
-            Number of datasets in self.
-        """
-        return len(self.datasets)
-
-    def get_next_key(self, samplers):
-        """
-        Gets the next key to sample from a dictionary of samplers.
-
-        Parameters
-        ----------
-        samplers : Dict[Tuple[str], SubgraphSampler]
-            Mapping from keys to sampler objects.
-
-        Returns
-        -------
-        key : Tuple[str]
-            Selected key from "samplers".
-        """
-        if self.shuffle:
-            return util.sample_once(samplers.keys())
-        else:
-            keys = sorted(samplers.keys())
-            return keys[0]
-
-    def init_samplers(self):
-        """
-        Initializes subgraph samplers for each dataset.
-
-        Returns
-        -------
-        samplers : Dict[hashable, SubgraphSampler]
-            Subgraph samplers used to iterate over the datasets.
-        """
-        samplers = dict()
-        for key, dataset in self.datasets.items():
-            batch_size = dataset.config.ml.batch_size
-            samplers[key] = iter(
-                SubgraphSampler(dataset.graph, max_proposals=batch_size)
-            )
-        return samplers
-
-    def n_proposals(self):
-        """
-        Counts the number of proposals in the dataset.
-
-        Returns
-        -------
-        int
-            Number of proposals.
-        """
-        cnt = 0
-        for dataset in self.datasets.values():
-            cnt += dataset.graph.n_proposals()
-        return cnt
-
-    def p_accepts(self):
-        """
-        Computes the percentage of accepted proposals in ground truth.
-
-        Returns
-        -------
-        float
-            Percentage of accepted proposals in ground truth.
-        """
-        accepts_cnt = 0
-        for dataset in self.datasets.values():
-            accepts_cnt += len(dataset.graph.gt_accepts)
-        return 100 * accepts_cnt / (self.n_proposals() + 1e-5)
-
-    def save_examples_summary(self, path):
-        """
-        Saves a summary of examples in the dataset to the given path.
-
-        Parameters
-        ----------
-        path : str
-            Output path for the CSV file.
-        """
-        examples_summary = list()
-        for key in sorted(self.datasets.keys()):
-            n_proposals = self.datasets[key].graph.n_proposals()
-            examples_summary.extend([key] * n_proposals)
-        pd.DataFrame(examples_summary).to_csv(path)
-
-
-# -- Helpers --
-def generate_dataset_example_ids(bucket_name, dataset_prefix):
-    """
-    Generates dataset example identifiers.
-
-    Parameters
-    ----------
-    bucket_name : str
-        Name of the GCS bucket.
-    dataset_prefix : str
-        Root prefix under which dataset contents are organized.
-
-    Yields
-    -------
-    Tuple[str]
-        Dataset example ID formatted as (brain_id, segmentation_id, block_id).
-    """
-    brain_prefixes = io_util.list_gcs_subprefixes(f"gs://{bucket_name}/{dataset_prefix}")
-    for brain_prefix in brain_prefixes:
-        # Extract brain id
-        brain_id = brain_prefix.split("/")[-2]
-
-        # Iterate over segmentations
-        pred_prefix = brain_prefix + "pred_swcs/"
-        prefixes = io_util.list_gcs_subprefixes(f"gs://{bucket_name}/{pred_prefix}")
-        for brain_segmentation_prefix in prefixes:
-            # Extract segmentation id
-            segmentation_id = brain_segmentation_prefix.split("/")[-2]
-
-            # Iterate over blocks
-            block_prefixes = io_util.list_gcs_subprefixes(
-                f"gs://{bucket_name}/{brain_segmentation_prefix}"
-            )
-            for block_prefix in block_prefixes:
-                # Extract block id
-                block_id = block_prefix.split("/")[-2]
-                yield brain_id, segmentation_id, block_id

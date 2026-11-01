@@ -224,10 +224,6 @@ class SplitInferenceConfig(Config):
         split model was trained with.
     removal_threshold : float
         Proposals with model predictions below this value are removed.
-    use_tree_features : bool
-        If True, each proposal carries an Arborist TreeSample alongside its
-        image patch. Required by models whose split head encodes skeleton
-        geometry (e.g. JointProofreader).
     """
 
     batch_size: int = None
@@ -239,7 +235,6 @@ class SplitInferenceConfig(Config):
     patch_shape: Tuple[int, int, int] = None
     percentiles: Tuple[float, float] = (1, 99.9)
     removal_threshold: float = 0.3
-    use_tree_features: bool = False
 
 
 @dataclass
@@ -283,11 +278,9 @@ class ProposalsConfig(Config):
     name: str = "proposals_config"
     trim_endpoints_bool: bool = True
 
-    def search_schedule(self):
+    def search_radii(self):
         """
-        Returns the staged search as (radius, max_angle) pairs: short-range
-        radii from min to max in steps of delta with no angular restriction,
-        then one long-range radius restricted to the tangent cone.
+        Short-range search radii from min to max in steps of delta.
         """
         radii = list()
         radius = self.min_search_radius
@@ -295,9 +288,13 @@ class ProposalsConfig(Config):
             radii.append(float(radius))
             radius += self.delta_search_radius
         radii.append(float(self.max_search_radius))
+        return radii
 
-        schedule = [(radius, None) for radius in radii]
+    @property
+    def long_range_radius(self):
+        """
+        Long-range search radius, or None when the stage is disabled.
+        """
         if self.long_range_multiplier > 1:
-            long_range_radius = self.long_range_multiplier * self.max_search_radius
-            schedule.append((float(long_range_radius), self.long_range_angle))
-        return schedule
+            return float(self.long_range_multiplier * self.max_search_radius)
+        return None

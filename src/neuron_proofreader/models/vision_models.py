@@ -210,7 +210,7 @@ class CNN3D(nn.Module):
         ----------
         config : dict
             Constructor kwargs as saved in a checkpoint. May contain extra
-            keys (e.g. from ArboristVisionMergeDetector), which pass through.
+            keys (e.g. from ArboristMergeDetector), which pass through.
 
         Returns
         -------

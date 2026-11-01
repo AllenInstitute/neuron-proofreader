@@ -22,7 +22,7 @@ from neuron_proofreader.models.gnn_models import (
     proposal_length_feature,
 )
 from neuron_proofreader.models.vision_models import CNN3D, CenterWeightedPool3D
-from neuron_proofreader.models.proofreading_models import ArboristVisionMergeDetector
+from neuron_proofreader.models.proofreading_models import ArboristMergeDetector
 from neuron_proofreader.utils.ml_util import FeedForwardNet
 
 # The GAT layers are lazy, so a checkpoint written before the first forward
@@ -181,7 +181,7 @@ class JointProofreader(nn.Module):
         x : dict
             Batch dictionary. For "merge": must contain "img" and
             "tree_sample". For "split": must contain "img", "tree_samples",
-            and "edge_index_dict".
+            "edge_index_dict" and "n_branches".
         task : str
             "merge" or "split".
 
@@ -266,11 +266,10 @@ class JointProofreader(nn.Module):
         z_tree = self.split_tree_encoder(x["tree_samples"]).to(z_img.dtype)
         length = proposal_length_feature(x["tree_samples"], z_img.device, z_img.dtype)
 
-        n_branches = x["x_dict"]["branch"].shape[0]
         x_dict = {
             "proposal": self.split_fusion(torch.cat([z_img, z_tree, length], dim=1)),
             "branch": self.branch_relay.to(z_img.dtype).unsqueeze(0).expand(
-                n_branches, -1
+                x["n_branches"], -1
             ),
         }
         x_dict = self.gat1(x_dict, x["edge_index_dict"])
@@ -391,7 +390,7 @@ class JointProofreader(nn.Module):
         This reconstructs the full JointProofreader, drops the split
         submodules, and returns a merge-bound view, so the forward pass is the
         one the checkpoint was trained with. It does not copy the weights into
-        an ArboristVisionMergeDetector: that model has no task-specific
+        an ArboristMergeDetector: that model has no task-specific
         conv/pool stage, and its vision_proj is sized for the shared pooled
         features only, so it cannot represent the merge path.
 

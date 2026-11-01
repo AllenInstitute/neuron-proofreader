@@ -32,11 +32,8 @@ import pandas as pd
 import os
 import torch
 
-from neuron_proofreader.split_proofreading.new_split_feature_extraction import (
-    ArboristSplitDataset,
-)
 from neuron_proofreader.split_proofreading.split_datasets import (
-    FragmentsDataset,
+    ArboristSplitDataset,
 )
 from neuron_proofreader.utils import ml_util, util
 
@@ -59,7 +56,7 @@ class SomaSplitProofreader:
 
     step_name = "soma_split_correction"
 
-    def __init__(self, graph, output_dir, max_dist=25, log_handle=None):
+    def __init__(self, graph, output_dir, max_dist=30, log_handle=None):
         """
         Initializes a SomaSplitProofreader.
 
@@ -71,7 +68,7 @@ class SomaSplitProofreader:
             Directory where results will be saved.
         max_dist : float, optional
             Maximum distance (in microns) to search for fragments near each
-            soma. Default is 25.
+            soma. Default is 30.
         log_handle : file-like, optional
             Open file handle to write log messages to. If None, a new
             summary.txt is opened in output_dir. Default is None.
@@ -112,7 +109,6 @@ class LearnedSplitProofreader:
         batch_size=32,
         device="cuda",
         log_handle=None,
-        use_tree_features=False,
     ):
         """
         Initializes an object that executes the full split correction
@@ -123,10 +119,7 @@ class LearnedSplitProofreader:
         ...
         """
         # Instance attributes
-        DatasetClass = (
-            ArboristSplitDataset if use_tree_features else FragmentsDataset
-        )
-        self.dataset = DatasetClass(
+        self.dataset = ArboristSplitDataset(
             graph,
             img_config,
             batch_size=batch_size,
@@ -144,10 +137,7 @@ class LearnedSplitProofreader:
         """
         Puts the model in inference mode with the 3D CNN weights in
         channels-last layout, which makes its fp16 convolutions about 1.3x
-        faster on tensor cores when the input patches use the same layout
-        (see "predict"). cuDNN autotuning is deliberately left off: it gave
-        no further speedup here and costs ~10s for every distinct batch size,
-        and partially filled batches make batch sizes vary.
+        faster on tensor cores when the input patches use the same layout.
         """
         model.eval()
         if hasattr(model, "patch_embedding"):
@@ -176,24 +166,12 @@ class LearnedSplitProofreader:
             Proposals with model predictions less than this value are removed.
             Default is 0.3.
         """
-        # Length features are normalized by this radius, which must not
-        # change between stages.
-        self.dataset.graph.search_radius = proposals_config.max_search_radius
-
-        # Staged search: proposals are generated at increasing radii and the
-        # splits found at each radius are corrected before searching farther,
-        # so a leaf resolved by a short proposal never spawns long ones.
-        # Scores of unresolved proposals carry over between stages.
-        t0 = time()
-        preds = dict()
-        total_proposals = 0
-        for radius, max_angle in proposals_config.search_schedule():
+        def run_stage(preds, radius, max_angle=None):
             old_to_new = self.generate_proposals(
                 proposals_config, radius, max_angle=max_angle
             )
             preds = self.remap_preds(preds, old_to_new)
             n_new = len(set(self.dataset.list_proposals()) - preds.keys())
-            total_proposals += n_new
             self.log(f"# New Proposals: {format(n_new, ',')}\n")
             preds = self.correct_splits(
                 preds,
@@ -202,6 +180,27 @@ class LearnedSplitProofreader:
                 removal_threshold,
                 suffix=f"_radius={radius:g}",
             )
+            return preds, n_new
+
+        # Length features are normalized by this radius
+        self.dataset.graph.search_radius = proposals_config.max_search_radius
+
+        # Iterative proposal generation and classification
+        t0 = time()
+        preds = dict()
+        total_proposals = 0
+        for radius in proposals_config.search_radii():
+            preds, n_new = run_stage(preds, radius)
+            total_proposals += n_new
+
+        # Long-range proposal generation and classification
+        if proposals_config.long_range_radius:
+            preds, n_new = run_stage(
+                preds,
+                proposals_config.long_range_radius,
+                max_angle=proposals_config.long_range_angle,
+            )
+            total_proposals += n_new
 
         # Report results
         t, unit = util.time_writer(time() - t0)
@@ -210,8 +209,7 @@ class LearnedSplitProofreader:
         self.log(f"Total Runtime: {t:.2f} {unit}\n")
         self.save_connections()
 
-        # Drop unresolved proposals: nothing downstream uses them, and every
-        # later relabel_nodes (e.g. after merge removal) would re-add them.
+        # Drop unresolved proposals
         self.dataset.reset_proposals()
 
     def correct_splits(
@@ -315,24 +313,25 @@ class LearnedSplitProofreader:
         """
         # Main
         t0 = time()
-        self.log(f"\nGenerate Proposals (radius={radius:g})...")
-        old_to_new = self.dataset.generate_proposals(
-            radius,
+        cone = f", cone={max_angle:g}°" if max_angle is not None else ""
+        self.log(f"\nGenerate Proposals (radius={radius:g}{cone})...")
+        kwargs = dict(
             allow_nonleaf_proposals=proposals_config.allow_nonleaf_proposals,
-            max_angle=max_angle,
-            max_attempts=1,
             max_proposals_per_leaf=proposals_config.max_proposals_per_leaf,
             min_size_with_proposals=proposals_config.min_size_with_proposals,
         )
+        if max_angle is None:
+            old_to_new = self.dataset.generate_proposals(radius, **kwargs)
+        else:
+            old_to_new = self.dataset.generate_long_range_proposals(
+                radius, max_angle, **kwargs
+            )
 
         # Report results
         n_proposals = format(self.dataset.n_proposals(), ",")
         n_proposals_blocked = self.dataset.n_proposals_blocked
         t, unit = util.time_writer(time() - t0)
 
-        self.log(f"Search Radius: {radius:g}")
-        if max_angle is not None:
-            self.log(f"Tangent Cone Angle: {max_angle:g}")
         self.log(f"# Proposals: {n_proposals}")
         self.log(f"# Proposals Blocked: {n_proposals_blocked}")
         self.log(f"Module Runtime: {t:.2f} {unit}")
@@ -477,7 +476,7 @@ class LearnedSplitProofreader:
         """
         n_accepts = 0
         proposals = [p for p in self.dataset.sorted_proposals() if p in preds]
-        for proposal in tqdm(proposals, desc="Adding Accepts"):
+        for proposal in proposals:
             # Check for leaf2leaf condition
             is_leaf2leaf = self.dataset.is_leaf2leaf(proposal)
             if only_leaf2leaf and not is_leaf2leaf:
@@ -550,8 +549,7 @@ class LearnedSplitProofreader:
         Dict[Frozenset[int], float]
             Dictionary that maps proposal IDs to model predictions.
         """
-        # Generate predictions. No autocast: it keeps GroupNorm in fp32 so
-        # it never sped up the backbone, and it would undo "half_vision".
+        # Generate predictions
         with torch.inference_mode():
             x = data.get_inputs().to(self.device)
             x["img"] = x["img"].contiguous(
