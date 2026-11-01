@@ -23,7 +23,6 @@ from neuron_proofreader.split_proofreading.proposal_generation import (
     ProposalGenerator,
     trim_proposal_endpoints,
 )
-from neuron_proofreader.utils import geometry_util
 
 
 class ProposalGraph(FragmentsGraph):
@@ -84,7 +83,6 @@ class ProposalGraph(FragmentsGraph):
         self.n_merges_blocked = 0
         self.n_proposals_blocked = 0
         self.rejected = set()
-        self.search_radius = None
         self.reset_proposals()
 
     # --- Update Structure ---
@@ -176,10 +174,6 @@ class ProposalGraph(FragmentsGraph):
         assert len(self.kdtree.data) == self.num_nodes()
         proposals = generator(search_radius, proposals=self.proposals)
         new_proposals = proposals - self.proposals
-
-        # Feature normalization uses the first radius seen
-        if self.search_radius is None:
-            self.search_radius = search_radius
         self.store_proposals(proposals)
         old_to_new = self.trim_proposals(new_proposals)
 
@@ -203,46 +197,6 @@ class ProposalGraph(FragmentsGraph):
                 self.node_proposals[j].discard(i)
             self.n_proposals_blocked += len(unlabeled)
         return old_to_new
-
-    def keep_fragments(self, swc_ids):
-        """
-        Removes every fragment whose SWC ID is not in the given set. Must be
-        called before proposals are generated.
-
-        Parameters
-        ----------
-        swc_ids : Set[str]
-            SWC IDs of fragments to keep.
-        """
-        rm_component_ids = [
-            component_id
-            for component_id, swc_id in self.component_id_to_swc_id.items()
-            if (swc_id if "." in swc_id else f"{swc_id}.0") not in swc_ids
-        ]
-        if rm_component_ids:
-            rm_nodes = np.where(
-                np.isin(self.node_component_id, rm_component_ids)
-            )[0]
-            self.remove_nodes(rm_nodes.tolist())
-
-    def set_gt_accepts(self, swc_id_pairs):
-        """
-        Sets accepted proposals by matching each proposal's endpoint SWC IDs
-        against the given pairs. Matching on SWC IDs rather than node IDs
-        lets ground truth computed at one node spacing be applied to a graph
-        built at another.
-
-        Parameters
-        ----------
-        swc_id_pairs : Set[Frozenset[str]]
-            Unordered pairs of SWC IDs whose proposal is accepted.
-        """
-        self.gt_accepts = set()
-        for proposal in self.proposals:
-            i, j = tuple(proposal)
-            pair = frozenset({self.node_swc_id(i), self.node_swc_id(j)})
-            if pair in swc_id_pairs:
-                self.gt_accepts.add(proposal)
 
     def is_mergeable(self, i, j):
         one_leaf = self.degree(i) == 1 or self.degree(j) == 1
@@ -389,27 +343,6 @@ class ProposalGraph(FragmentsGraph):
         return None
 
     # --- Proposal Feature Generation ---
-    def proposal_directionals(self, proposal, depth):
-        # Extract points along branches
-        i, j = proposal
-        path_i = self.path_thru_node(i, depth)
-        path_j = self.path_thru_node(j, depth)
-        path_xyz_i = self.node_xyz[np.array(path_i)]
-        path_xyz_j = self.node_xyz[np.array(path_j)]
-
-        # Compute tangent vectors - branches
-        dir_i = geometry_util.tangent(path_xyz_i)
-        dir_j = geometry_util.tangent(path_xyz_j)
-        dir_proposal = geometry_util.tangent(self.proposal_xyz(proposal))
-
-        # Compute features
-        dot_i = abs(np.dot(dir_proposal, dir_i))
-        dot_j = abs(np.dot(dir_proposal, dir_j))
-        dot_ij = np.dot(dir_i, dir_j)
-        if not self.is_leaf2leaf(proposal):
-            dot_ij = abs(dot_ij)
-        return np.array([dot_i, dot_j, dot_ij])
-
     def proposal_length(self, proposal):
         """
         Length of proposed edge.
@@ -419,53 +352,7 @@ class ProposalGraph(FragmentsGraph):
     def proposal_midpoint(self, proposal):
         return self.midpoint(*proposal)
 
-    def proposal_radius(self, proposal):
-        i, j = proposal
-        return self.node_feats["radius"][i], self.node_feats["radius"][j]
-
-    def proposal_xyz(self, proposal):
-        i, j = proposal
-        return self.node_xyz[i], self.node_xyz[j]
-
     # --- Helpers ---
-    def computation_graph(self):
-        def is_computation_node(i):
-            return self.degree(i) != 2 or len(self.node_proposals[i]) > 0
-
-        # Add nodes
-        graph = ProposalComputationGraph()
-        nodes = self.irreducible_nodes()
-        nodes = nodes.union(set().union(*self.proposals))
-        graph.proposals = self.proposals
-        graph.gt_accepts = self.gt_accepts
-
-        # Extract edges
-        visited = set()
-        for i in map(int, nodes):
-            for j in map(int, self.neighbors(i)):
-                # Check if already visited
-                if frozenset({i, j}) in visited:
-                    continue
-
-                # Walk through degree-2 chain
-                path = [i, j]
-                prev, curr = i, j
-                while not is_computation_node(curr):
-                    nbs = list(self.neighbors(curr))
-                    nxt = nbs[0] if nbs[1] == prev else nbs[1]
-                    path.append(nxt)
-                    prev, curr = curr, int(nxt)
-
-                # Add computation edge
-                edge_id = frozenset({i, curr})
-                graph.edge_to_path[edge_id] = np.array(path, dtype=int)
-                graph.pg_add_edge(i, curr)
-
-                # Mark edges as visited
-                for a, b in zip(path[:-1], path[1:]):
-                    visited.add(frozenset({a, b}))
-        return graph
-
     def is_soma(self, i):
         """
         Check whether a node belongs to a component containing a soma.
@@ -502,9 +389,6 @@ class ProposalGraph(FragmentsGraph):
 class ProposalComputationGraph(rx.PyGraph):
 
     def __new__(cls, *args, **kwargs):
-        # multigraph=False keeps repeated add_edge(u, v) idempotent, matching
-        # networkx.Graph semantics (parallel chains between the same pair of
-        # computation nodes would otherwise create duplicate edges).
         return super().__new__(cls, multigraph=False)
 
     def __init__(self, max_proposals=64):
@@ -513,7 +397,6 @@ class ProposalComputationGraph(rx.PyGraph):
 
         # Instance attributes
         self._pg_to_comp = {}  # ProposalGraph node ID → comp graph index
-        self.edge_to_path = dict()
         self.gt_accepts = set()
         self.max_proposals = max_proposals
         self.proposals = set()
@@ -535,11 +418,6 @@ class ProposalComputationGraph(rx.PyGraph):
         """Return ProposalGraph IDs of the neighbors of node pg_id."""
         comp_idx = self._pg_to_comp[pg_id]
         return [self[n] for n in self.neighbors(comp_idx)]
-
-    @property
-    def pg_nodes(self):
-        """Return all ProposalGraph node IDs present in this graph."""
-        return list(self._pg_to_comp.keys())
 
     @property
     def pg_edges(self):

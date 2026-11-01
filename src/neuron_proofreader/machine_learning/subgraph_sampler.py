@@ -216,8 +216,6 @@ class SubgraphSampler:
                     visited.add(curr)
 
                 # Store computation edge
-                edge_id = frozenset({i, curr})
-                subgraph.edge_to_path[edge_id] = np.array(path, dtype=int)
                 subgraph.pg_add_edge(i, curr)
 
     def add_proposals(self, subgraph, queue, visited, i):

@@ -182,9 +182,6 @@ class LearnedSplitProofreader:
             )
             return preds, n_new
 
-        # Length features are normalized by this radius
-        self.dataset.graph.search_radius = proposals_config.max_search_radius
-
         # Iterative proposal generation and classification
         t0 = time()
         preds = dict()
