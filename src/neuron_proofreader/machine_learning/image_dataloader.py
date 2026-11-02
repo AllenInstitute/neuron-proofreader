@@ -205,7 +205,9 @@ class PatchLoader(ABC):
                 if frozenset({i, j}) not in visited and j in nodes:
                     voxel_j = self.graph.node_local_voxel(j, offset)
                     voxels = geometry_util.make_digital_line(voxel_i, voxel_j)
-                    img_util.annotate_voxels(mask, voxels, fill_val=fill_val)
+                    img_util.annotate_voxels(
+                        mask, voxels, self.mask_kernel_size, fill_val=fill_val
+                    )
                     visited.add(frozenset({i, j}))
 
     def annotate_fragment(self, mask, subgraph, offset, fill_val=1):
@@ -216,7 +218,9 @@ class PatchLoader(ABC):
 
             # Populate mask
             voxels = geometry_util.make_digital_line(voxel1, voxel2)
-            img_util.annotate_voxels(mask, voxels, fill_val=fill_val)
+            img_util.annotate_voxels(
+                mask, voxels, self.mask_kernel_size, fill_val=fill_val
+            )
 
     def create_mask(self, center, shape, node):
         # Initializations
@@ -308,7 +312,6 @@ class DetectionPatchLoader(PatchLoader):
         if self.fov_merge is not None:
             img = img_util.resize(img, self.patch_shape)
             mask = img_util.resize_nearest(mask, self.patch_shape)
-        mask = img_util.soften_mask(mask, self.mask_sigma)
 
         patches = self.stack(img, mask)
         if self.transform:
