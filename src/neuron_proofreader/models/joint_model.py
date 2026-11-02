@@ -25,8 +25,6 @@ from neuron_proofreader.models.vision_models import CNN3D, CenterWeightedPool3D
 from neuron_proofreader.models.proofreading_models import ArboristMergeDetector
 from neuron_proofreader.utils.ml_util import FeedForwardNet
 
-# The GAT layers are lazy, so a checkpoint written before the first forward
-# pass holds UninitializedParameters that weights_only loading rejects.
 torch.serialization.add_safe_globals([torch.nn.parameter.UninitializedParameter])
 
 

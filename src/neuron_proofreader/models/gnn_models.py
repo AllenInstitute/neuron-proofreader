@@ -84,6 +84,8 @@ class ProposalTreeEncoder(nn.Module):
                 zs.append(z_curves[list(idx)].mean(dim=0))
         return torch.stack(zs)
 
+    def save(self, path):
+        torch.save({"config": self.config, "state_dict": self.state_dict()}, path)
 
 RELATIONS = [
     ("branch", "to", "branch"),

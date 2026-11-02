@@ -171,6 +171,8 @@ class LearnedSplitProofreader:
                 proposals_config, radius, max_angle=max_angle
             )
             preds = self.remap_preds(preds, old_to_new)
+            live = set(self.dataset.list_proposals())
+            preds = {p: v for p, v in preds.items() if p in live}
             n_new = len(set(self.dataset.list_proposals()) - preds.keys())
             self.log(f"# New Proposals: {format(n_new, ',')}\n")
             preds = self.correct_splits(
