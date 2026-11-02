@@ -483,6 +483,49 @@ def normalize(img, percentiles=(1, 99.5)):
     return np.clip(out, 0, 1, out=out)
 
 
+def normalize_lut(img, clip, percentiles=(1, 99.5)):
+    """
+    Equivalent to normalize(np.minimum(img, clip), percentiles) for small
+    unsigned integer images, computed through a histogram and a lookup
+    table: one pass to count values, one gather to write the output, instead
+    of a full percentile selection plus four float passes.
+
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Unsigned integer image (uint8 or uint16).
+    clip : int
+        Intensity value that voxel brightness is clipped to.
+    percentiles : Tuple[float], optional
+        Percentiles used to normalize the image. Default is (1, 99.5).
+
+    Returns
+    -------
+    numpy.ndarray
+        Normalized float32 image in [0, 1].
+    """
+    n_bins = int(np.iinfo(img.dtype).max) + 1
+    hist = np.bincount(img.ravel(), minlength=n_bins)
+    clip = min(int(clip), n_bins - 1)
+    hist[clip] += hist[clip + 1:].sum()
+    hist[clip + 1:] = 0
+    cdf = np.cumsum(hist)
+
+    # numpy's default "linear" percentile on the clipped values
+    n = img.size
+    def percentile(q):
+        rank = q / 100 * (n - 1)
+        lo, hi = int(np.floor(rank)), int(np.ceil(rank))
+        v_lo = np.searchsorted(cdf, lo + 1)
+        v_hi = np.searchsorted(cdf, hi + 1)
+        return v_lo + (v_hi - v_lo) * (rank - lo)
+
+    mn, mx = percentile(percentiles[0]), percentile(percentiles[1])
+    values = np.minimum(np.arange(n_bins, dtype=np.float64), clip)
+    lut = np.clip((values - mn) / (mx - mn + 1e-5), 0, 1).astype(np.float32)
+    return lut[img]
+
+
 def pad_to_shape(img, target_shape, pad_value=0):
     """
     Pads a NumPy image array to the specified target shape.

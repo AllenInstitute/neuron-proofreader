@@ -154,7 +154,7 @@ class PatchLoader(ABC):
 
     max_voxel_shift = 5
 
-    def __init__(self, graph, img_config):
+    def __init__(self, graph, img_config, cache=None):
         """
         Instantiates a PatchLoader object.
 
@@ -164,9 +164,13 @@ class PatchLoader(ABC):
             Graph used to compute patch voxel coordinates.
         img_config : ImageConfig or None
             Config object with image processing parameters.
-        img_path : str
-            Path to whole-brain image.
+        cache : PatchCache, optional
+            On-disk cache of raw windows around sites. Reads are served from
+            the cache when possible and fall back to the image on a miss.
+            Default is None, in which case every patch is read from the
+            image.
         """
+        self.cache = cache
         self.config = img_config or ImageConfig()
         self.graph = graph
         self.img = TensorStoreImage(img_config.img_path)
@@ -249,7 +253,16 @@ class PatchLoader(ABC):
         Waits for a patch read started with "self.img.read_async" and
         preprocesses it exactly as "read_image" does.
         """
-        patch = self.img.wait(future, center, shape)
+        return self.preprocess(self.img.wait(future, center, shape))
+
+    def preprocess(self, patch):
+        """
+        Clips and percentile-normalizes a raw patch.
+        """
+        if np.issubdtype(patch.dtype, np.unsignedinteger) and patch.itemsize <= 2:
+            return img_util.normalize_lut(
+                patch, self.brightness_clip, percentiles=self.percentiles
+            )
         patch = np.minimum(patch, self.brightness_clip)
         return img_util.normalize(patch, percentiles=self.percentiles).astype(
             np.float32
@@ -285,8 +298,11 @@ class DetectionPatchLoader(PatchLoader):
 
     # --- Implementation of Abstract Inferface ---
     def __call__(self, node):
-        center, shape = self.compute_patch_specs(node)
-        img = self.read_image(center, shape)
+        if self.cache is None:
+            center, shape = self.compute_patch_specs(node)
+            img = self.read_image(center, shape)
+        else:
+            center, shape, img = self.read_cached_image(node)
         mask = self.create_mask(center, shape, node)
 
         if self.fov_merge is not None:
@@ -303,6 +319,53 @@ class DetectionPatchLoader(PatchLoader):
         voxel = self.graph.node_voxel(node)
         voxel = self.adjust_voxel(voxel)
         return voxel, self.fov_merge or self.patch_shape
+
+    # --- Cache ---
+    def read_cached_image(self, node):
+        """
+        Reads the preprocessed patch around "node" from the cached window,
+        cropping out the same random shift "compute_patch_specs" applies.
+
+        Returns
+        -------
+        Tuple[numpy.ndarray, Tuple[int], numpy.ndarray]
+            Patch center, patch shape, and preprocessed image patch.
+        """
+        voxel = self.graph.node_voxel(node)
+        shape = self.fov_merge or self.patch_shape
+        window = self.cached_window(voxel, shape)
+
+        center = self.adjust_voxel(voxel)
+        starts = np.subtract(center, voxel) + self.cache.margin
+        img = window[tuple(slice(s, s + n) for s, n in zip(starts, shape))]
+        return center, shape, self.preprocess(img)
+
+    def cached_window(self, voxel, shape):
+        """
+        Gets the raw window of "shape" plus the cache margin around "voxel",
+        reading it from the image and storing it on a cache miss.
+        """
+        window = self.cache.get(voxel, shape)
+        if window is None:
+            window = self.img.read(voxel, self.cache.window_shape(shape))
+            self.cache.put(voxel, shape, window)
+        return window
+
+    def cache_patch(self, node):
+        """
+        Stores the window around "node" if it is not cached yet.
+
+        Returns
+        -------
+        bool
+            True if the window was read from the image, False if cached.
+        """
+        voxel = self.graph.node_voxel(node)
+        shape = self.fov_merge or self.patch_shape
+        if self.cache.contains(voxel, shape):
+            return False
+        self.cached_window(voxel, shape)
+        return True
 
 
 class DetectionBatchLoader(PatchLoader):
