@@ -226,6 +226,21 @@ class BrainDataset:
                 self.add_nonmerge_sites(n_add)
         self.random_nonmerge_site_prob = 0
 
+    def trim_nonmerge_sites(self, neg_multiplier):
+        """
+        Reduces a nonmerge pool restored from a cache built with a larger
+        multiplier to "neg_multiplier" sites per merge site. Annotated sites
+        are kept; random sites are dropped from the end so the pool stays
+        fixed across runs.
+        """
+        n_drop = len(self.nonmerge_sites) - neg_multiplier * len(self.merge_sites)
+        if n_drop > 0:
+            is_random = self.nonmerge_sites["filename"] == "random"
+            drop = self.nonmerge_sites.index[is_random][-n_drop:]
+            self.nonmerge_sites = self.nonmerge_sites.drop(drop).reset_index(
+                drop=True
+            )
+
     def is_valid_nonmerge_site(self, node):
         # Reject if high-degree
         if self.degree(node) > 3:
@@ -648,6 +663,8 @@ def create_dataset_collection(
                 dataset.freeze_nonmerge_sites(cache_neg_multiplier)
             if cache is not None:
                 cache.save_sites(dataset.merge_sites, dataset.nonmerge_sites)
+        elif dataset_mode == "Val":
+            dataset.trim_nonmerge_sites(val_neg_multiplier)
         print(dataset)
 
         # Add dataset to collection
