@@ -37,6 +37,7 @@ import torch
 from neuron_proofreader.machine_learning.image_dataloader import (
     DetectionPatchLoader as PatchLoader,
 )
+from neuron_proofreader.machine_learning.patch_cache import PatchCache
 from neuron_proofreader.fragments_graph import FragmentsGraph
 from arborist.data.augmentation import GraphTransforms
 from arborist.utils.swc_loading import Reader
@@ -58,6 +59,10 @@ class BrainDataset:
         no random nonmerge sites are ever sampled for this brain.
     subgraph_depth : float
         Radius (in microns) used when extracting rooted subgraphs.
+    cache : PatchCache, optional
+        On-disk cache of image windows around sites. If it holds a site
+        manifest, the merge and nonmerge sites are restored from it (so the
+        nonmerge pool is fixed) instead of being loaded from "sites_prefix".
     """
 
     random_branching_site_probability = 0.7
@@ -75,10 +80,12 @@ class BrainDataset:
         random_nonmerge_site_prob=0.5,
         rebalance_classes=True,
         subgraph_depth=100,
+        cache=None,
     ):
         # Instance attributes
         self.annotated_only = annotated_only
         self.brain_id = brain_id
+        self.cache = cache
         self.class_ratios = class_ratios
         self.max_brain_examples = max_brain_examples
         self.random_nonmerge_site_prob = (
@@ -89,14 +96,22 @@ class BrainDataset:
 
         # Core data structures
         self.graph = self.load_fragments(graph_config, swcs_path)
-        self.merge_sites = self.load_sites(
-            os.path.join(sites_prefix, "merge_sites")
-        )
-        self.nonmerge_sites = self.load_sites(
-            os.path.join(sites_prefix, "nonmerge_sites")
-        )
+        if cache is not None and cache.has_sites():
+            sites = cache.load_sites()
+            self.merge_sites = self.sites_frame(sites["merge_sites"])
+            self.nonmerge_sites = self.sites_frame(sites["nonmerge_sites"])
+            self.random_nonmerge_site_prob = 0
+        else:
+            self.merge_sites = self.load_sites(
+                os.path.join(sites_prefix, "merge_sites")
+            )
+            self.nonmerge_sites = self.load_sites(
+                os.path.join(sites_prefix, "nonmerge_sites")
+            )
         self.patch_loader = (
-            PatchLoader(self.graph, img_config) if img_config else None
+            PatchLoader(self.graph, img_config, cache=cache)
+            if img_config
+            else None
         )
 
         self.set_merge_site_info()
@@ -114,13 +129,24 @@ class BrainDataset:
         return graph
 
     def load_sites(self, sites_prefix):
-        sites = list()
         swc_reader = Reader(verbose=False)
-        for swc_dict in swc_reader(sites_prefix):
-            xyz = swc_dict["xyz"][0]
+        records = [
+            {"xyz": swc_dict["xyz"][0], "filename": swc_dict["swc_name"]}
+            for swc_dict in swc_reader(sites_prefix)
+        ]
+        return self.sites_frame(records)
+
+    def sites_frame(self, records):
+        """
+        Builds a site table from records with "xyz" and "filename", snapping
+        each site to its nearest graph node.
+        """
+        sites = list()
+        for record in records:
+            xyz = np.asarray(record["xyz"])
             dd, ii = self.kdtree.query(xyz)
             sites.append(
-                {"xyz": xyz, "node": ii, "filename": swc_dict["swc_name"]}
+                {"xyz": xyz, "node": ii, "filename": record["filename"]}
             )
         return pd.DataFrame(sites)
 
@@ -186,6 +212,19 @@ class BrainDataset:
             )
         else:
             self.nonmerge_sites = pd.DataFrame(new_sites)
+
+    def freeze_nonmerge_sites(self, neg_multiplier):
+        """
+        Replaces per-epoch random negative sampling with a fixed pool of
+        "neg_multiplier" nonmerge sites per merge site, so every example
+        maps to a site that can be cached.
+        """
+        if not self.annotated_only:
+            n_target = neg_multiplier * len(self.merge_sites)
+            n_add = n_target - len(self.nonmerge_sites)
+            if n_add > 0:
+                self.add_nonmerge_sites(n_add)
+        self.random_nonmerge_site_prob = 0
 
     def is_valid_nonmerge_site(self, node):
         # Reject if high-degree
@@ -538,7 +577,17 @@ def create_dataset_collection(
     random_nonmerge_site_prob=0.5,
     subgraph_depth=100,
     val_neg_multiplier=5,
+    cache_dir=None,
+    cache_neg_multiplier=5,
 ):
+    """
+    cache_dir : str, optional
+        Root of an on-disk image patch cache (see PatchCache). When set, the
+        nonmerge pool of each training brain is frozen to
+        "cache_neg_multiplier" sites per merge site and recorded in the
+        cache, so every example is cacheable and later runs see the same
+        sites. Default is None.
+    """
     # Set parameters based on mode
     print(f"\nLoading {dataset_mode} Dataset...")
     assert dataset_mode in ["Train", "Val"]
@@ -573,6 +622,9 @@ def create_dataset_collection(
 
         # Add dataset
         print(f"   \nBrain ID [{i}/{len(brain_ids)}]: {brain_id}")
+        cache = None
+        if cache_dir is not None:
+            cache = PatchCache(cache_dir, brain_id, PatchLoader.max_voxel_shift)
         dataset = BrainDataset(
             brain_id,
             sites_path,
@@ -585,15 +637,18 @@ def create_dataset_collection(
             subgraph_depth=subgraph_depth,
             random_nonmerge_site_prob=random_nonmerge_site_prob,
             rebalance_classes=rebalance_classes,
+            cache=cache,
         )
-        print(dataset)
 
-        # Check whether to generate examples for validation
-        if dataset_mode == "Val" and not dataset.annotated_only:
-            num_target_neg = val_neg_multiplier * len(dataset.merge_sites)
-            num_added_neg = num_target_neg - len(dataset.nonmerge_sites)
-            if num_added_neg > 0:
-                dataset.add_nonmerge_sites(num_added_neg)
+        # Fix the nonmerge pool unless it was restored from the cache
+        if cache is None or not cache.has_sites():
+            if dataset_mode == "Val":
+                dataset.freeze_nonmerge_sites(val_neg_multiplier)
+            elif cache is not None:
+                dataset.freeze_nonmerge_sites(cache_neg_multiplier)
+            if cache is not None:
+                cache.save_sites(dataset.merge_sites, dataset.nonmerge_sites)
+        print(dataset)
 
         # Add dataset to collection
         datasets.append(dataset)

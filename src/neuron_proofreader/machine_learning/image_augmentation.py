@@ -12,6 +12,7 @@ from scipy.ndimage import gaussian_filter, zoom
 
 import numpy as np
 import random
+import threading
 
 
 # --- Image Augmentation ---
@@ -53,7 +54,7 @@ class ImageTransforms:
             ]
         )
         patches = self.apply(patches, transform)
-        patches = np.clip(patches, 0, 1)
+        np.clip(patches, 0, 1, out=patches)
         return np.ascontiguousarray(patches)
 
     def apply(self, patches, transforms):
@@ -89,10 +90,10 @@ class RandomFlip3D:
             Image with the shape (2, H, W, D), where the first channel is the
             raw image and second is a mask.
         """
+        # Views, not copies; ImageTransforms makes the result contiguous once
         for axis in self.axes:
             if random.random() > 0.5:
-                patches[0] = np.flip(patches[0], axis=axis)
-                patches[1] = np.flip(patches[1], axis=axis)
+                patches = np.flip(patches, axis=axis + 1)
         return patches
 
 
@@ -117,8 +118,9 @@ class RandomRotation3D:
         for axes in self.axes:
             if random.random() < 0.5:
                 k = random.randint(1, 3)
-                patches[0] = np.rot90(patches[0], k=k, axes=axes)
-                patches[1] = np.rot90(patches[1], k=k, axes=axes)
+                patches = np.rot90(
+                    patches, k=k, axes=(axes[0] + 1, axes[1] + 1)
+                )
         return patches
 
 
@@ -205,7 +207,7 @@ class RandomContrast3D:
             Contrasted image.
         """
         factor = random.uniform(*self.factor_range)
-        patches[0] = patches[0] * factor
+        patches[0] *= factor
         return patches
 
 
@@ -225,10 +227,13 @@ class RandomNoise3D:
             Default is 0.3.
         """
         self.max_std = max_std
+        # The legacy global RandomState serializes the 32 loader threads on
+        # one lock; a Generator per thread does not
+        self._local = threading.local()
 
     def __call__(self, patches):
         """
-        Adds Gaussian noise to the input 3D image.
+        Adds uniform noise to the input 3D image.
 
         Parameters
         ----------
@@ -236,8 +241,14 @@ class RandomNoise3D:
             Image with the shape (2, H, W, D), where the first channel is the
             raw image and second is a mask.
         """
+        rng = getattr(self._local, "rng", None)
+        if rng is None:
+            rng = self._local.rng = np.random.default_rng()
         std = self.max_std * random.random()
-        patches[0] += np.random.uniform(-std, std, patches[0].shape)
+        noise = rng.random(patches[0].shape, dtype=np.float32)
+        noise *= 2 * std
+        noise -= std
+        patches[0] += noise
         return patches
 
 
