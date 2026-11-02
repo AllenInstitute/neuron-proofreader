@@ -62,7 +62,7 @@ class ProposalPatchExtractor:
             patch. Default is 50.
         """
         self.graph = graph
-        self.mask_sigma = img_config.mask_sigma
+        self.mask_kernel_size = img_config.mask_kernel_size
         self.patch_shape = img_config.patch_shape
         self.patch_loader = ProposalPatchLoader(graph, img_config, padding)
         self.transform = img_config.transform
@@ -118,13 +118,14 @@ class ProposalPatchExtractor:
         mask = np.zeros(img.shape, dtype=np.float32)
         for node in proposal:
             voxels = self.branch_voxels(node, offset, img.shape)
-            img_util.annotate_voxels(mask, voxels)
+            img_util.annotate_voxels(mask, voxels, self.mask_kernel_size)
         i, j = (self.graph.node_local_voxel(n, offset) for n in proposal)
-        img_util.annotate_voxels(mask, geometry_util.make_digital_line(i, j))
+        img_util.annotate_voxels(
+            mask, geometry_util.make_digital_line(i, j), self.mask_kernel_size
+        )
 
         img = img_util.resize(img, self.patch_shape)
         mask = img_util.resize_nearest(mask, self.patch_shape)
-        mask = img_util.soften_mask(mask, self.mask_sigma)
         patch = np.stack([img, mask], axis=0)
         if self.transform is not None:
             patch = self.transform(patch)
