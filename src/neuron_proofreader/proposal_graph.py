@@ -94,6 +94,7 @@ class ProposalGraph(FragmentsGraph):
         # Call parent class
         old_proposals = self.list_proposals()
         old_rejected = list(self.rejected)
+        old_accepts = list(self.accepts)
         old_to_new = super().relabel_nodes()
 
         # Update proposals, dropping any whose endpoint was removed
@@ -104,6 +105,11 @@ class ProposalGraph(FragmentsGraph):
         self.rejected = {
             frozenset({int(old_to_new[i]), int(old_to_new[j])})
             for i, j in old_rejected
+            if i in old_to_new and j in old_to_new
+        }
+        self.accepts = {
+            frozenset({int(old_to_new[i]), int(old_to_new[j])})
+            for i, j in old_accepts
             if i in old_to_new and j in old_to_new
         }
         return old_to_new
