@@ -508,20 +508,116 @@ def normalize_lut(img, clip, percentiles=(1, 99.5)):
     clip = min(int(clip), n_bins - 1)
     hist[clip] += hist[clip + 1:].sum()
     hist[clip + 1:] = 0
-    cdf = np.cumsum(hist)
 
-    # numpy's default "linear" percentile on the clipped values
-    n = img.size
-    def percentile(q):
-        rank = q / 100 * (n - 1)
-        lo, hi = int(np.floor(rank)), int(np.ceil(rank))
-        v_lo = np.searchsorted(cdf, lo + 1)
-        v_hi = np.searchsorted(cdf, hi + 1)
-        return v_lo + (v_hi - v_lo) * (rank - lo)
-
-    mn, mx = percentile(percentiles[0]), percentile(percentiles[1])
+    mn = _hist_percentile(hist, percentiles[0])
+    mx = _hist_percentile(hist, percentiles[1])
     values = np.minimum(np.arange(n_bins, dtype=np.float64), clip)
     lut = np.clip((values - mn) / (mx - mn + 1e-5), 0, 1).astype(np.float32)
+    return lut[img]
+
+
+def _hist_percentile(hist, q):
+    """
+    numpy's default "linear" percentile of the values counted in "hist",
+    where hist[v] is the number of voxels with value v.
+    """
+    cdf = np.cumsum(hist)
+    rank = q / 100 * (cdf[-1] - 1)
+    lo, hi = int(np.floor(rank)), int(np.ceil(rank))
+    v_lo = np.searchsorted(cdf, lo + 1)
+    v_hi = np.searchsorted(cdf, hi + 1)
+    return v_lo + (v_hi - v_lo) * (rank - lo)
+
+
+def background_stats(img):
+    """
+    Estimates the background level and noise of a sparse image. The
+    background is the mode of the (integer-rounded) intensities and the
+    noise is the scaled median absolute deviation from it. Neurites fill at
+    most a few percent of a patch, so both are set by the background and do
+    not depend on how many neurites the patch contains or how bright they
+    are, unlike an upper percentile.
+
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Image patch with nonnegative intensities.
+
+    Returns
+    -------
+    Tuple[float, float]
+        Background level and noise standard deviation (1.4826 * MAD, the
+        standard deviation of a Gaussian with that MAD).
+    """
+    if np.issubdtype(img.dtype, np.integer):
+        values = img.ravel()
+    else:
+        values = np.rint(img).astype(np.int64).ravel()
+    hist = np.bincount(values)
+    mode = int(np.argmax(hist))
+    dev = np.abs(np.arange(len(hist)) - mode)
+    dev_hist = np.bincount(dev, weights=hist, minlength=len(hist))
+    mad = _hist_percentile(dev_hist, 50)
+    return float(mode), 1.4826 * float(mad)
+
+
+def normalize_asinh(img, scale=100.0, stats=None):
+    """
+    Normalizes an image with an inverse hyperbolic sine stretch anchored on
+    the background of the patch:
+
+        y = asinh((x - mode) / scale)
+
+    Background maps to 0. Intensities within about one scale of it are
+    stretched linearly, so faint neurites keep their contrast, and brighter
+    intensities are compressed logarithmically instead of clipped, so the
+    interior of a soma or a bright bundle keeps its structure. The mode is
+    the one anchor every patch of a sparse volume has, so a camera offset
+    that differs between brains drops out.
+
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Image to be normalized.
+    scale : float, optional
+        Softening scale in raw intensity units. Default is 100.
+    stats : Tuple[float, float], optional
+        Background level and noise standard deviation, see background_stats.
+        Only the background is used here; the noise is carried along for the
+        raw intensity augmentation. Default is None, in which case the
+        statistics are estimated from "img".
+
+    Returns
+    -------
+    numpy.ndarray
+        Normalized float32 image.
+    """
+    mode = (stats if stats is not None else background_stats(img))[0]
+    out = img.astype(np.float32)
+    out -= np.float32(mode)
+    out /= np.float32(scale)
+    return np.arcsinh(out, out=out)
+
+
+def normalize_asinh_lut(img, scale=100.0):
+    """
+    Equivalent to normalize_asinh for small unsigned integer images, computed
+    through a lookup table over the dtype's values like normalize_lut.
+
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Unsigned integer image (uint8 or uint16).
+    scale : float, optional
+        See normalize_asinh. Default is 100.
+
+    Returns
+    -------
+    numpy.ndarray
+        Normalized float32 image.
+    """
+    values = np.arange(int(np.iinfo(img.dtype).max) + 1, dtype=np.float32)
+    lut = normalize_asinh(values, scale, stats=background_stats(img))
     return lut[img]
 
 

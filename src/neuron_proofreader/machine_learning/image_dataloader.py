@@ -174,7 +174,7 @@ class PatchLoader(ABC):
         self.config = img_config or ImageConfig()
         self.graph = graph
         self.img = TensorStoreImage(img_config.img_path)
-        self.transform = ImageTransforms() if self.config.transform else None
+        self.transform = self.config.transform
 
     # --- Abstract Interface ---
     @abstractmethod
@@ -261,8 +261,11 @@ class PatchLoader(ABC):
 
     def preprocess(self, patch):
         """
-        Clips and percentile-normalizes a raw patch.
+        Normalizes a raw patch as "self.normalization" specifies, see
+        ImageConfig.
         """
+        if self.normalization == "asinh":
+            return self.preprocess_asinh(patch)
         if np.issubdtype(patch.dtype, np.unsignedinteger) and patch.itemsize <= 2:
             return img_util.normalize_lut(
                 patch, self.brightness_clip, percentiles=self.percentiles
@@ -271,6 +274,23 @@ class PatchLoader(ABC):
         return img_util.normalize(patch, percentiles=self.percentiles).astype(
             np.float32
         )
+
+    def preprocess_asinh(self, patch):
+        """
+        Asinh-normalizes a raw patch. In training mode the raw intensity
+        augmentation is applied first, with the normalization anchored on
+        the statistics of the unaugmented patch so that a gain change is
+        seen by the model instead of being normalized away.
+        """
+        is_uint = np.issubdtype(patch.dtype, np.unsignedinteger)
+        if self.raw_transform is None and is_uint and patch.itemsize <= 2:
+            return img_util.normalize_asinh_lut(patch, self.asinh_scale)
+
+        stats = img_util.background_stats(patch)
+        patch = patch.astype(np.float32)
+        if self.raw_transform is not None:
+            patch = self.raw_transform(patch, *stats)
+        return img_util.normalize_asinh(patch, self.asinh_scale, stats=stats)
 
     # --- Helpers ---
     def __getattr__(self, name):

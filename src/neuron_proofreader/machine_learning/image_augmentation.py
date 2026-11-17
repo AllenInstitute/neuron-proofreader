@@ -22,12 +22,21 @@ class ImageTransforms:
     patch.
     """
 
-    def __init__(self):
+    def __init__(self, intensity=True):
         """
         Initializes an ImageTransforms instance that applies augmentation to
         an image and segmentation patch.
+
+        Parameters
+        ----------
+        intensity : bool, optional
+            Whether to apply the intensity transforms, which act on
+            normalized values in [0, 1]. False applies the geometric
+            transforms only, for pipelines that augment intensities on the
+            raw image instead (see RawIntensityTransforms). Default is True.
         """
         # Instance attributes
+        self.intensity = intensity
         self.geometric_transform = [RandomFlip3D(), RandomRotation3D()]
         self.intensity1_transform = [RandomNoise3D(), RandomContrast3D()]
         self.intensity2_transform = [RandomSmooth3D(), RandomContrast3D()]
@@ -47,14 +56,15 @@ class ImageTransforms:
         patches = self.apply(patches, self.geometric_transform)
 
         # Apply intensity transform
-        transform = random.choice(
-            [
-                self.intensity1_transform,
-                self.intensity2_transform,
-            ]
-        )
-        patches = self.apply(patches, transform)
-        np.clip(patches, 0, 1, out=patches)
+        if self.intensity:
+            transform = random.choice(
+                [
+                    self.intensity1_transform,
+                    self.intensity2_transform,
+                ]
+            )
+            patches = self.apply(patches, transform)
+            np.clip(patches, 0, 1, out=patches)
         return np.ascontiguousarray(patches)
 
     def apply(self, patches, transforms):
@@ -287,3 +297,115 @@ class RandomSmooth3D:
         sigma = random.uniform(0, self.max_sigma)
         patches[0] = gaussian_filter(patches[0], sigma=sigma)
         return patches
+
+
+# --- Raw Intensity Transforms ---
+class RawIntensityTransforms:
+    """
+    Intensity augmentation applied to the raw image before the asinh
+    normalization, in units of the patch's own noise level.
+
+    The transforms above act on normalized values, which the asinh stretch
+    compresses nonlinearly: a contrast factor there is a power law on the raw
+    image, and additive noise there is far larger in raw units on bright
+    voxels than on dim ones. On the raw image each transform keeps one
+    meaning on every brain: a gain change is the same structure recorded
+    brighter or dimmer, noise is sensor noise, smoothing is a wider point
+    spread function.
+    """
+
+    def __init__(self, gain_range=(0.75, 1.5), max_noise=1.0, max_sigma=1.0):
+        """
+        Initializes a RawIntensityTransforms instance.
+
+        Parameters
+        ----------
+        gain_range : Tuple[float], optional
+            Range of the log-uniform gain factor. Default is (0.75, 1.5).
+        max_noise : float, optional
+            Maximum standard deviation of the added noise, in units of the
+            patch noise. Default is 1.
+        max_sigma : float, optional
+            Maximum standard deviation of the Gaussian smoothing kernel in
+            voxels. Default is 1.
+        """
+        self.gain = RandomGain(gain_range)
+        self.noise = RandomRawNoise(max_noise)
+        self.smooth = RandomRawSmooth(max_sigma)
+
+    def __call__(self, img, bg, sigma):
+        """
+        Applies either noise or smoothing, then a gain change, to a raw
+        image.
+
+        Parameters
+        ----------
+        img : numpy.ndarray
+            Raw float32 image, modified in place.
+        bg : float
+            Background level estimated before augmentation.
+        sigma : float
+            Noise standard deviation estimated before augmentation. The
+            normalization uses these same values, so a gain change makes the
+            patch look brighter instead of being normalized away.
+
+        Returns
+        -------
+        numpy.ndarray
+            Augmented raw image.
+        """
+        img = random.choice([self.noise, self.smooth])(img, bg, sigma)
+        return self.gain(img, bg, sigma)
+
+
+class RandomGain:
+    """
+    Scales the signal above background by a log-uniform factor, so that
+    doubling and halving are equally likely.
+    """
+
+    def __init__(self, gain_range=(0.75, 1.5)):
+        self.log_range = (np.log(gain_range[0]), np.log(gain_range[1]))
+
+    def __call__(self, img, bg, sigma):
+        gain = np.float32(np.exp(random.uniform(*self.log_range)))
+        img -= np.float32(bg)
+        img *= gain
+        img += np.float32(bg)
+        return img
+
+
+class RandomRawNoise:
+    """
+    Adds Gaussian noise with a standard deviation of up to "max_std" times
+    the noise level of the patch.
+    """
+
+    def __init__(self, max_std=1.0):
+        self.max_std = max_std
+        # See RandomNoise3D: a Generator per thread avoids the global lock
+        self._local = threading.local()
+
+    def __call__(self, img, bg, sigma):
+        rng = getattr(self._local, "rng", None)
+        if rng is None:
+            rng = self._local.rng = np.random.default_rng()
+        std = np.float32(self.max_std * sigma * random.random())
+        noise = rng.standard_normal(img.shape, dtype=np.float32)
+        noise *= std
+        img += noise
+        return img
+
+
+class RandomRawSmooth:
+    """
+    Applies Gaussian smoothing with a kernel of up to "max_sigma" voxels.
+    """
+
+    def __init__(self, max_sigma=1.0):
+        self.max_sigma = max_sigma
+
+    def __call__(self, img, bg, sigma):
+        return gaussian_filter(
+            img, sigma=random.uniform(0, self.max_sigma), output=img
+        )
