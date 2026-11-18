@@ -154,3 +154,14 @@ def test_affine_skipped_is_a_plain_resize():
     np.testing.assert_array_equal(
         out_mask, img_util.resize_nearest(mask, (24, 24, 24))
     )
+
+
+def test_patch_loader_keeps_train_transforms_after_val_mode(monkeypatch):
+    from neuron_proofreader.machine_learning import image_dataloader
+
+    monkeypatch.setattr(image_dataloader, "TensorStoreImage", lambda path: None)
+    config = ImageConfig(normalization="asinh")
+    config.set_train_mode()
+    loader = image_dataloader.DetectionPatchLoader(None, config)
+    config.set_val_mode()
+    assert loader.transform is not None and loader.raw_transform is not None

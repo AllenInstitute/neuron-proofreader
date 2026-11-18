@@ -175,6 +175,9 @@ class PatchLoader(ABC):
         self.graph = graph
         self.img = TensorStoreImage(img_config.img_path)
         self.transform = self.config.transform
+        # The config is shared by the train and val datasets and its mode is
+        # switched between them, so the transforms are fixed here
+        self.raw_transform = self.config.raw_transform
 
     # --- Abstract Interface ---
     @abstractmethod
