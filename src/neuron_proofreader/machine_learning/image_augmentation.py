@@ -152,7 +152,7 @@ class RandomAffine3D:
     covered, so only the periphery of the output is affected.
     """
 
-    def __init__(self, scale_range=(0.85, 1.15), p=0.75):
+    def __init__(self, scale_range=(0.85, 1.15), p=0.5):
         """
         Initializes a RandomAffine3D transformer.
 
@@ -163,7 +163,7 @@ class RandomAffine3D:
         p : float, optional
             Probability of applying the transform. Otherwise the patches are
             only resized, as they are at inference, so the model also trains
-            on patches without empty corners. Default is 0.75.
+            on patches without empty corners. Default is 0.5.
         """
         self.log_range = (np.log(scale_range[0]), np.log(scale_range[1]))
         self.p = p
