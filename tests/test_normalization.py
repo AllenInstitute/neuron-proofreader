@@ -9,7 +9,9 @@ import pytest
 from neuron_proofreader.configs import ImageConfig
 from neuron_proofreader.machine_learning.image_augmentation import (
     ImageTransforms,
+    RandomAffine3D,
     RawIntensityTransforms,
+    random_rotation,
 )
 from neuron_proofreader.utils import img_util
 
@@ -95,8 +97,8 @@ def test_raw_transforms_keep_shape_dtype_and_background():
     for _ in range(10):
         out = RawIntensityTransforms()(patch.copy(), mode, sigma)
         assert out.shape == patch.shape and out.dtype == np.float32
-        # Gain scales about the background, noise is zero mean and
-        # smoothing preserves the mean, so the background stays put
+        # Gain scales about the background and noise is zero mean, so
+        # the background stays put
         assert np.median(out) == pytest.approx(mode, abs=sigma)
 
 
@@ -114,3 +116,41 @@ def test_image_config_rejects_unknown_normalization():
     assert ImageConfig(normalization="asinh").normalization == "asinh"
     with pytest.raises(ValueError):
         ImageConfig(normalization="arcsinh")
+
+
+def test_raw_noise_has_a_floor_on_flat_background():
+    flat = np.full((16, 16, 16), 7, dtype=np.float32)
+    out = [RawIntensityTransforms()(flat.copy(), 7.0, 0.0).std() for _ in range(10)]
+    assert max(out) > 0.5
+
+
+def test_random_rotation_is_a_rotation():
+    for _ in range(10):
+        rot = random_rotation()
+        np.testing.assert_allclose(rot @ rot.T, np.eye(3), atol=1e-5)
+        assert np.linalg.det(rot) == pytest.approx(1, abs=1e-5)
+
+
+def test_affine_resamples_image_and_mask_together():
+    rng = np.random.default_rng(0)
+    img = rng.random((32, 32, 32), dtype=np.float32)
+    mask = np.zeros((32, 32, 32), dtype=np.float32)
+    mask[12:20, 12:20, 12:20] = 1
+    for _ in range(10):
+        out_img, out_mask = RandomAffine3D(p=1.0)(img, mask, (24, 24, 24))
+        assert out_img.shape == out_mask.shape == (24, 24, 24)
+        assert out_img.dtype == out_mask.dtype == np.float32
+        assert set(np.unique(out_mask)) <= {0.0, 1.0}
+        # The center of the patch is fixed by the rotation and scaling
+        assert out_mask[10:14, 10:14, 10:14].all()
+        assert out_img.min() >= 0 and out_img.max() <= 1
+
+
+def test_affine_skipped_is_a_plain_resize():
+    img = np.random.default_rng(0).random((32, 32, 32), dtype=np.float32)
+    mask = (img > 0.5).astype(np.float32)
+    out_img, out_mask = RandomAffine3D(p=0.0)(img, mask, (24, 24, 24))
+    np.testing.assert_array_equal(out_img, img_util.resize(img, (24, 24, 24)))
+    np.testing.assert_array_equal(
+        out_mask, img_util.resize_nearest(mask, (24, 24, 24))
+    )

@@ -329,7 +329,9 @@ class DetectionPatchLoader(PatchLoader):
             center, shape, img = self.read_cached_image(node)
         mask = self.create_mask(center, shape, node)
 
-        if self.fov_merge is not None:
+        if self.transform:
+            img, mask = self.transform.affine(img, mask, self.patch_shape)
+        elif self.fov_merge is not None:
             img = img_util.resize(img, self.patch_shape)
             mask = img_util.resize_nearest(mask, self.patch_shape)
 
