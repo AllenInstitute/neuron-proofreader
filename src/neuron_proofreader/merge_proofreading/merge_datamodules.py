@@ -32,6 +32,7 @@ from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import os
 import pandas as pd
+import rustworkx as rx
 import torch
 
 from neuron_proofreader.machine_learning.image_dataloader import (
@@ -65,6 +66,7 @@ class BrainDataset:
         nonmerge pool is fixed) instead of being loaded from "sites_prefix".
     """
 
+    giant_component_cable_length = 30000
     random_branching_site_probability = 0.7
 
     def __init__(
@@ -96,6 +98,7 @@ class BrainDataset:
 
         # Core data structures
         self.graph = self.load_fragments(graph_config, swcs_path)
+        self.ignore_fragments = set()
         if cache is not None and cache.has_sites():
             sites = cache.load_sites()
             self.merge_sites = self.sites_frame(sites["merge_sites"])
@@ -115,6 +118,7 @@ class BrainDataset:
         )
 
         self.set_merge_site_info()
+        self.set_giant_components()
 
     def load_fragments(self, config, swcs_path):
         graph = FragmentsGraph(
@@ -154,6 +158,20 @@ class BrainDataset:
         if len(self.merge_sites) > 0:
             xyz_arr = np.vstack(self.merge_sites["xyz"])
             self.merge_sites_kdtree = KDTree(xyz_arr)
+
+    def set_giant_components(self):
+        """
+        Marks fragments with more cable than "giant_component_cable_length"
+        so that random nonmerge sites are not drawn from them. A fragment
+        that large is usually several neurons merged together, so a random
+        site on it is likely to be an unlabeled merge. Training an
+        image-only merge model on such negatives does not converge.
+        """
+        max_cable = self.giant_component_cable_length
+        for nodes in map(list, rx.connected_components(self.graph)):
+            root = util.sample_once(nodes)
+            if self.cable_length(max_depth=max_cable, root=root) > max_cable:
+                self.ignore_fragments.add(self.node_component_id[root])
 
     # --- Site Retrieval ---
     def __getitem__(self, idx):
@@ -231,6 +249,10 @@ class BrainDataset:
         if self.degree(node) > 3:
             return False
 
+        # Reject if node belongs to a giant fragment
+        if self.node_component_id[node] in self.ignore_fragments:
+            return False
+
         # Reject if branching and near another branching node
         if self._has_nearby_branching(node):
             return False
@@ -243,7 +265,7 @@ class BrainDataset:
         # Site is valid
         return True
 
-    def _has_nearby_branching(self, root, max_depth=10):
+    def _has_nearby_branching(self, root, max_depth=30):
         queue = [(root, 0)]
         visited = {root}
         while queue:
