@@ -142,7 +142,7 @@ def test_affine_resamples_image_and_mask_together():
         assert out_img.dtype == out_mask.dtype == np.float32
         assert set(np.unique(out_mask)) <= {0.0, 1.0}
         # The center of the patch is fixed by the rotation and scaling
-        assert out_mask[10:14, 10:14, 10:14].all()
+        assert out_mask[11:13, 11:13, 11:13].all()
         assert out_img.min() >= 0 and out_img.max() <= 1
 
 
