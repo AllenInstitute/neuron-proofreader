@@ -532,11 +532,11 @@ def _hist_percentile(hist, q):
 def background_stats(img):
     """
     Estimates the background level and noise of a sparse image. The
-    background is the mode of the (integer-rounded) intensities and the
-    noise is the scaled median absolute deviation from it. Neurites fill at
-    most a few percent of a patch, so both are set by the background and do
-    not depend on how many neurites the patch contains or how bright they
-    are, unlike an upper percentile.
+    background is the mode of the (integer-rounded) nonzero intensities and
+    the noise is the scaled median absolute deviation from it. Neurites fill
+    at most a few percent of a patch, so both are set by the background and
+    do not depend on how many neurites the patch contains or how bright they
+    are. Zeros are padding, not background, so they are not counted.
 
     Parameters
     ----------
@@ -554,6 +554,8 @@ def background_stats(img):
     else:
         values = np.rint(img).astype(np.int64).ravel()
     hist = np.bincount(values)
+    if hist[1:].any():
+        hist[0] = 0
     mode = int(np.argmax(hist))
     dev = np.abs(np.arange(len(hist)) - mode)
     dev_hist = np.bincount(dev, weights=hist, minlength=len(hist))
@@ -561,45 +563,77 @@ def background_stats(img):
     return float(mode), 1.4826 * float(mad)
 
 
-def normalize_asinh(img, scale=100.0, stats=None):
+def foreground_scale(img, mask, bg, sigma, quantile=0.7, min_snr=5.0):
+    """
+    Estimates how far the neurite under "mask" stands above the background,
+    which is the scale of the asinh normalization.
+
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Raw image patch.
+    mask : numpy.ndarray
+        Mask of the fragment under review with the same shape as "img";
+        nonzero voxels are foreground.
+    bg : float
+        Background level, see background_stats.
+    sigma : float
+        Background noise standard deviation, see background_stats.
+    quantile : float, optional
+        Quantile of the intensities under the mask taken as the foreground
+        level. The mask is wider than the fiber, so the median would sit on
+        its dim edge. Default is 0.7.
+    min_snr : float, optional
+        Lower bound on the scale in units of "sigma", so that a fragment
+        lying on background does not have its noise stretched to foreground
+        brightness. Default is 5.
+
+    Returns
+    -------
+    float
+        Foreground level minus background level, at least min_snr * sigma
+        and at least 1.
+    """
+    values = img[mask > 0]
+    level = float(np.quantile(values, quantile)) if values.size else bg
+    return max(level - bg, min_snr * sigma, 1.0)
+
+
+def normalize_asinh(img, bg, scale):
     """
     Normalizes an image with an inverse hyperbolic sine stretch anchored on
-    the background of the patch:
+    the two populations of a sparse patch:
 
-        y = asinh((x - mode) / scale)
+        y = asinh((x - bg) / scale)
 
-    Background maps to 0. Intensities within about one scale of it are
-    stretched linearly, so faint neurites keep their contrast, and brighter
-    intensities are compressed logarithmically instead of clipped, so the
-    interior of a soma or a bright bundle keeps its structure. The mode is
-    the one anchor every patch of a sparse volume has, so a camera offset
-    that differs between brains drops out.
+    with "bg" the background level and "scale" the height of the neurite
+    under review above it (see background_stats and foreground_scale).
+    Background maps to 0 and that neurite to asinh(1) = 0.88 in every patch,
+    however bright the brain is. Up to that level the stretch is close to
+    linear; brighter intensities are compressed logarithmically instead of
+    clipped, so a soma or a bright crossing keeps its structure.
 
     Parameters
     ----------
     img : numpy.ndarray
         Image to be normalized.
-    scale : float, optional
-        Softening scale in raw intensity units. Default is 100.
-    stats : Tuple[float, float], optional
-        Background level and noise standard deviation, see background_stats.
-        Only the background is used here; the noise is carried along for the
-        raw intensity augmentation. Default is None, in which case the
-        statistics are estimated from "img".
+    bg : float
+        Background level in raw intensity units.
+    scale : float
+        Foreground level above background in raw intensity units.
 
     Returns
     -------
     numpy.ndarray
         Normalized float32 image.
     """
-    mode = (stats if stats is not None else background_stats(img))[0]
     out = img.astype(np.float32)
-    out -= np.float32(mode)
+    out -= np.float32(bg)
     out /= np.float32(scale)
     return np.arcsinh(out, out=out)
 
 
-def normalize_asinh_lut(img, scale=100.0):
+def normalize_asinh_lut(img, bg, scale):
     """
     Equivalent to normalize_asinh for small unsigned integer images, computed
     through a lookup table over the dtype's values like normalize_lut.
@@ -608,8 +642,10 @@ def normalize_asinh_lut(img, scale=100.0):
     ----------
     img : numpy.ndarray
         Unsigned integer image (uint8 or uint16).
-    scale : float, optional
-        See normalize_asinh. Default is 100.
+    bg : float
+        See normalize_asinh.
+    scale : float
+        See normalize_asinh.
 
     Returns
     -------
@@ -617,8 +653,7 @@ def normalize_asinh_lut(img, scale=100.0):
         Normalized float32 image.
     """
     values = np.arange(int(np.iinfo(img.dtype).max) + 1, dtype=np.float32)
-    lut = normalize_asinh(values, scale, stats=background_stats(img))
-    return lut[img]
+    return normalize_asinh(values, bg, scale)[img]
 
 
 def pad_to_shape(img, target_shape, pad_value=0):

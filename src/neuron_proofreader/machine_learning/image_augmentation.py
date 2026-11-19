@@ -26,25 +26,42 @@ class ImageTransforms:
     patch.
     """
 
-    def __init__(self, intensity=True):
+    def __init__(self, normalization="percentile", fg_quantile_jitter=0.2):
         """
         Initializes an ImageTransforms instance that applies augmentation to
         an image and segmentation patch.
 
         Parameters
         ----------
-        intensity : bool, optional
-            Whether to apply the intensity transforms, which act on
-            normalized values in [0, 1]. False applies the geometric
-            transforms only, for pipelines that augment intensities on the
-            raw image instead (see RawIntensityTransforms). Default is True.
+        normalization : str, optional
+            Normalization of the image, see ImageConfig, which decides how
+            intensities are augmented. "percentile" images are in [0, 1] and
+            get noise, contrast and smoothing on the normalized patch.
+            "asinh" images are normalized relative to the neurite under
+            review, so a gain or contrast change would be normalized away;
+            instead the foreground quantile that sets the scale is jittered
+            and noise is added to the raw image, both before normalization.
+            Default is "percentile".
+        fg_quantile_jitter : float, optional
+            Half-width of the uniform jitter of the foreground quantile.
+            Default is 0.2.
         """
         # Instance attributes
-        self.intensity = intensity
+        self.normalization = normalization
+        self.fg_quantile_jitter = fg_quantile_jitter
         self.affine = RandomAffine3D()
         self.geometric_transform = [RandomFlip3D(), RandomRotation3D()]
         self.intensity1_transform = [RandomNoise3D(), RandomContrast3D()]
         self.intensity2_transform = [RandomSmooth3D(), RandomContrast3D()]
+        self.raw_noise = RandomRawNoise()
+
+    def sample_fg_quantile(self, quantile):
+        """
+        Draws the foreground quantile of the asinh normalization around
+        "quantile", which makes the neurite brighter or dimmer.
+        """
+        jitter = random.uniform(-1, 1) * self.fg_quantile_jitter
+        return float(np.clip(quantile + jitter, 0.05, 0.99))
 
     def __call__(self, patches):
         """
@@ -61,7 +78,7 @@ class ImageTransforms:
         patches = self.apply(patches, self.geometric_transform)
 
         # Apply intensity transform
-        if self.intensity:
+        if self.normalization == "percentile":
             transform = random.choice(
                 [
                     self.intensity1_transform,
@@ -340,82 +357,11 @@ class RandomSmooth3D:
 
 
 # --- Raw Intensity Transforms ---
-class RawIntensityTransforms:
-    """
-    Intensity augmentation applied to the raw image before the asinh
-    normalization, in units of the patch's own noise level.
-
-    The transforms above act on normalized values, which the asinh stretch
-    compresses nonlinearly: a contrast factor there is a power law on the raw
-    image, and additive noise there is far larger in raw units on bright
-    voxels than on dim ones. On the raw image each transform keeps one
-    meaning on every brain: a gain change is the same structure recorded
-    brighter or dimmer, and noise is sensor noise.
-    """
-
-    def __init__(self, gain_range=(0.5, 2.0), max_noise=2.0, min_sigma=2.0):
-        """
-        Initializes a RawIntensityTransforms instance.
-
-        Parameters
-        ----------
-        gain_range : Tuple[float], optional
-            Range of the log-uniform gain factor. Default is (0.5, 2).
-        max_noise : float, optional
-            Maximum standard deviation of the added noise, in units of the
-            patch noise. Default is 2.
-        min_sigma : float, optional
-            Lower bound on the patch noise in raw intensity units, so that a
-            patch whose background is flat still gets noise. Default is 2.
-        """
-        self.gain = RandomGain(gain_range)
-        self.noise = RandomRawNoise(max_noise, min_sigma)
-
-    def __call__(self, img, bg, sigma):
-        """
-        Applies noise, then a gain change, to a raw image.
-
-        Parameters
-        ----------
-        img : numpy.ndarray
-            Raw float32 image, modified in place.
-        bg : float
-            Background level estimated before augmentation.
-        sigma : float
-            Noise standard deviation estimated before augmentation. The
-            normalization uses these same values, so a gain change makes the
-            patch look brighter instead of being normalized away.
-
-        Returns
-        -------
-        numpy.ndarray
-            Augmented raw image.
-        """
-        img = self.noise(img, bg, sigma)
-        return self.gain(img, bg, sigma)
-
-
-class RandomGain:
-    """
-    Scales the signal above background by a log-uniform factor, so that
-    doubling and halving are equally likely.
-    """
-
-    def __init__(self, gain_range=(0.5, 2.0)):
-        self.log_range = (np.log(gain_range[0]), np.log(gain_range[1]))
-
-    def __call__(self, img, bg, sigma):
-        gain = np.float32(np.exp(random.uniform(*self.log_range)))
-        img -= np.float32(bg)
-        img *= gain
-        img += np.float32(bg)
-        return img
-
-
 class RandomRawNoise:
     """
-    Adds Gaussian noise with a standard deviation of up to "max_std" times
-    the noise level of the patch, which is taken to be at least "min_sigma".
+    Adds Gaussian noise to a raw image with a standard deviation of up to
+    "max_std" times the noise level of the patch, which is taken to be at
+    least "min_sigma".
     """
 
     def __init__(self, max_std=2.0, min_sigma=2.0):
@@ -424,7 +370,7 @@ class RandomRawNoise:
         # See RandomNoise3D: a Generator per thread avoids the global lock
         self._local = threading.local()
 
-    def __call__(self, img, bg, sigma):
+    def __call__(self, img, sigma):
         rng = getattr(self._local, "rng", None)
         if rng is None:
             rng = self._local.rng = np.random.default_rng()

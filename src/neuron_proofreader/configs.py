@@ -17,7 +17,6 @@ import os
 
 from neuron_proofreader.machine_learning.image_augmentation import (
     ImageTransforms,
-    RawIntensityTransforms,
 )
 from neuron_proofreader.utils import io_util
 
@@ -121,13 +120,12 @@ class ImageConfig(Config):
 
     Attributes
     ----------
-    asinh_scale : float
-        Softening scale of the asinh normalization in raw intensity units:
-        intensities within about one scale of the background are stretched
-        linearly, brighter ones logarithmically.
     brightness_clip : int
         Intensity value that voxel brightness is clipped to by the
         percentile normalization.
+    fg_quantile : float
+        Quantile of the raw intensities under the fragment mask that the
+        asinh normalization takes as the foreground level.
     fov_merge : Tuple[int], optional
         Patch shape loaded from the image for merge detection. Resized to
         patch_shape before the model. None loads at patch_shape directly.
@@ -138,23 +136,21 @@ class ImageConfig(Config):
     normalization : str
         How raw patches are normalized, one of NORMALIZATIONS. "percentile"
         clips at brightness_clip and stretches the percentiles to [0, 1].
-        "asinh" computes asinh((x - mode) / asinh_scale), see
-        img_util.normalize_asinh, with the intensity augmentation applied to
-        the raw image; brightness_clip and percentiles are then unused.
+        "asinh" computes asinh((x - bg) / scale) with bg the background
+        mode of the patch and scale the height of the fragment under review
+        above it, see img_util.normalize_asinh; brightness_clip and
+        percentiles are then unused. It needs the fragment mask.
     percentiles : Tuple[float], optional
         Percentiles used by the percentile normalization.
     patch_shape : Tuple[int]
         Shape of patch expected by the model.
     transform : ImageTransforms or None
-        Augmentation applied to the stacked image and mask patch, set by
-        set_train_mode.
-    raw_transform : RawIntensityTransforms or None
-        Augmentation applied to the raw image before the asinh
-        normalization, set by set_train_mode.
+        Training augmentation of the image and mask patch, set by
+        set_train_mode to match the normalization.
     """
 
-    asinh_scale: float = 100.0
     brightness_clip: int = 400
+    fg_quantile: float = 0.7
     fov_merge: Tuple[int, int, int] = None
     img_path: str = None
     mask_kernel_size: int = 3
@@ -163,7 +159,6 @@ class ImageConfig(Config):
     percentiles: Tuple[float, float] = (1, 99.5)
     patch_shape: Tuple[int, int, int] = (128, 128, 128)
     transform = None
-    raw_transform = None
 
     def __post_init__(self):
         if self.normalization not in NORMALIZATIONS:
@@ -176,18 +171,10 @@ class ImageConfig(Config):
         self.img_path = img_path
 
     def set_train_mode(self):
-        if self.normalization == "asinh":
-            # Intensities are augmented on the raw image, before the
-            # nonlinear stretch, so the stacked patch gets geometry only
-            self.transform = ImageTransforms(intensity=False)
-            self.raw_transform = RawIntensityTransforms()
-        else:
-            self.transform = ImageTransforms()
-            self.raw_transform = None
+        self.transform = ImageTransforms(self.normalization)
 
     def set_val_mode(self):
         self.transform = None
-        self.raw_transform = None
 
 
 @dataclass
