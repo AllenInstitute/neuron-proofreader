@@ -337,9 +337,15 @@ def get_slices(center, shape, img_shape=None):
         Slice objects used to index into the image.
     """
     start = [max(0, int(c - d // 2)) for c, d in zip(center, shape)]
-    end = [s + d for s, d in zip(start, shape)]
-    if img_shape is not None:
-        end = [min(e, int(n)) for e, n in zip(end, img_shape)]
+    if img_shape is None:
+        end = [s + d for s, d in zip(start, shape)]
+    else:
+        # Clip at the unshifted end so a patch cut by the low border keeps
+        # its alignment with "get_offset"; see TensorStoreImage.pad_clipped
+        end = [
+            min(int(c - d // 2) + d, int(n))
+            for c, d, n in zip(center, shape, img_shape)
+        ]
     return tuple(slice(s, e) for s, e in zip(start, end))
 
 

@@ -248,6 +248,7 @@ class MLMergeProofreader(MergeProofreader):
         merge_sites = [merge_sites[i] for i in np.argsort(likelihoods)]
         merge_sites = deque(merge_sites)
         merge_sites_set = set(merge_sites)
+        extent = np.asarray(self.patch_shape)[::-1] * self.graph.anisotropy
 
         # Filter merge sites with graph-based NMS
         filtered_merge_sites = set()
@@ -269,7 +270,7 @@ class MLMergeProofreader(MergeProofreader):
                 if i in merge_sites_set:
                     xyz_i = self.graph.node_xyz[i]
                     iou = img_util.compute_iou3d(
-                        xyz_i, xyz_root, self.patch_shape, self.patch_shape
+                        xyz_i, xyz_root, extent, extent
                     )
                     if iou > 0.3 and self.graph.degree(i) == 2:
                         merge_sites_set.remove(i)
@@ -278,7 +279,7 @@ class MLMergeProofreader(MergeProofreader):
                 # Populate queue
                 for j in self.graph.neighbors(i):
                     dist_j = dist_i + self.graph.dist(i, j)
-                    if j not in visited and dist_j < self.patch_shape[0]:
+                    if j not in visited and dist_j < extent.max():
                         queue.append((j, dist_j))
                         visited.add(j)
         return filtered_merge_sites
@@ -286,6 +287,8 @@ class MLMergeProofreader(MergeProofreader):
     def avg_nearby_sites(self, merge_sites, max_dist=24):
         # Create merge site data structures
         merge_sites = list(merge_sites)
+        if not merge_sites:
+            return merge_sites
         likelihoods = [self.node_preds[i] for i in merge_sites]
         merge_sites = [merge_sites[i] for i in np.argsort(likelihoods)[::-1]]
 
