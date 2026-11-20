@@ -31,7 +31,9 @@ from torch.utils.data import Dataset, DataLoader
 
 import numpy as np
 import os
+import random
 import pandas as pd
+import rustworkx as rx
 import torch
 
 from neuron_proofreader.machine_learning.image_dataloader import (
@@ -65,7 +67,9 @@ class BrainDataset:
         nonmerge pool is fixed) instead of being loaded from "sites_prefix".
     """
 
+    giant_component_cable_length = 30000
     random_branching_site_probability = 0.7
+    max_snap_dist = 10
 
     def __init__(
         self,
@@ -96,6 +100,10 @@ class BrainDataset:
 
         # Core data structures
         self.graph = self.load_fragments(graph_config, swcs_path)
+        self.ignore_fragments = set()
+        self._branching_nodes = None
+        self._all_nodes = None
+        self.merge_sites_kdtree = None
         if cache is not None and cache.has_sites():
             sites = cache.load_sites()
             self.merge_sites = self.sites_frame(sites["merge_sites"])
@@ -115,6 +123,7 @@ class BrainDataset:
         )
 
         self.set_merge_site_info()
+        self.set_giant_components()
 
     def load_fragments(self, config, swcs_path):
         graph = FragmentsGraph(
@@ -139,21 +148,47 @@ class BrainDataset:
     def sites_frame(self, records):
         """
         Builds a site table from records with "xyz" and "filename", snapping
-        each site to its nearest graph node.
+        each site to its nearest graph node. Sites farther than
+        "max_snap_dist" from every node are dropped.
         """
         sites = list()
+        n_far = 0
         for record in records:
             xyz = np.asarray(record["xyz"])
             dd, ii = self.kdtree.query(xyz)
+            if dd > self.max_snap_dist:
+                n_far += 1
+                continue
             sites.append(
                 {"xyz": xyz, "node": ii, "filename": record["filename"]}
             )
-        return pd.DataFrame(sites)
+        if n_far:
+            print(
+                f"   Dropped {n_far} sites farther than "
+                f"{self.max_snap_dist} from any fragment node"
+            )
+        return pd.DataFrame(sites, columns=["xyz", "node", "filename"])
 
     def set_merge_site_info(self):
         if len(self.merge_sites) > 0:
             xyz_arr = np.vstack(self.merge_sites["xyz"])
             self.merge_sites_kdtree = KDTree(xyz_arr)
+        else:
+            self.merge_sites_kdtree = None
+
+    def set_giant_components(self):
+        """
+        Marks fragments with more cable than "giant_component_cable_length"
+        so that random nonmerge sites are not drawn from them. A fragment
+        that large is usually several neurons merged together, so a random
+        site on it is likely to be an unlabeled merge. Training an
+        image-only merge model on such negatives does not converge.
+        """
+        max_cable = self.giant_component_cable_length
+        for nodes in map(list, rx.connected_components(self.graph)):
+            root = util.sample_once(nodes)
+            if self.cable_length(max_depth=max_cable, root=root) > max_cable:
+                self.ignore_fragments.add(self.node_component_id[root])
 
     # --- Site Retrieval ---
     def __getitem__(self, idx):
@@ -167,16 +202,19 @@ class BrainDataset:
             return self.merge_sites["node"][idx], 1
         elif np.random.random() < self.random_nonmerge_site_prob:
             return self.get_random_nonmerge_site()
-        elif abs(idx) < len(self.nonmerge_sites):
-            return self.nonmerge_sites["node"][abs(idx)], 0
+        elif -idx - 1 < len(self.nonmerge_sites):
+            return self.nonmerge_sites["node"][-idx - 1], 0
         else:
             return self.get_random_nonmerge_site()
 
     def get_random_nonmerge_site(self):
         # Set sample space
         use_br = np.random.random() < self.random_branching_site_probability
-        nodes = self.branching_nodes() if use_br else self.node_indices()
-        nodes = nodes or self.node_indices()
+        if self._all_nodes is None:
+            self._all_nodes = list(self.node_indices())
+            self._branching_nodes = list(self.branching_nodes())
+        nodes = self._branching_nodes if use_br else self._all_nodes
+        nodes = nodes or self._all_nodes
 
         # Sample node
         n_attempts = 0
@@ -189,7 +227,7 @@ class BrainDataset:
             # Try again
             n_attempts += 1
             if n_attempts > 100:
-                return util.sample_once(self.node_indices()), 0
+                return util.sample_once(self._all_nodes), 0
 
     # --- Helpers ---
     def add_nonmerge_sites(self, num_sites):
@@ -213,7 +251,7 @@ class BrainDataset:
         else:
             self.nonmerge_sites = pd.DataFrame(new_sites)
 
-    def freeze_nonmerge_sites(self, neg_multiplier):
+    def freeze_nonmerge_sites(self, neg_multiplier, seed=None):
         """
         Replaces per-epoch random negative sampling with a fixed pool of
         "neg_multiplier" nonmerge sites per merge site, so every example
@@ -223,7 +261,17 @@ class BrainDataset:
             n_target = neg_multiplier * len(self.merge_sites)
             n_add = n_target - len(self.nonmerge_sites)
             if n_add > 0:
-                self.add_nonmerge_sites(n_add)
+                if seed is None:
+                    self.add_nonmerge_sites(n_add)
+                else:
+                    py_state, np_state = random.getstate(), np.random.get_state()
+                    random.seed(seed)
+                    np.random.seed(seed)
+                    try:
+                        self.add_nonmerge_sites(n_add)
+                    finally:
+                        random.setstate(py_state)
+                        np.random.set_state(np_state)
         self.random_nonmerge_site_prob = 0
 
     def trim_nonmerge_sites(self, neg_multiplier):
@@ -246,19 +294,24 @@ class BrainDataset:
         if self.degree(node) > 3:
             return False
 
+        # Reject if node belongs to a giant fragment
+        if self.node_component_id[node] in self.ignore_fragments:
+            return False
+
         # Reject if branching and near another branching node
         if self._has_nearby_branching(node):
             return False
 
         # Reject if near merge site
-        dd, _ = self.merge_sites_kdtree.query(self.node_xyz[node])
-        if dd < 100:
-            return False
+        if self.merge_sites_kdtree is not None:
+            dd, _ = self.merge_sites_kdtree.query(self.node_xyz[node])
+            if dd < 100:
+                return False
 
         # Site is valid
         return True
 
-    def _has_nearby_branching(self, root, max_depth=10):
+    def _has_nearby_branching(self, root, max_depth=30):
         queue = [(root, 0)]
         visited = {root}
         while queue:
@@ -309,7 +362,7 @@ class BrainDataset:
 
         pos_idxs = np.random.choice(n_pos, size=n_pos_used, replace=False)
         neg_idxs = np.random.choice(n_neg, size=n_neg_used, replace=False)
-        return np.concatenate((-neg_idxs, pos_idxs))
+        return np.concatenate((-neg_idxs - 1, pos_idxs))
 
     def __getattr__(self, name):
         return getattr(self.graph, name)
@@ -658,7 +711,7 @@ def create_dataset_collection(
         # Fix the nonmerge pool unless it was restored from the cache
         if cache is None or not cache.has_sites():
             if dataset_mode == "Val":
-                dataset.freeze_nonmerge_sites(val_neg_multiplier)
+                dataset.freeze_nonmerge_sites(val_neg_multiplier, seed=int(brain_id))
             elif cache is not None:
                 dataset.freeze_nonmerge_sites(cache_neg_multiplier)
             if cache is not None:

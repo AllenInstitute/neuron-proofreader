@@ -110,6 +110,9 @@ class GraphConfig(Config):
     verbose: bool = False
 
 
+NORMALIZATIONS = ("percentile", "asinh")
+
+
 @dataclass
 class ImageConfig(Config):
     """
@@ -118,7 +121,11 @@ class ImageConfig(Config):
     Attributes
     ----------
     brightness_clip : int
-        Intensity value that voxel brightness is clipped to.
+        Intensity value that voxel brightness is clipped to by the
+        percentile normalization.
+    fg_quantile : float
+        Quantile of the raw intensities under the fragment mask that the
+        asinh normalization takes as the foreground level.
     fov_merge : Tuple[int], optional
         Patch shape loaded from the image for merge detection. Resized to
         patch_shape before the model. None loads at patch_shape directly.
@@ -126,28 +133,45 @@ class ImageConfig(Config):
         Side length in voxels of the cube filled around every skeleton voxel
         when rendering the binary mask channel. A one-voxel skeleton is
         nearly erased by the first pooling layer, so it is thickened here.
+    normalization : str
+        How raw patches are normalized, one of NORMALIZATIONS. "percentile"
+        clips at brightness_clip and stretches the percentiles to [0, 1].
+        "asinh" computes asinh((x - bg) / scale) with bg the background
+        mode of the patch and scale the height of the fragment under review
+        above it, see img_util.normalize_asinh; brightness_clip and
+        percentiles are then unused. It needs the fragment mask.
     percentiles : Tuple[float], optional
-        Percentiles used to normalize patches.
+        Percentiles used by the percentile normalization.
     patch_shape : Tuple[int]
         Shape of patch expected by the model.
-    transform : bool
-        Indication of whether to use image augmentation.
+    transform : ImageTransforms or None
+        Training augmentation of the image and mask patch, set by
+        set_train_mode to match the normalization.
     """
 
     brightness_clip: int = 400
+    fg_quantile: float = 0.7
     fov_merge: Tuple[int, int, int] = None
     img_path: str = None
     mask_kernel_size: int = 3
     name: str = "image_config"
+    normalization: str = "percentile"
     percentiles: Tuple[float, float] = (1, 99.5)
     patch_shape: Tuple[int, int, int] = (128, 128, 128)
     transform = None
+
+    def __post_init__(self):
+        if self.normalization not in NORMALIZATIONS:
+            raise ValueError(
+                f"normalization must be one of {NORMALIZATIONS}, "
+                f"got {self.normalization!r}"
+            )
 
     def set_img_path(self, img_path):
         self.img_path = img_path
 
     def set_train_mode(self):
-        self.transform = ImageTransforms()
+        self.transform = ImageTransforms(self.normalization)
 
     def set_val_mode(self):
         self.transform = None

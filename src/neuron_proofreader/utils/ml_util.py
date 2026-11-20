@@ -144,7 +144,7 @@ class BinaryMetricAccumulator:
         self.fp += (pred & ~y).sum().item()
         self.fn += (~pred & y).sum().item()
 
-        self.loss += loss.item()
+        self.loss += loss.item() * y.numel()
         self.n += y.numel()
 
         if scores is not None:
