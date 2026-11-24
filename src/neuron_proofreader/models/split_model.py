@@ -12,11 +12,16 @@ import torch
 import torch.nn as nn
 
 from neuron_proofreader.models.encoders import MultimodalEncoder
-from neuron_proofreader.models.gnn_models import SplitHead, proposal_length_feature
+from neuron_proofreader.models.gnn_models import (
+    SplitHead,
+    proposal_length_feature,
+)
 from neuron_proofreader.models.merge_model import normalize_config
 
 # GATv2Conv layers are lazy, so checkpoints may hold uninitialized parameters
-torch.serialization.add_safe_globals([torch.nn.parameter.UninitializedParameter])
+torch.serialization.add_safe_globals(
+    [torch.nn.parameter.UninitializedParameter]
+)
 
 
 class SplitModel(nn.Module):
@@ -35,7 +40,14 @@ class SplitModel(nn.Module):
         GAT attention heads. Default is 4.
     """
 
-    def __init__(self, vision_input_shape, gnn_hidden_dim=96, split_heads=4, **encoder_kwargs):
+    def __init__(
+        self,
+        vision_input_shape,
+        gnn_hidden_dim=96,
+        split_heads=4,
+        **encoder_kwargs,
+    ):
+        """Instantiates a SplitModel object."""
         super().__init__()
         self.config = {
             "vision_input_shape": tuple(vision_input_shape),
@@ -44,7 +56,9 @@ class SplitModel(nn.Module):
             **encoder_kwargs,
         }
         self.encoder = MultimodalEncoder(vision_input_shape, **encoder_kwargs)
-        self.head = SplitHead(self.encoder.embed_dim + 1, gnn_hidden_dim, split_heads)
+        self.head = SplitHead(
+            self.encoder.embed_dim + 1, gnn_hidden_dim, split_heads
+        )
 
     def forward(self, x):
         """
@@ -62,7 +76,8 @@ class SplitModel(nn.Module):
         """
         z = self.encoder(x["img"], x["tree_samples"])
         length = proposal_length_feature(x["tree_samples"], z.device, z.dtype)
-        return self.head(torch.cat([z, length], dim=1), x["edge_index_dict"], x["n_branches"])
+        z = torch.cat([z, length], dim=1)
+        return self.head(z, x["edge_index_dict"], x["n_branches"])
 
     def half_vision(self):
         """Runs the image path in fp16; see MultimodalEncoder.half_vision."""
@@ -70,7 +85,9 @@ class SplitModel(nn.Module):
         return self
 
     def save(self, path):
-        torch.save({"config": self.config, "state_dict": self.state_dict()}, path)
+        """Saves the config and weights to a checkpoint."""
+        state = {"config": self.config, "state_dict": self.state_dict()}
+        torch.save(state, path)
 
     @classmethod
     def load(cls, path, map_location=None):

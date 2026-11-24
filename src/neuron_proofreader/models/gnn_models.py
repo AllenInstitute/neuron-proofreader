@@ -56,7 +56,9 @@ def _build_hetero_gat(out_dim, heads):
     for rel in RELATIONS:
         src, _, dst = rel
         if src == dst:
-            conv = nn_geometric.GATv2Conv(-1, out_dim, dropout=0.1, heads=heads)
+            conv = nn_geometric.GATv2Conv(
+                -1, out_dim, dropout=0.1, heads=heads
+            )
         else:
             conv = nn_geometric.GATv2Conv(
                 (-1, -1),
@@ -87,6 +89,7 @@ class SplitHead(nn.Module):
     """
 
     def __init__(self, in_dim, hidden_dim=96, heads=4):
+        """Instantiates a SplitHead object."""
         super().__init__()
         self.fusion = FeedForwardNet(in_dim, hidden_dim, 2)
         self.branch_relay = nn.Parameter(torch.zeros(hidden_dim))
@@ -114,7 +117,7 @@ class SplitHead(nn.Module):
         """
         x_dict = {
             "proposal": self.fusion(z),
-            "branch": self.branch_relay.to(z.dtype).unsqueeze(0).expand(n_branches, -1),
+            "branch": self.branch_relay.to(z.dtype).expand(n_branches, -1),
         }
         for gat in (self.gat1, self.gat2, self.gat3):
             x_dict = gat(x_dict, edge_index_dict)
