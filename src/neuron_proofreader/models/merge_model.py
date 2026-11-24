@@ -7,30 +7,11 @@ Created on Tue Nov 24 2026
 Merge detection model: MultimodalEncoder with a FeedForwardNet head.
 """
 
-import json
-import os
-
 import torch
 import torch.nn as nn
 
 from neuron_proofreader.models.encoders import MultimodalEncoder
 from neuron_proofreader.utils.ml_util import FeedForwardNet
-
-# Legacy JointProofreader checkpoints hold the split head's lazy GAT parameters
-torch.serialization.add_safe_globals(
-    [torch.nn.parameter.UninitializedParameter]
-)
-
-# Legacy JointProofreader checkpoints: merge keys renamed, split keys dropped
-_LEGACY_KEYS = {
-    "vision.": "encoder.vision.backbone.",
-    "merge_task_conv.": "encoder.vision.task_conv.",
-    "merge_task_pool.": "encoder.vision.task_pool.",
-    "merge_vision_proj.": "encoder.vision.proj.",
-    "arborist.": "encoder.arborist.arborist.",
-    "merge_head.": "head.",
-}
-_LEGACY_CONFIG_KEYS = ("gnn_hidden_dim", "split_heads", "task")
 
 
 class MergeModel(nn.Module):
@@ -88,11 +69,9 @@ class MergeModel(nn.Module):
         torch.save(state, path)
 
     @classmethod
-    def load(cls, path, map_location=None, config=None):
+    def load(cls, path, map_location=None):
         """
-        Reconstructs a MergeModel from a checkpoint written by ``save``, or
-        from a raw state_dict plus a config dict or model_config.json path.
-        Also reads the merge path out of legacy JointProofreader checkpoints.
+        Reconstructs a MergeModel from a checkpoint written by ``save``.
 
         Parameters
         ----------
@@ -100,58 +79,12 @@ class MergeModel(nn.Module):
             Path to the checkpoint.
         map_location : str or torch.device, optional
             Passed through to torch.load. Default is None.
-        config : dict or str, optional
-            Constructor kwargs, or a path to them, for a raw state_dict.
-            Default is None.
 
         Returns
         -------
         MergeModel
         """
         ckpt = torch.load(path, map_location=map_location, weights_only=True)
-        if "config" in ckpt and "state_dict" in ckpt:
-            config, state_dict = ckpt["config"], ckpt["state_dict"]
-        else:
-            if config is None:
-                config = os.path.join(
-                    os.path.dirname(path), "model_config.json"
-                )
-            if isinstance(config, str):
-                with open(config) as f:
-                    config = json.load(f)
-            state_dict = ckpt
-        config = dict(config)
-        if "vision_input_shape" in config:
-            config["patch_shape"] = config.pop("vision_input_shape")
-        model = cls(**normalize_config(config, _LEGACY_CONFIG_KEYS))
-        model.load_state_dict(_upgrade_state_dict(state_dict))
+        model = cls(**ckpt["config"])
+        model.load_state_dict(ckpt["state_dict"])
         return model
-
-
-def normalize_config(config, drop_keys=()):
-    """
-    Restores the tuple-valued entries that JSON turns into lists and drops
-    keys from other models' configs. Conv3d and the pooling stages index the
-    tuples positionally, so a list would silently build a different backbone.
-    """
-    config = {k: v for k, v in config.items() if k not in drop_keys}
-    for key in ("patch_shape", "vision_input_shape", "pool_stage_idxs"):
-        if config.get(key) is not None:
-            config[key] = tuple(config[key])
-    return config
-
-
-def _upgrade_state_dict(state_dict):
-    """
-    Renames the keys of a legacy JointProofreader state_dict onto MergeModel
-    and drops the split path. Other state_dicts are returned unchanged.
-    """
-    if not any(k.startswith("merge_head.") for k in state_dict):
-        return state_dict
-    upgraded = {}
-    for key, value in state_dict.items():
-        for old, new in _LEGACY_KEYS.items():
-            if key.startswith(old):
-                upgraded[new + key[len(old):]] = value
-                break
-    return upgraded
