@@ -280,7 +280,8 @@ class BrainDataset:
         are kept; random sites are dropped from the end so the pool stays
         fixed across runs.
         """
-        n_drop = len(self.nonmerge_sites) - neg_multiplier * len(self.merge_sites)
+        n_keep = neg_multiplier * len(self.merge_sites)
+        n_drop = len(self.nonmerge_sites) - n_keep
         if n_drop > 0:
             is_random = self.nonmerge_sites["filename"] == "random"
             drop = self.nonmerge_sites.index[is_random][-n_drop:]
