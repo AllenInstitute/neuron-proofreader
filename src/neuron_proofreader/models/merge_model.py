@@ -36,20 +36,28 @@ _LEGACY_CONFIG_KEYS = ("gnn_hidden_dim", "split_heads", "task")
 class MergeModel(nn.Module):
     """
     Merge detector: a MultimodalEncoder embedding of the candidate site
-    classified by a FeedForwardNet. Constructor arguments are those of
-    MultimodalEncoder.
+    classified by a FeedForwardNet. Keyword arguments other than
+    ``dropout`` are those of MultimodalEncoder.
+
+    Parameters
+    ----------
+    patch_shape : Tuple[int]
+        Image patch shape (C, D, H, W).
+    dropout : float, optional
+        Dropout in the vision projection and before the head. Default is
+        0.1.
     """
 
-    def __init__(self, vision_input_shape, dropout=0.1, **encoder_kwargs):
+    def __init__(self, patch_shape, dropout=0.1, **encoder_kwargs):
         """Instantiates a MergeModel object."""
         super().__init__()
         self.config = {
-            "vision_input_shape": tuple(vision_input_shape),
+            "patch_shape": tuple(patch_shape),
             "dropout": dropout,
             **encoder_kwargs,
         }
         self.encoder = MultimodalEncoder(
-            vision_input_shape, dropout=dropout, **encoder_kwargs
+            patch_shape, dropout=dropout, **encoder_kwargs
         )
         self.drop = nn.Dropout(dropout)
         self.head = FeedForwardNet(self.encoder.embed_dim, 1, 3)
@@ -112,6 +120,9 @@ class MergeModel(nn.Module):
                 with open(config) as f:
                     config = json.load(f)
             state_dict = ckpt
+        config = dict(config)
+        if "vision_input_shape" in config:
+            config["patch_shape"] = config.pop("vision_input_shape")
         model = cls(**normalize_config(config, _LEGACY_CONFIG_KEYS))
         model.load_state_dict(_upgrade_state_dict(state_dict))
         return model
@@ -124,7 +135,7 @@ def normalize_config(config, drop_keys=()):
     tuples positionally, so a list would silently build a different backbone.
     """
     config = {k: v for k, v in config.items() if k not in drop_keys}
-    for key in ("vision_input_shape", "pool_stage_idxs"):
+    for key in ("patch_shape", "vision_input_shape", "pool_stage_idxs"):
         if config.get(key) is not None:
             config[key] = tuple(config[key])
     return config
