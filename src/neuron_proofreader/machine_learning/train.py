@@ -68,6 +68,7 @@ class Trainer:
         output_dir,
         device="cuda",
         enforced_recall=None,
+        enforced_precision=None,
         exp_name=None,
         lr=1e-4,
         max_epochs=200,
@@ -91,6 +92,9 @@ class Trainer:
             If set, checkpointing optimizes precision_at_recall subject to
             recall >= this value. If None, checkpointing optimizes F1.
             Default is None.
+        enforced_precision : float or None, optional
+            If set, checkpointing optimizes recall subject to precision >= this
+            value. Default is None.
         lr : float, optional
             Learning rate. Default is 1e-4.
         max_epochs : int, optional
@@ -121,6 +125,7 @@ class Trainer:
         self.best_f1 = 0
         self.device = device
         self.enforced_recall = enforced_recall
+        self.enforced_precision = enforced_precision
         self.log_dir = log_dir
         self.max_epochs = max_epochs
         self.mips_dir = os.path.join(log_dir, "mips")
@@ -157,7 +162,9 @@ class Trainer:
             Dataloader used for validation.
         """
         exp_name = os.path.basename(os.path.normpath(self.log_dir))
-        val_dataloader.dataset.save_val_summary(self.log_dir)
+        dataset = getattr(val_dataloader, "dataset", None)
+        if hasattr(dataset, "save_val_summary"):
+            dataset.save_val_summary(self.log_dir)
         print("\nExperiment:", exp_name)
         for epoch in range(self.max_epochs):
             # Train-Validate
@@ -235,7 +242,10 @@ class Trainer:
                 self._collect_mistakes(x, y, y_pred)
                 idx_offset += len(y)
 
-        stats = metrics.compute(min_recall=self.enforced_recall)
+        stats = metrics.compute(
+            min_recall=self.enforced_recall,
+            min_precision=self.enforced_precision,
+        )
         self.update_tensorboard(stats, epoch, prefix)
         if not train and self.n_mistake_mips > 0:
             self._flush_mistake_mips(epoch)
@@ -247,9 +257,10 @@ class Trainer:
 
         Parameters
         ----------
-        x : torch.Tensor or dict
-            Either a tensor of shape (B, 2, D, H, W) or a dict with at least
-            an "img" key (for multimodal models).
+        x : torch.Tensor, dict or list
+            A tensor of shape (B, 2, D, H, W), a dict of model inputs (nested
+            dicts are moved too), or a list such as TreeSamples, which is
+            passed through for the model to handle.
         y : torch.Tensor
             Ground truth labels with shape (B, 1).
 
@@ -260,13 +271,7 @@ class Trainer:
         loss : torch.Tensor
             Computed loss value.
         """
-        if isinstance(x, dict):
-            x = {
-                k: v.to(self.device) if isinstance(v, torch.Tensor) else v
-                for k, v in x.items()
-            }
-        else:
-            x = x.to(self.device)
+        x = self.to_device(x)
         y = y.to(self.device)
         with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=self.use_amp):
             y_pred = self.model(x)
@@ -274,6 +279,18 @@ class Trainer:
         return y, y_pred, loss
 
     # --- Helpers ---
+    def to_device(self, x):
+        """
+        Moves model inputs to the training device: anything with a "to"
+        method, and the values of (nested) dicts. Other values, such as
+        lists of TreeSamples, are returned unchanged.
+        """
+        if hasattr(x, "to"):
+            return x.to(self.device)
+        if isinstance(x, dict):
+            return {k: self.to_device(v) for k, v in x.items()}
+        return x
+
     @staticmethod
     def report_stats(stats, is_train=True):
         """
@@ -310,7 +327,9 @@ class Trainer:
             True if the model achieved a new best F1 score and was saved.
             False otherwise.
         """
-        f1 = stats.get("f1_at_recall", stats["f1"])
+        f1 = stats.get("f1_at_recall")
+        if f1 is None:
+            f1 = stats.get("f1_at_precision", stats["f1"])
         if f1 > self.best_f1:
             self.best_f1 = f1
             self.save_model(epoch)
