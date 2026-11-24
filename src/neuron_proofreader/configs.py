@@ -123,9 +123,8 @@ class ImageConfig(Config):
         Patch shape loaded from the image for merge detection. Resized to
         patch_shape before the model. None loads at patch_shape directly.
     mask_kernel_size : int
-        Side length in voxels of the cube filled around every skeleton voxel
-        when rendering the binary mask channel. A one-voxel skeleton is
-        nearly erased by the first pooling layer, so it is thickened here.
+        Side length in voxels of the cube filled around each skeleton voxel
+        in the mask channel.
     percentiles : Tuple[float], optional
         Percentiles used to normalize patches.
     patch_shape : Tuple[int]
