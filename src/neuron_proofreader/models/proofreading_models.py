@@ -77,8 +77,7 @@ class ProofreadingModel(nn.Module):
 class MergeModel(ProofreadingModel):
     """
     Merge detector: a MultimodalEncoder embedding of the candidate site
-    classified by a FeedForwardNet. Keyword arguments other than
-    ``dropout`` are those of MultimodalEncoder.
+    classified by a FeedForwardNet.
 
     Parameters
     ----------
