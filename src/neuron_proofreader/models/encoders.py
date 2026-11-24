@@ -4,8 +4,8 @@ Created on Tue Nov 24 2026
 @author: Anna Grim
 @email: anna.grim@alleninstitute.org
 
-Encoders shared by the proofreading models: the image patch encoder, the
-Arborist skeleton encoder, and their multimodal combination. The merge and
+Encoders shared by the proofreading models: the image patch encoder and
+its multimodal combination with arborist's ArboristEncoder. The merge and
 split models differ only in the classification head on top of
 MultimodalEncoder. Each encoder exposes ``embed_dim`` and a ``config`` of
 its constructor arguments so a checkpoint can rebuild it.
@@ -15,7 +15,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from arborist.models.arborist import Arborist
+from arborist.models.arborist import ArboristEncoder
 from neuron_proofreader.models.vision_models import CNN3D, CenterWeightedPool3D
 
 
@@ -92,49 +92,6 @@ class VisionEncoder(nn.Module):
         task = torch.cat([self.task_pool(task), F.adaptive_max_pool3d(task, 1).flatten(1)], dim=1)
 
         return self.proj(torch.cat([shared, task], dim=1)).float()
-
-
-class ArboristEncoder(nn.Module):
-    """
-    Arborist skeleton encoder with the proofreading readout: the CLS token
-    concatenated with the mean of the root-adjacent curve embeddings, so the
-    geometry of the curves meeting at the site is read out directly rather
-    than only through CLS attention.
-
-    Parameters
-    ----------
-    latent_dim : int, optional
-        Arborist latent dimension; the embedding is twice this. Default is 64.
-    **arborist_kwargs
-        Forwarded to Arborist.
-    """
-
-    def __init__(self, latent_dim=64, **arborist_kwargs):
-        super().__init__()
-        self.config = {"latent_dim": latent_dim, **arborist_kwargs}
-        self.embed_dim = 2 * latent_dim
-        self.arborist = Arborist(latent_dim=latent_dim, **arborist_kwargs)
-
-    @torch._dynamo.disable
-    def forward(self, tree_samples):
-        """
-        Parameters
-        ----------
-        tree_samples : List[TreeSample]
-            Rooted subgraphs, one per site.
-
-        Returns
-        -------
-        torch.Tensor
-            Shape (B, 2 * latent_dim), on this module's device.
-        """
-        with torch.amp.autocast("cuda", enabled=False):
-            z = []
-            for s in tree_samples:
-                z_tree, z_curves = self.arborist.encode(s)
-                idx = list(s.root_curve_indices or range(len(z_curves)))
-                z.append(torch.cat([z_tree, z_curves[idx].mean(dim=0)]))
-        return torch.stack(z)
 
 
 class MultimodalEncoder(nn.Module):
