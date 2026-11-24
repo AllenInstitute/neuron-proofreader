@@ -75,8 +75,8 @@ class SplitHead(nn.Module):
     """
     Classifies proposals from their embeddings with heterogeneous GAT message
     passing over proposal and branch nodes: a fusion MLP to ``hidden_dim``,
-    three GATv2 rounds, then a linear classifier. Branch nodes start from a
-    single learned vector.
+    ``n_layers`` GATv2 rounds, then a linear classifier. Branch nodes start
+    from a single learned vector.
 
     Parameters
     ----------
@@ -86,18 +86,21 @@ class SplitHead(nn.Module):
         Node embedding dimension entering the GAT. Default is 96.
     heads : int, optional
         GAT attention heads. Default is 4.
+    n_layers : int, optional
+        Message passing layers. Default is 3.
     """
 
-    def __init__(self, in_dim, hidden_dim=96, heads=4):
+    def __init__(self, in_dim, hidden_dim=96, heads=4, n_layers=3):
         """Instantiates a SplitHead object."""
         super().__init__()
         self.fusion = FeedForwardNet(in_dim, hidden_dim, 2)
         self.branch_relay = nn.Parameter(torch.zeros(hidden_dim))
         nn.init.normal_(self.branch_relay, std=0.02)
-        self.gat1 = _build_hetero_gat(hidden_dim, heads)
-        self.gat2 = _build_hetero_gat(hidden_dim * heads, heads)
-        self.gat3 = _build_hetero_gat(hidden_dim * heads ** 2, heads)
-        self.output = nn.Linear(hidden_dim * heads ** 3, 1)
+        self.gats = nn.ModuleList([
+            _build_hetero_gat(hidden_dim * heads ** i, heads)
+            for i in range(n_layers)
+        ])
+        self.output = nn.Linear(hidden_dim * heads ** n_layers, 1)
 
     def forward(self, z, edge_index_dict, n_branches):
         """
@@ -119,6 +122,6 @@ class SplitHead(nn.Module):
             "proposal": self.fusion(z),
             "branch": self.branch_relay.to(z.dtype).expand(n_branches, -1),
         }
-        for gat in (self.gat1, self.gat2, self.gat3):
+        for gat in self.gats:
             x_dict = gat(x_dict, edge_index_dict)
         return self.output(x_dict["proposal"])
