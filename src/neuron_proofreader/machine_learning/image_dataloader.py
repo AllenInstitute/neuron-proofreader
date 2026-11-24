@@ -118,12 +118,27 @@ class TensorStoreImage:
         s = img_util.get_slices(voxel, shape, self.img.shape[2:])
         return self.img[(0, 0, *s)].read()
 
+    def pad_clipped(self, patch, voxel, shape):
+        """
+        Zero-pads a patch clipped at an image border so it stays centered
+        on "voxel".
+        """
+        spatial = patch.shape[-3:]
+        if tuple(spatial) == tuple(shape):
+            return patch
+        pads = [(0, 0)] * (patch.ndim - 3)
+        for c, d, n in zip(voxel, shape, spatial):
+            lo = max(0, int(c - d // 2)) - int(c - d // 2)
+            pads.append((lo, d - n - lo))
+        return np.pad(patch, pads, mode="constant")
+
     def wait(self, future, voxel, shape):
         """
         Waits for a read started by "read_async" and returns the patch.
         """
         try:
-            return future.result()
+            patch = future.result()
+            return self.pad_clipped(patch, voxel, shape)
         except ValueError as e:
             if "OUT_OF_RANGE" in str(e):
                 raise ValueError(
