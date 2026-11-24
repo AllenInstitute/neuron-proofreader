@@ -175,9 +175,7 @@ class SplitModel(ProofreadingModel):
 # --- Split head
 def proposal_length_feature(tree_samples, device, dtype=torch.float32):
     """
-    Log-scaled proposal length, one scalar per sample. Length is a property
-    of the candidate edge that neither the rooted-subgraph curves nor the
-    resized image patch expose, so it is fed to models explicitly.
+    Log-scaled proposal length, one scalar per sample.
 
     Parameters
     ----------
