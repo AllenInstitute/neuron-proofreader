@@ -130,9 +130,8 @@ class ImageConfig(Config):
         Patch shape loaded from the image for merge detection. Resized to
         patch_shape before the model. None loads at patch_shape directly.
     mask_kernel_size : int
-        Side length in voxels of the cube filled around every skeleton voxel
-        when rendering the binary mask channel. A one-voxel skeleton is
-        nearly erased by the first pooling layer, so it is thickened here.
+        Side length in voxels of the cube filled around each skeleton voxel
+        in the mask channel.
     normalization : str
         How raw patches are normalized, one of NORMALIZATIONS. "percentile"
         clips at brightness_clip and stretches the percentiles to [0, 1].
@@ -153,7 +152,7 @@ class ImageConfig(Config):
     fg_quantile: float = 0.7
     fov_merge: Tuple[int, int, int] = None
     img_path: str = None
-    mask_kernel_size: int = 3
+    mask_kernel_size: int = 5
     name: str = "image_config"
     normalization: str = "percentile"
     percentiles: Tuple[float, float] = (1, 99.5)
