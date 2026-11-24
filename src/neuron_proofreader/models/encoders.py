@@ -7,7 +7,8 @@ Created on Tue Nov 24 2026
 Encoders shared by the proofreading models: the image patch encoder, the
 Arborist skeleton encoder, and their multimodal combination. The merge and
 split models differ only in the classification head on top of
-MultimodalEncoder.
+MultimodalEncoder. Each encoder exposes ``embed_dim`` and a ``config`` of
+its constructor arguments so a checkpoint can rebuild it.
 """
 
 import torch
@@ -40,6 +41,12 @@ class VisionEncoder(nn.Module):
 
     def __init__(self, input_shape, embed_dim=96, dropout=0.1, **cnn_kwargs):
         super().__init__()
+        self.config = {
+            "input_shape": tuple(input_shape),
+            "embed_dim": embed_dim,
+            "dropout": dropout,
+            **cnn_kwargs,
+        }
         self.embed_dim = embed_dim
         self.backbone = CNN3D(input_shape, use_output_head=False, **cnn_kwargs)
 
@@ -104,6 +111,7 @@ class ArboristEncoder(nn.Module):
 
     def __init__(self, latent_dim=64, **arborist_kwargs):
         super().__init__()
+        self.config = {"latent_dim": latent_dim, **arborist_kwargs}
         self.embed_dim = 2 * latent_dim
         self.arborist = Arborist(latent_dim=latent_dim, **arborist_kwargs)
 
