@@ -75,9 +75,7 @@ class VisionEncoder(nn.Module):
         Returns
         -------
         torch.Tensor
-            Shape (B, embed_dim), float32 regardless of the backbone dtype so
-            the tree encoders and heads see fp32 when the image path runs in
-            fp16 (see the models' "half_vision").
+            Shape (B, embed_dim), always float32.
         """
         # Run the backbone once
         img = img.to(next(self.backbone.parameters()).dtype)
