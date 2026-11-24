@@ -147,9 +147,8 @@ class BrainDataset:
 
     def sites_frame(self, records):
         """
-        Builds a site table from records with "xyz" and "filename", snapping
-        each site to its nearest graph node. Sites farther than
-        "max_snap_dist" from every node are dropped.
+        Builds a site table, snapping each site to its nearest node and
+        dropping sites farther than "max_snap_dist".
         """
         sites = list()
         n_far = 0
