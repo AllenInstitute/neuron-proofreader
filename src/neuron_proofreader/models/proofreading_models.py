@@ -95,7 +95,7 @@ class ArboristMergeDetector(nn.Module):
 
         # Arborist skeleton encoder — produces z_tree per subgraph
         self.arborist = Arborist(
-            output_dim=arborist_latent_dim, **_arborist_kwargs
+            curve_latent_dim=arborist_latent_dim, **_arborist_kwargs
         )
 
         # Fusion classification head
