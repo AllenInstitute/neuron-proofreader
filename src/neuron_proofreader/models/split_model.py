@@ -28,7 +28,8 @@ class SplitModel(nn.Module):
     """
     Split corrector: MultimodalEncoder embeddings of each proposal, plus the
     proposal length, classified by a SplitHead. Keyword arguments other than
-    ``gnn_hidden_dim`` and ``split_heads`` are those of MultimodalEncoder.
+    ``gnn_hidden_dim``, ``gnn_n_layers`` and ``split_heads`` are those of
+    MultimodalEncoder.
 
     Parameters
     ----------
@@ -36,6 +37,8 @@ class SplitModel(nn.Module):
         Image patch shape (C, D, H, W).
     gnn_hidden_dim : int, optional
         Node embedding dimension entering the GAT. Default is 96.
+    gnn_n_layers : int, optional
+        Message passing layers. Default is 3.
     split_heads : int, optional
         GAT attention heads. Default is 4.
     """
@@ -44,6 +47,7 @@ class SplitModel(nn.Module):
         self,
         vision_input_shape,
         gnn_hidden_dim=96,
+        gnn_n_layers=3,
         split_heads=4,
         **encoder_kwargs,
     ):
@@ -52,12 +56,16 @@ class SplitModel(nn.Module):
         self.config = {
             "vision_input_shape": tuple(vision_input_shape),
             "gnn_hidden_dim": gnn_hidden_dim,
+            "gnn_n_layers": gnn_n_layers,
             "split_heads": split_heads,
             **encoder_kwargs,
         }
         self.encoder = MultimodalEncoder(vision_input_shape, **encoder_kwargs)
         self.head = SplitHead(
-            self.encoder.embed_dim + 1, gnn_hidden_dim, split_heads
+            self.encoder.embed_dim + 1,
+            hidden_dim=gnn_hidden_dim,
+            heads=split_heads,
+            n_layers=gnn_n_layers,
         )
 
     def forward(self, x):
