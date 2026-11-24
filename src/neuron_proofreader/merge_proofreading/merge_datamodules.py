@@ -190,6 +190,20 @@ class BrainDataset:
             if self.cable_length(max_depth=max_cable, root=root) > max_cable:
                 self.ignore_fragments.add(self.node_component_id[root])
 
+    def set_giant_components(self):
+        """
+        Marks fragments with more cable than "giant_component_cable_length"
+        so that random nonmerge sites are not drawn from them. A fragment
+        that large is usually several neurons merged together, so a random
+        site on it is likely to be an unlabeled merge. Training an
+        image-only merge model on such negatives does not converge.
+        """
+        max_cable = self.giant_component_cable_length
+        for nodes in map(list, rx.connected_components(self.graph)):
+            root = util.sample_once(nodes)
+            if self.cable_length(max_depth=max_cable, root=root) > max_cable:
+                self.ignore_fragments.add(self.node_component_id[root])
+
     # --- Site Retrieval ---
     def __getitem__(self, idx):
         node, label = self.get_site(idx)
