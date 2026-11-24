@@ -16,6 +16,9 @@ import torch.nn as nn
 from neuron_proofreader.models.encoders import MultimodalEncoder
 from neuron_proofreader.utils.ml_util import FeedForwardNet
 
+# Legacy JointProofreader checkpoints hold the split head's lazy GAT parameters
+torch.serialization.add_safe_globals([torch.nn.parameter.UninitializedParameter])
+
 # Legacy JointProofreader checkpoints: merge-path keys renamed, split keys dropped
 _LEGACY_KEYS = {
     "vision.": "encoder.vision.backbone.",
