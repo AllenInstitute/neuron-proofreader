@@ -128,7 +128,9 @@ class MultimodalEncoder(nn.Module):
         self.vision = VisionEncoder(
             vision_input_shape, img_embed_dim, dropout, **vision_backbone_kwargs
         )
-        self.arborist = ArboristEncoder(arborist_latent_dim, **(arborist_kwargs or {}))
+        self.arborist = ArboristEncoder(
+            curve_latent_dim=arborist_latent_dim, **(arborist_kwargs or {})
+        )
         self.embed_dim = self.vision.embed_dim + self.arborist.embed_dim
 
     def forward(self, img, tree_samples):
