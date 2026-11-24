@@ -339,8 +339,6 @@ def get_slices(center, shape, img_shape=None):
     if img_shape is None:
         end = [s + d for s, d in zip(start, shape)]
     else:
-        # Clip at the unshifted end so a patch cut by the low border keeps
-        # its alignment with "get_offset"; see TensorStoreImage.pad_clipped
         end = [
             min(int(c - d // 2) + d, int(n))
             for c, d, n in zip(center, shape, img_shape)
