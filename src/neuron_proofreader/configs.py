@@ -136,7 +136,7 @@ class ImageConfig(Config):
     brightness_clip: int = 400
     fov_merge: Tuple[int, int, int] = None
     img_path: str = None
-    mask_kernel_size: int = 3
+    mask_kernel_size: int = 5
     name: str = "image_config"
     percentiles: Tuple[float, float] = (1, 99.5)
     patch_shape: Tuple[int, int, int] = (128, 128, 128)
