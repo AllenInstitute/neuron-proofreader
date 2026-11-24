@@ -120,9 +120,8 @@ class TensorStoreImage:
 
     def pad_clipped(self, patch, voxel, shape):
         """
-        Zero-pads a patch that "get_slices" clipped at an image border on
-        the clipped side, so the patch stays centered on "voxel" and aligned
-        with masks built from "get_offset".
+        Zero-pads a patch clipped at an image border so it stays centered
+        on "voxel".
         """
         spatial = patch.shape[-3:]
         if tuple(spatial) == tuple(shape):
