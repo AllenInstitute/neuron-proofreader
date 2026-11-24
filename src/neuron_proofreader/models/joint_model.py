@@ -65,6 +65,7 @@ class JointProofreader(nn.Module):
         gnn_hidden_dim=96,
         split_heads=4,
         dropout=0.1,
+        task="merge",
         **vision_backbone_kwargs,
     ):
         """
@@ -92,10 +93,16 @@ class JointProofreader(nn.Module):
         dropout : float, optional
             Dropout probability used in vision projections and before the
             merge classification head. Default is 0.1.
+        task : str, optional
+            Task that ``forward`` runs, "merge" or "split". Default is
+            "merge".
         **vision_backbone_kwargs
             Forwarded to CNN3D (e.g. base_channels, depth, block_type).
         """
         super().__init__()
+        if task not in ("merge", "split"):
+            raise ValueError(f"task must be 'merge' or 'split', got {task!r}")
+        self.task = task
 
         _arborist_kwargs = arborist_kwargs or {}
         self.config = {
@@ -106,6 +113,7 @@ class JointProofreader(nn.Module):
             "gnn_hidden_dim": gnn_hidden_dim,
             "split_heads": split_heads,
             "dropout": dropout,
+            "task": task,
             **vision_backbone_kwargs,
         }
 
@@ -172,23 +180,21 @@ class JointProofreader(nn.Module):
         self.gat3 = _build_hetero_gat(gnn_hidden_dim * split_heads ** 2, split_heads)
         self.split_head = nn.Linear(gnn_hidden_dim * split_heads ** 3, 1)
 
-    def forward(self, x, task):
+    def forward(self, x):
         """
         Parameters
         ----------
         x : dict
-            Batch dictionary. For "merge": must contain "img" and
-            "tree_sample". For "split": must contain "img", "tree_samples",
-            "edge_index_dict" and "n_branches".
-        task : str
-            "merge" or "split".
+            Batch dictionary for ``self.task``. For "merge": must contain
+            "img" and "tree_sample". For "split": must contain "img",
+            "tree_samples", "edge_index_dict" and "n_branches".
 
         Returns
         -------
         torch.Tensor
             Logits with shape (N, 1).
         """
-        if task == "merge":
+        if self.task == "merge":
             return self._forward_merge(x)
         return self._forward_split(x)
 
@@ -343,18 +349,16 @@ class JointProofreader(nn.Module):
         return config
 
     def as_merge_model(self):
-        """
-        Returns a view of this model that is callable as `model(x)` for merge
-        detection, which is the interface MLMergeProofreader expects.
-        """
-        return JointTaskView(self, "merge")
+        """Binds ``forward`` to merge detection and returns this model."""
+        self.task = "merge"
+        self.config["task"] = "merge"
+        return self
 
     def as_split_model(self):
-        """
-        Returns a view of this model that is callable as `model(x)` for split
-        correction, which is the interface LearnedSplitProofreader expects.
-        """
-        return JointTaskView(self, "split")
+        """Binds ``forward`` to split correction and returns this model."""
+        self.task = "split"
+        self.config["task"] = "split"
+        return self
 
     def drop_split_head(self):
         """
@@ -386,7 +390,7 @@ class JointProofreader(nn.Module):
         as `model(x)`.
 
         This reconstructs the full JointProofreader, drops the split
-        submodules, and returns a merge-bound view, so the forward pass is the
+        submodules, and binds it to merge, so the forward pass is the
         one the checkpoint was trained with. It does not copy the weights into
         an ArboristMergeDetector: that model has no task-specific
         conv/pool stage, and its vision_proj is sized for the shared pooled
@@ -404,24 +408,8 @@ class JointProofreader(nn.Module):
 
         Returns
         -------
-        JointTaskView
+        JointProofreader
             Merge-only model; call it as `model(x)`.
         """
         model = cls.load(path, map_location=map_location, config=config)
         return model.drop_split_head().as_merge_model()
-
-
-class JointTaskView(nn.Module):
-    """
-    Binds a JointProofreader to one task so that it can be called with a
-    single argument. The inference pipelines are written against single-task
-    models and call `model(x)`; the joint model needs `model(x, task)`.
-    """
-
-    def __init__(self, model, task):
-        super().__init__()
-        self.model = model
-        self.task = task
-
-    def forward(self, x):
-        return self.model(x, self.task)
