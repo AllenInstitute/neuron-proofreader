@@ -73,10 +73,8 @@ def _build_hetero_gat(out_dim, heads):
 
 class SplitHead(nn.Module):
     """
-    Classifies proposals from their embeddings with heterogeneous GAT message
-    passing over proposal and branch nodes: a fusion MLP to ``hidden_dim``,
-    ``n_layers`` GATv2 rounds, then a linear classifier. Branch nodes start
-    from a single learned vector.
+    Classifies proposals with GAT message passing over proposal and branch
+    nodes.
 
     Parameters
     ----------
