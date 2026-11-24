@@ -158,13 +158,6 @@ class MultimodalEncoder(nn.Module):
         z_tree = self.arborist(tree_samples).to(z_img.device)
         return torch.cat([z_img, z_tree], dim=1)
 
-    def half_vision(self):
-        """
-        Runs the image path in fp16, leaving Arborist in fp32.
-        """
-        self.vision.half()
-        return self
-
 
 def _center_and_max(x, center_pool):
     """Concatenates center-weighted and max pooling of a 3D feature map."""

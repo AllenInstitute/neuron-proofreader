@@ -25,7 +25,7 @@ torch.serialization.add_safe_globals(
 class ProofreadingModel(nn.Module):
     """
     Base class for the single-task proofreading models: a MultimodalEncoder
-    plus the config, fp16 and checkpoint handling they share. Subclasses add
+    plus the config and checkpoint handling they share. Subclasses add
     a head and ``forward``.
 
     Parameters
@@ -41,11 +41,6 @@ class ProofreadingModel(nn.Module):
         super().__init__()
         self.config = {"patch_shape": tuple(patch_shape), **encoder_kwargs}
         self.encoder = MultimodalEncoder(patch_shape, **encoder_kwargs)
-
-    def half_vision(self):
-        """Runs the image path in fp16; see MultimodalEncoder.half_vision."""
-        self.encoder.half_vision()
-        return self
 
     def save(self, path):
         """Saves the config and weights to a checkpoint."""
