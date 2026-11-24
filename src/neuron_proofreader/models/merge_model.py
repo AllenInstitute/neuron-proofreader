@@ -13,7 +13,7 @@ import os
 import torch
 import torch.nn as nn
 
-from arborist.models.arborist import upgrade_config, upgrade_state_dict
+from arborist.models.arborist import upgrade_state_dict
 from neuron_proofreader.models.encoders import MultimodalEncoder
 from neuron_proofreader.utils.ml_util import FeedForwardNet
 
@@ -111,17 +111,14 @@ class MergeModel(nn.Module):
 
 def normalize_config(config, drop_keys=()):
     """
-    Restores the tuple-valued entries that JSON turns into lists, drops
-    keys from other models' configs, and upgrades the Arborist kwargs.
-    Conv3d and the pooling stages index the tuples positionally, so a list
-    would silently build a different backbone.
+    Restores the tuple-valued entries that JSON turns into lists and drops
+    keys from other models' configs. Conv3d and the pooling stages index the
+    tuples positionally, so a list would silently build a different backbone.
     """
     config = {k: v for k, v in config.items() if k not in drop_keys}
     for key in ("vision_input_shape", "pool_stage_idxs"):
         if config.get(key) is not None:
             config[key] = tuple(config[key])
-    if config.get("arborist_kwargs"):
-        config["arborist_kwargs"] = upgrade_config(config["arborist_kwargs"])
     return config
 
 
