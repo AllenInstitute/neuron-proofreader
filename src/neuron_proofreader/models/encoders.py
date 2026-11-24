@@ -40,6 +40,7 @@ class VisionEncoder(nn.Module):
     """
 
     def __init__(self, input_shape, embed_dim=96, dropout=0.1, **cnn_kwargs):
+        """Instantiates a VisionEncoder object."""
         super().__init__()
         self.config = {
             "input_shape": tuple(input_shape),
@@ -54,10 +55,12 @@ class VisionEncoder(nn.Module):
         final_channels = self.backbone.encode.blocks[final_idx].out_channels
         sigma = self.backbone.config["center_pool_sigma"]
         learnable_sigma = self.backbone.config["learnable_center_sigma"]
-        self.task_conv = nn.Conv3d(final_channels, final_channels, kernel_size=1)
-        self.task_pool = CenterWeightedPool3D(sigma=sigma, learnable=learnable_sigma)
+        self.task_conv = nn.Conv3d(final_channels, final_channels, 1)
+        self.task_pool = CenterWeightedPool3D(sigma, learnable_sigma)
         self.proj = nn.Sequential(
-            nn.Linear(self.backbone.feature_dim + 2 * final_channels, embed_dim),
+            nn.Linear(
+                self.backbone.feature_dim + 2 * final_channels, embed_dim
+            ),
             nn.GELU(),
             nn.Dropout(dropout),
         )
@@ -82,14 +85,16 @@ class VisionEncoder(nn.Module):
 
         # Multi-scale pooling of the backbone stages (center-weighted + max)
         shared = []
-        for idx, pool in zip(self.backbone.pool_stage_idxs, self.backbone.center_pools):
-            s = stages[idx]
-            shared.append(torch.cat([pool(s), F.adaptive_max_pool3d(s, 1).flatten(1)], dim=1))
+        stage_pools = zip(
+            self.backbone.pool_stage_idxs, self.backbone.center_pools
+        )
+        for idx, pool in stage_pools:
+            shared.append(_center_and_max(stages[idx], pool))
         shared = self.backbone.drop(torch.cat(shared, dim=1))
 
         # Task-specific conv and pooling on the final stage
         task = self.task_conv(stages[self.backbone.pool_stage_idxs[-1]])
-        task = torch.cat([self.task_pool(task), F.adaptive_max_pool3d(task, 1).flatten(1)], dim=1)
+        task = _center_and_max(task, self.task_pool)
 
         return self.proj(torch.cat([shared, task], dim=1)).float()
 
@@ -124,9 +129,13 @@ class MultimodalEncoder(nn.Module):
         dropout=0.1,
         **vision_backbone_kwargs,
     ):
+        """Instantiates a MultimodalEncoder object."""
         super().__init__()
         self.vision = VisionEncoder(
-            vision_input_shape, img_embed_dim, dropout, **vision_backbone_kwargs
+            vision_input_shape,
+            img_embed_dim,
+            dropout,
+            **vision_backbone_kwargs,
         )
         self.arborist = ArboristEncoder(
             curve_latent_dim=arborist_latent_dim, **(arborist_kwargs or {})
@@ -159,3 +168,10 @@ class MultimodalEncoder(nn.Module):
         """
         self.vision.half()
         return self
+
+
+def _center_and_max(x, center_pool):
+    """Concatenates center-weighted and max pooling of a 3D feature map."""
+    return torch.cat(
+        [center_pool(x), F.adaptive_max_pool3d(x, 1).flatten(1)], dim=1
+    )

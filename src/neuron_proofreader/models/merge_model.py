@@ -17,9 +17,11 @@ from neuron_proofreader.models.encoders import MultimodalEncoder
 from neuron_proofreader.utils.ml_util import FeedForwardNet
 
 # Legacy JointProofreader checkpoints hold the split head's lazy GAT parameters
-torch.serialization.add_safe_globals([torch.nn.parameter.UninitializedParameter])
+torch.serialization.add_safe_globals(
+    [torch.nn.parameter.UninitializedParameter]
+)
 
-# Legacy JointProofreader checkpoints: merge-path keys renamed, split keys dropped
+# Legacy JointProofreader checkpoints: merge keys renamed, split keys dropped
 _LEGACY_KEYS = {
     "vision.": "encoder.vision.backbone.",
     "merge_task_conv.": "encoder.vision.task_conv.",
@@ -39,13 +41,16 @@ class MergeModel(nn.Module):
     """
 
     def __init__(self, vision_input_shape, dropout=0.1, **encoder_kwargs):
+        """Instantiates a MergeModel object."""
         super().__init__()
         self.config = {
             "vision_input_shape": tuple(vision_input_shape),
             "dropout": dropout,
             **encoder_kwargs,
         }
-        self.encoder = MultimodalEncoder(vision_input_shape, dropout=dropout, **encoder_kwargs)
+        self.encoder = MultimodalEncoder(
+            vision_input_shape, dropout=dropout, **encoder_kwargs
+        )
         self.drop = nn.Dropout(dropout)
         self.head = FeedForwardNet(self.encoder.embed_dim, 1, 3)
 
@@ -70,7 +75,9 @@ class MergeModel(nn.Module):
         return self
 
     def save(self, path):
-        torch.save({"config": self.config, "state_dict": self.state_dict()}, path)
+        """Saves the config and weights to a checkpoint."""
+        state = {"config": self.config, "state_dict": self.state_dict()}
+        torch.save(state, path)
 
     @classmethod
     def load(cls, path, map_location=None, config=None):
@@ -98,7 +105,9 @@ class MergeModel(nn.Module):
             config, state_dict = ckpt["config"], ckpt["state_dict"]
         else:
             if config is None:
-                config = os.path.join(os.path.dirname(path), "model_config.json")
+                config = os.path.join(
+                    os.path.dirname(path), "model_config.json"
+                )
             if isinstance(config, str):
                 with open(config) as f:
                     config = json.load(f)
