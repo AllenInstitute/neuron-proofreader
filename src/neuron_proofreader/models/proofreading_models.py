@@ -11,8 +11,61 @@ import torch
 import torch.nn as nn
 
 from arborist.models.arborist import Arborist
+from neuron_proofreader.models.encoders import MultimodalEncoder
 from neuron_proofreader.models.vision_models import CNN3D, ViT3D
 from neuron_proofreader.utils.ml_util import FeedForwardNet
+
+
+class ProofreadingModel(nn.Module):
+    """
+    Base class for the single-task proofreading models: a MultimodalEncoder
+    plus the config, fp16 and checkpoint handling they share. Subclasses add
+    a head and ``forward``.
+
+    Parameters
+    ----------
+    patch_shape : Tuple[int]
+        Image patch shape (C, D, H, W).
+    **encoder_kwargs
+        Forwarded to MultimodalEncoder.
+    """
+
+    def __init__(self, patch_shape, **encoder_kwargs):
+        """Instantiates a ProofreadingModel object."""
+        super().__init__()
+        self.config = {"patch_shape": tuple(patch_shape), **encoder_kwargs}
+        self.encoder = MultimodalEncoder(patch_shape, **encoder_kwargs)
+
+    def half_vision(self):
+        """Runs the image path in fp16; see MultimodalEncoder.half_vision."""
+        self.encoder.half_vision()
+        return self
+
+    def save(self, path):
+        """Saves the config and weights to a checkpoint."""
+        state = {"config": self.config, "state_dict": self.state_dict()}
+        torch.save(state, path)
+
+    @classmethod
+    def load(cls, path, map_location=None):
+        """
+        Reconstructs a model from a checkpoint written by ``save``.
+
+        Parameters
+        ----------
+        path : str
+            Path to the checkpoint.
+        map_location : str or torch.device, optional
+            Passed through to torch.load. Default is None.
+
+        Returns
+        -------
+        ProofreadingModel
+        """
+        ckpt = torch.load(path, map_location=map_location, weights_only=True)
+        model = cls(**ckpt["config"])
+        model.load_state_dict(ckpt["state_dict"])
+        return model
 
 
 class ArboristMergeDetector(nn.Module):
