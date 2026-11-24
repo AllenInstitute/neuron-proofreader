@@ -160,9 +160,7 @@ class MultimodalEncoder(nn.Module):
 
     def half_vision(self):
         """
-        Runs the image path in fp16, leaving Arborist in fp32. The backbone
-        is memory-bandwidth bound, so halving its activations is ~1.8x faster
-        on an L4; Arborist builds fp32 tensors from numpy inside its forward.
+        Runs the image path in fp16, leaving Arborist in fp32.
         """
         self.vision.half()
         return self
