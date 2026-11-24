@@ -13,6 +13,7 @@ import os
 import torch
 import torch.nn as nn
 
+from arborist.models.arborist import upgrade_state_dict
 from neuron_proofreader.models.encoders import MultimodalEncoder
 from neuron_proofreader.utils.ml_util import FeedForwardNet
 
@@ -104,7 +105,7 @@ class MergeModel(nn.Module):
                     config = json.load(f)
             state_dict = ckpt
         model = cls(**normalize_config(config, _LEGACY_CONFIG_KEYS))
-        model.load_state_dict(_upgrade_state_dict(state_dict))
+        model.load_state_dict(upgrade_state_dict(_upgrade_state_dict(state_dict)))
         return model
 
 

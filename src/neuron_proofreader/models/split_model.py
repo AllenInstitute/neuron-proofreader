@@ -11,6 +11,7 @@ over proposals and branches.
 import torch
 import torch.nn as nn
 
+from arborist.models.arborist import upgrade_state_dict
 from neuron_proofreader.models.encoders import MultimodalEncoder
 from neuron_proofreader.models.gnn_models import SplitHead, proposal_length_feature
 from neuron_proofreader.models.merge_model import normalize_config
@@ -90,5 +91,5 @@ class SplitModel(nn.Module):
         """
         ckpt = torch.load(path, map_location=map_location, weights_only=True)
         model = cls(**normalize_config(ckpt["config"]))
-        model.load_state_dict(ckpt["state_dict"])
+        model.load_state_dict(upgrade_state_dict(ckpt["state_dict"]))
         return model
