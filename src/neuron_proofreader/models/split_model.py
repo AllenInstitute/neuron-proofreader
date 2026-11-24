@@ -16,7 +16,6 @@ from neuron_proofreader.models.gnn_models import (
     SplitHead,
     proposal_length_feature,
 )
-from neuron_proofreader.models.merge_model import normalize_config
 
 # GATv2Conv layers are lazy, so checkpoints may hold uninitialized parameters
 torch.serialization.add_safe_globals(
@@ -114,6 +113,6 @@ class SplitModel(nn.Module):
         SplitModel
         """
         ckpt = torch.load(path, map_location=map_location, weights_only=True)
-        model = cls(**normalize_config(ckpt["config"]))
+        model = cls(**ckpt["config"])
         model.load_state_dict(ckpt["state_dict"])
         return model
