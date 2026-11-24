@@ -118,12 +118,27 @@ class TensorStoreImage:
         s = img_util.get_slices(voxel, shape, self.img.shape[2:])
         return self.img[(0, 0, *s)].read()
 
+    def pad_clipped(self, patch, voxel, shape):
+        """
+        Zero-pads a patch clipped at an image border so it stays centered
+        on "voxel".
+        """
+        spatial = patch.shape[-3:]
+        if tuple(spatial) == tuple(shape):
+            return patch
+        pads = [(0, 0)] * (patch.ndim - 3)
+        for c, d, n in zip(voxel, shape, spatial):
+            lo = max(0, int(c - d // 2)) - int(c - d // 2)
+            pads.append((lo, d - n - lo))
+        return np.pad(patch, pads, mode="constant")
+
     def wait(self, future, voxel, shape):
         """
         Waits for a read started by "read_async" and returns the patch.
         """
         try:
-            return future.result()
+            patch = future.result()
+            return self.pad_clipped(patch, voxel, shape)
         except ValueError as e:
             if "OUT_OF_RANGE" in str(e):
                 raise ValueError(
@@ -174,7 +189,9 @@ class PatchLoader(ABC):
         self.config = img_config or ImageConfig()
         self.graph = graph
         self.img = TensorStoreImage(img_config.img_path)
-        self.transform = ImageTransforms() if self.config.transform else None
+        # The config is shared by the train and val datasets and its mode is
+        # switched between them, so the transform is fixed here
+        self.transform = self.config.transform
 
     # --- Abstract Interface ---
     @abstractmethod
@@ -205,7 +222,9 @@ class PatchLoader(ABC):
                 if frozenset({i, j}) not in visited and j in nodes:
                     voxel_j = self.graph.node_local_voxel(j, offset)
                     voxels = geometry_util.make_digital_line(voxel_i, voxel_j)
-                    img_util.annotate_voxels(mask, voxels, fill_val=fill_val)
+                    img_util.annotate_voxels(
+                        mask, voxels, self.mask_kernel_size, fill_val=fill_val
+                    )
                     visited.add(frozenset({i, j}))
 
     def annotate_fragment(self, mask, subgraph, offset, fill_val=1):
@@ -216,7 +235,9 @@ class PatchLoader(ABC):
 
             # Populate mask
             voxels = geometry_util.make_digital_line(voxel1, voxel2)
-            img_util.annotate_voxels(mask, voxels, fill_val=fill_val)
+            img_util.annotate_voxels(
+                mask, voxels, self.mask_kernel_size, fill_val=fill_val
+            )
 
     def create_mask(self, center, shape, node):
         # Initializations
@@ -232,7 +253,7 @@ class PatchLoader(ABC):
 
     def read_image(self, center, shape):
         """
-        Reads the image patch specified by the given center and shape.
+        Reads the raw image patch specified by the given center and shape.
 
         Parameters
         ----------
@@ -244,21 +265,37 @@ class PatchLoader(ABC):
         Returns
         -------
         patch : numpy.ndarray
-            Preprocessed image patch.
+            Raw image patch, to be passed to "normalize".
         """
         return self.finish_read(self.img.read_async(center, shape), center, shape)
 
     def finish_read(self, future, center, shape):
         """
         Waits for a patch read started with "self.img.read_async" and
-        preprocesses it exactly as "read_image" does.
+        returns the raw patch exactly as "read_image" does.
         """
-        return self.preprocess(self.img.wait(future, center, shape))
+        return self.img.wait(future, center, shape)
 
-    def preprocess(self, patch):
+    def normalize(self, patch, mask=None):
         """
-        Clips and percentile-normalizes a raw patch.
+        Normalizes a raw patch as "self.normalization" specifies, see
+        ImageConfig.
+
+        Parameters
+        ----------
+        patch : numpy.ndarray
+            Raw image patch.
+        mask : numpy.ndarray, optional
+            Mask of the fragment under review, required by the asinh
+            normalization. Default is None.
+
+        Returns
+        -------
+        numpy.ndarray
+            Normalized float32 image patch.
         """
+        if self.normalization == "asinh":
+            return self.normalize_asinh(patch, mask)
         if np.issubdtype(patch.dtype, np.unsignedinteger) and patch.itemsize <= 2:
             return img_util.normalize_lut(
                 patch, self.brightness_clip, percentiles=self.percentiles
@@ -267,6 +304,31 @@ class PatchLoader(ABC):
         return img_util.normalize(patch, percentiles=self.percentiles).astype(
             np.float32
         )
+
+    def normalize_asinh(self, patch, mask):
+        """
+        Asinh-normalizes a raw patch relative to the fragment under "mask".
+        In training mode the foreground quantile is jittered and noise is
+        added to the raw image; the background and scale are estimated
+        before the noise so that it is seen by the model.
+        """
+        if mask is None:
+            raise ValueError("asinh normalization requires the fragment mask")
+        if patch.shape != mask.shape:
+            patch = img_util.pad_to_shape(patch, mask.shape)
+
+        quantile = self.fg_quantile
+        if self.transform:
+            quantile = self.transform.sample_fg_quantile(quantile)
+        bg, sigma = img_util.background_stats(patch)
+        scale = img_util.foreground_scale(patch, mask, bg, sigma, quantile)
+
+        is_uint = np.issubdtype(patch.dtype, np.unsignedinteger)
+        if self.transform:
+            patch = self.transform.raw_noise(patch.astype(np.float32), sigma)
+        elif is_uint and patch.itemsize <= 2:
+            return img_util.normalize_asinh_lut(patch, bg, scale)
+        return img_util.normalize_asinh(patch, bg, scale)
 
     # --- Helpers ---
     def __getattr__(self, name):
@@ -304,11 +366,13 @@ class DetectionPatchLoader(PatchLoader):
         else:
             center, shape, img = self.read_cached_image(node)
         mask = self.create_mask(center, shape, node)
+        img = self.normalize(img, mask)
 
-        if self.fov_merge is not None:
+        if self.transform:
+            img, mask = self.transform.affine(img, mask, self.patch_shape)
+        elif self.fov_merge is not None:
             img = img_util.resize(img, self.patch_shape)
             mask = img_util.resize_nearest(mask, self.patch_shape)
-        mask = img_util.soften_mask(mask, self.mask_sigma)
 
         patches = self.stack(img, mask)
         if self.transform:
@@ -323,13 +387,13 @@ class DetectionPatchLoader(PatchLoader):
     # --- Cache ---
     def read_cached_image(self, node):
         """
-        Reads the preprocessed patch around "node" from the cached window,
+        Reads the raw patch around "node" from the cached window,
         cropping out the same random shift "compute_patch_specs" applies.
 
         Returns
         -------
         Tuple[numpy.ndarray, Tuple[int], numpy.ndarray]
-            Patch center, patch shape, and preprocessed image patch.
+            Patch center, patch shape, and raw image patch.
         """
         voxel = self.graph.node_voxel(node)
         shape = self.fov_merge or self.patch_shape
@@ -338,7 +402,7 @@ class DetectionPatchLoader(PatchLoader):
         center = self.adjust_voxel(voxel)
         starts = np.subtract(center, voxel) + self.cache.margin
         img = window[tuple(slice(s, s + n) for s, n in zip(starts, shape))]
-        return center, shape, self.preprocess(img)
+        return center, shape, img
 
     def cached_window(self, voxel, shape):
         """
@@ -378,6 +442,7 @@ class DetectionBatchLoader(PatchLoader):
         # Load patches
         img = self.read_image(center, shape)
         mask = self.create_mask(center, shape, nodes[len(nodes) // 2])
+        img = self.normalize(img, mask)
         return nodes, self.stack(img, mask), offset
 
     def compute_patch_specs(self, nodes):
@@ -422,7 +487,7 @@ class ProposalPatchLoader(PatchLoader):
         """
         future, center, shape = read or self.read_async(proposal)
         offset = img_util.get_offset(center, shape)
-        img = self.finish_read(future, center, shape)
+        img = self.normalize(self.finish_read(future, center, shape))
         return img, offset
 
     def read_async(self, proposal):

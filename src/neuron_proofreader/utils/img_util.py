@@ -17,7 +17,6 @@ import tensorstore as ts
 import torch
 import torch.nn.functional as F
 
-from scipy.ndimage import distance_transform_edt
 
 from neuron_proofreader.utils import io_util
 
@@ -337,9 +336,13 @@ def get_slices(center, shape, img_shape=None):
         Slice objects used to index into the image.
     """
     start = [max(0, int(c - d // 2)) for c, d in zip(center, shape)]
-    end = [s + d for s, d in zip(start, shape)]
-    if img_shape is not None:
-        end = [min(e, int(n)) for e, n in zip(end, img_shape)]
+    if img_shape is None:
+        end = [s + d for s, d in zip(start, shape)]
+    else:
+        end = [
+            min(int(c - d // 2) + d, int(n))
+            for c, d, n in zip(center, shape, img_shape)
+        ]
     return tuple(slice(s, e) for s, e in zip(start, end))
 
 
@@ -509,21 +512,152 @@ def normalize_lut(img, clip, percentiles=(1, 99.5)):
     clip = min(int(clip), n_bins - 1)
     hist[clip] += hist[clip + 1:].sum()
     hist[clip + 1:] = 0
-    cdf = np.cumsum(hist)
 
-    # numpy's default "linear" percentile on the clipped values
-    n = img.size
-    def percentile(q):
-        rank = q / 100 * (n - 1)
-        lo, hi = int(np.floor(rank)), int(np.ceil(rank))
-        v_lo = np.searchsorted(cdf, lo + 1)
-        v_hi = np.searchsorted(cdf, hi + 1)
-        return v_lo + (v_hi - v_lo) * (rank - lo)
-
-    mn, mx = percentile(percentiles[0]), percentile(percentiles[1])
+    mn = _hist_percentile(hist, percentiles[0])
+    mx = _hist_percentile(hist, percentiles[1])
     values = np.minimum(np.arange(n_bins, dtype=np.float64), clip)
     lut = np.clip((values - mn) / (mx - mn + 1e-5), 0, 1).astype(np.float32)
     return lut[img]
+
+
+def _hist_percentile(hist, q):
+    """
+    numpy's default "linear" percentile of the values counted in "hist",
+    where hist[v] is the number of voxels with value v.
+    """
+    cdf = np.cumsum(hist)
+    rank = q / 100 * (cdf[-1] - 1)
+    lo, hi = int(np.floor(rank)), int(np.ceil(rank))
+    v_lo = np.searchsorted(cdf, lo + 1)
+    v_hi = np.searchsorted(cdf, hi + 1)
+    return v_lo + (v_hi - v_lo) * (rank - lo)
+
+
+def background_stats(img):
+    """
+    Estimates the background level and noise of a sparse image. The
+    background is the mode of the (integer-rounded) nonzero intensities and
+    the noise is the scaled median absolute deviation from it. Neurites fill
+    at most a few percent of a patch, so both are set by the background and
+    do not depend on how many neurites the patch contains or how bright they
+    are. Zeros are padding, not background, so they are not counted.
+
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Image patch with nonnegative intensities.
+
+    Returns
+    -------
+    Tuple[float, float]
+        Background level and noise standard deviation (1.4826 * MAD, the
+        standard deviation of a Gaussian with that MAD).
+    """
+    if np.issubdtype(img.dtype, np.integer):
+        values = img.ravel()
+    else:
+        values = np.rint(img).astype(np.int64).ravel()
+    hist = np.bincount(values)
+    if hist[1:].any():
+        hist[0] = 0
+    mode = int(np.argmax(hist))
+    dev = np.abs(np.arange(len(hist)) - mode)
+    dev_hist = np.bincount(dev, weights=hist, minlength=len(hist))
+    mad = _hist_percentile(dev_hist, 50)
+    return float(mode), 1.4826 * float(mad)
+
+
+def foreground_scale(img, mask, bg, sigma, quantile=0.7, min_snr=5.0):
+    """
+    Estimates how far the neurite under "mask" stands above the background,
+    which is the scale of the asinh normalization.
+
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Raw image patch.
+    mask : numpy.ndarray
+        Mask of the fragment under review with the same shape as "img";
+        nonzero voxels are foreground.
+    bg : float
+        Background level, see background_stats.
+    sigma : float
+        Background noise standard deviation, see background_stats.
+    quantile : float, optional
+        Quantile of the intensities under the mask taken as the foreground
+        level. The mask is wider than the fiber, so the median would sit on
+        its dim edge. Default is 0.7.
+    min_snr : float, optional
+        Lower bound on the scale in units of "sigma", so that a fragment
+        lying on background does not have its noise stretched to foreground
+        brightness. Default is 5.
+
+    Returns
+    -------
+    float
+        Foreground level minus background level, at least min_snr * sigma
+        and at least 1.
+    """
+    values = img[mask > 0]
+    level = float(np.quantile(values, quantile)) if values.size else bg
+    return max(level - bg, min_snr * sigma, 1.0)
+
+
+def normalize_asinh(img, bg, scale):
+    """
+    Normalizes an image with an inverse hyperbolic sine stretch anchored on
+    the two populations of a sparse patch:
+
+        y = asinh((x - bg) / scale)
+
+    with "bg" the background level and "scale" the height of the neurite
+    under review above it (see background_stats and foreground_scale).
+    Background maps to 0 and that neurite to asinh(1) = 0.88 in every patch,
+    however bright the brain is. Up to that level the stretch is close to
+    linear; brighter intensities are compressed logarithmically instead of
+    clipped, so a soma or a bright crossing keeps its structure.
+
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Image to be normalized.
+    bg : float
+        Background level in raw intensity units.
+    scale : float
+        Foreground level above background in raw intensity units.
+
+    Returns
+    -------
+    numpy.ndarray
+        Normalized float32 image.
+    """
+    out = img.astype(np.float32)
+    out -= np.float32(bg)
+    out /= np.float32(scale)
+    return np.arcsinh(out, out=out)
+
+
+def normalize_asinh_lut(img, bg, scale):
+    """
+    Equivalent to normalize_asinh for small unsigned integer images, computed
+    through a lookup table over the dtype's values like normalize_lut.
+
+    Parameters
+    ----------
+    img : numpy.ndarray
+        Unsigned integer image (uint8 or uint16).
+    bg : float
+        See normalize_asinh.
+    scale : float
+        See normalize_asinh.
+
+    Returns
+    -------
+    numpy.ndarray
+        Normalized float32 image.
+    """
+    values = np.arange(int(np.iinfo(img.dtype).max) + 1, dtype=np.float32)
+    return normalize_asinh(values, bg, scale)[img]
 
 
 def pad_to_shape(img, target_shape, pad_value=0):
@@ -621,47 +755,6 @@ def resize_nearest(mask, new_shape):
     x = torch.from_numpy(np.ascontiguousarray(mask, dtype=np.float32))
     out = F.interpolate(x[None, None], size=new_shape, mode="nearest-exact")
     return out[0, 0].numpy().astype(mask.dtype)
-
-
-def soften_mask(mask, sigma):
-    """
-    Replaces a binary skeleton mask with a Gaussian tube of width sigma:
-    exp(-d^2 / (2 sigma^2)) where d is the Euclidean distance (in voxels) to
-    the nearest foreground voxel. Foreground voxels keep the value 1.
-
-    Parameters
-    ----------
-    mask : numpy.ndarray
-        Binary mask (nonzero = foreground).
-    sigma : float or None
-        Tube width in voxels. 0 or None returns the mask unchanged.
-
-    Returns
-    -------
-    numpy.ndarray
-        Soft mask with the same shape and dtype as the input.
-    """
-    if not sigma or sigma <= 0 or not mask.any():
-        return mask
-
-    # The tube is below exp(-12.5) ~ 4e-6 beyond 5 sigma, so the EDT only
-    # needs the foreground bounding box plus that margin; a full-volume EDT
-    # was the single most expensive CPU step per patch.
-    margin = int(np.ceil(5 * sigma))
-    bbox = tuple(
-        slice(
-            max(int(idx[0]) - margin, 0),
-            min(int(idx[-1]) + margin + 1, n),
-        )
-        for idx, n in zip(
-            (np.flatnonzero(mask.any(axis=axes)) for axes in ((1, 2), (0, 2), (0, 1))),
-            mask.shape,
-        )
-    )
-    d = distance_transform_edt(mask[bbox] == 0)
-    out = np.zeros(mask.shape, dtype=mask.dtype)
-    out[bbox] = np.exp(-0.5 * (d / sigma) ** 2)
-    return out
 
 
 def to_physical(voxel, anisotropy, offset=(0, 0, 0)):
