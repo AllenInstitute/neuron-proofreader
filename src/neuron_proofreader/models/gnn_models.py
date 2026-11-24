@@ -4,7 +4,7 @@ Created on Fri Sep 25 2026
 @author: Anna Grim
 @email: anna.grim@alleninstitute.org
 
-Tree encoder and heterogeneous GAT layers used by the split head.
+Heterogeneous GAT classification head of the split model.
 
 """
 
@@ -13,7 +13,6 @@ from torch_geometric import nn as nn_geometric
 import torch
 import torch.nn as nn
 
-from arborist.models.arborist import Arborist
 from neuron_proofreader.utils.ml_util import FeedForwardNet
 
 
@@ -38,54 +37,6 @@ def proposal_length_feature(tree_samples, device, dtype=torch.float32):
     )
     return torch.log1p(lengths).unsqueeze(1)
 
-
-class ProposalTreeEncoder(nn.Module):
-    """
-    Encodes proposal-rooted TreeSamples into fixed-size embeddings using
-    Arborist. The two curves incident to the root (one per side of the
-    proposal) are mean-pooled after the GraphTransformer has contextualized
-    them against the rest of the subgraph.
-
-    Parameters
-    ----------
-    latent_dim : int, optional
-        Arborist latent dimension and output embedding size. Default is 64.
-    **arborist_kwargs
-        Forwarded to the Arborist constructor.
-    """
-
-    def __init__(
-        self,
-        latent_dim=64,
-        **arborist_kwargs,
-    ):
-        super().__init__()
-        self.config = {"latent_dim": latent_dim, **arborist_kwargs}
-        self.arborist = Arborist(latent_dim=latent_dim, **arborist_kwargs)
-
-    @torch._dynamo.disable
-    def forward(self, tree_samples):
-        """
-        Parameters
-        ----------
-        tree_samples : List[TreeSample]
-            One sample per proposal, in proposal-index order.
-
-        Returns
-        -------
-        torch.Tensor
-            Shape (n_proposals, latent_dim).
-        """
-        with torch.amp.autocast("cuda", enabled=False):
-            zs = []
-            for sample in tree_samples:
-                _, z_curves = self.arborist.encode(sample)
-                idx = sample.root_curve_indices or range(len(z_curves))
-                zs.append(z_curves[list(idx)].mean(dim=0))
-        return torch.stack(zs)
-
-    def save(self, path):
-        torch.save({"config": self.config, "state_dict": self.state_dict()}, path)
 
 RELATIONS = [
     ("branch", "to", "branch"),
@@ -116,3 +67,55 @@ def _build_hetero_gat(out_dim, heads):
             )
         gat_dict[rel] = conv
     return nn_geometric.HeteroConv(gat_dict)
+
+
+class SplitHead(nn.Module):
+    """
+    Classifies proposals from their embeddings with heterogeneous GAT message
+    passing over proposal and branch nodes: a fusion MLP to ``hidden_dim``,
+    three GATv2 rounds, then a linear classifier. Branch nodes start from a
+    single learned vector.
+
+    Parameters
+    ----------
+    in_dim : int
+        Proposal embedding dimension.
+    hidden_dim : int, optional
+        Node embedding dimension entering the GAT. Default is 96.
+    heads : int, optional
+        GAT attention heads. Default is 4.
+    """
+
+    def __init__(self, in_dim, hidden_dim=96, heads=4):
+        super().__init__()
+        self.fusion = FeedForwardNet(in_dim, hidden_dim, 2)
+        self.branch_relay = nn.Parameter(torch.zeros(hidden_dim))
+        nn.init.normal_(self.branch_relay, std=0.02)
+        self.gat1 = _build_hetero_gat(hidden_dim, heads)
+        self.gat2 = _build_hetero_gat(hidden_dim * heads, heads)
+        self.gat3 = _build_hetero_gat(hidden_dim * heads ** 2, heads)
+        self.output = nn.Linear(hidden_dim * heads ** 3, 1)
+
+    def forward(self, z, edge_index_dict, n_branches):
+        """
+        Parameters
+        ----------
+        z : torch.Tensor
+            Proposal embeddings, shape (N, in_dim).
+        edge_index_dict : dict
+            Edge indices per (src, "to", dst) relation in RELATIONS.
+        n_branches : int
+            Number of branch nodes.
+
+        Returns
+        -------
+        torch.Tensor
+            Logits of shape (N, 1).
+        """
+        x_dict = {
+            "proposal": self.fusion(z),
+            "branch": self.branch_relay.to(z.dtype).unsqueeze(0).expand(n_branches, -1),
+        }
+        for gat in (self.gat1, self.gat2, self.gat3):
+            x_dict = gat(x_dict, edge_index_dict)
+        return self.output(x_dict["proposal"])
