@@ -106,7 +106,7 @@ class MultimodalEncoder(nn.Module):
 
     Parameters
     ----------
-    vision_input_shape : Tuple[int]
+    patch_shape : Tuple[int]
         Image patch shape (C, D, H, W).
     img_embed_dim : int, optional
         Image embedding dimension. Default is 96.
@@ -122,7 +122,7 @@ class MultimodalEncoder(nn.Module):
 
     def __init__(
         self,
-        vision_input_shape,
+        patch_shape,
         img_embed_dim=96,
         arborist_latent_dim=64,
         arborist_kwargs=None,
@@ -132,7 +132,7 @@ class MultimodalEncoder(nn.Module):
         """Instantiates a MultimodalEncoder object."""
         super().__init__()
         self.vision = VisionEncoder(
-            vision_input_shape,
+            patch_shape,
             img_embed_dim,
             dropout,
             **vision_backbone_kwargs,
