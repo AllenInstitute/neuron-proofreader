@@ -741,3 +741,72 @@ class PatchEmbed3D(nn.Module):
 
     def forward(self, x):
         return self.proj(self.stem(x)).flatten(2).transpose(1, 2)
+
+
+class VisionEncoder(nn.Module):
+    """
+    Image encoder for the single-task proofreading models: a CNN3D backbone
+    without an output head, a task-specific 1x1 conv and center-weighted pool
+    on its final stage, and a projection of the concatenated pooled features
+    to the image embedding.
+
+    Parameters
+    ----------
+    input_shape : Tuple[int]
+        Image patch shape (C, D, H, W).
+    embed_dim : int, optional
+        Image embedding dimension. Default is 96.
+    dropout : float, optional
+        Dropout after the projection. Default is 0.1.
+    **cnn_kwargs
+        Forwarded to CNN3D (e.g. base_channels, depth, block_type,
+        max_channels, pool_stage_idxs).
+    """
+
+    def __init__(self, input_shape, embed_dim=96, dropout=0.1, **cnn_kwargs):
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.backbone = CNN3D(input_shape, use_output_head=False, **cnn_kwargs)
+
+        final_idx = self.backbone.pool_stage_idxs[-1]
+        final_channels = self.backbone.encode.blocks[final_idx].out_channels
+        sigma = self.backbone.config["center_pool_sigma"]
+        learnable_sigma = self.backbone.config["learnable_center_sigma"]
+        self.task_conv = nn.Conv3d(final_channels, final_channels, kernel_size=1)
+        self.task_pool = CenterWeightedPool3D(sigma=sigma, learnable=learnable_sigma)
+        self.proj = nn.Sequential(
+            nn.Linear(self.backbone.feature_dim + 2 * final_channels, embed_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+        )
+
+    def forward(self, img):
+        """
+        Parameters
+        ----------
+        img : torch.Tensor
+            Shape (B, C, D, H, W).
+
+        Returns
+        -------
+        torch.Tensor
+            Shape (B, embed_dim), float32 regardless of the backbone dtype so
+            the tree encoders and heads see fp32 when the image path runs in
+            fp16 (see the models' "half_vision").
+        """
+        # Run the backbone once
+        img = img.to(next(self.backbone.parameters()).dtype)
+        stages = self.backbone.encode(img)
+
+        # Multi-scale pooling of the backbone stages (center-weighted + max)
+        shared = []
+        for idx, pool in zip(self.backbone.pool_stage_idxs, self.backbone.center_pools):
+            s = stages[idx]
+            shared.append(torch.cat([pool(s), F.adaptive_max_pool3d(s, 1).flatten(1)], dim=1))
+        shared = self.backbone.drop(torch.cat(shared, dim=1))
+
+        # Task-specific conv and pooling on the final stage
+        task = self.task_conv(stages[self.backbone.pool_stage_idxs[-1]])
+        task = torch.cat([self.task_pool(task), F.adaptive_max_pool3d(task, 1).flatten(1)], dim=1)
+
+        return self.proj(torch.cat([shared, task], dim=1)).float()

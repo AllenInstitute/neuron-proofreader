@@ -192,7 +192,7 @@ class MergeInferenceConfig(Config):
     modality : str
         Input modality expected by the merge model. Options are "image" for
         image-only models and "image_graph" for models that also consume a
-        skeleton TreeSample per site (e.g. JointProofreader).
+        skeleton TreeSample per site (e.g. MergeModel).
     model_config_path : str, optional
         Path to the merge model config JSON file.
     model_path : str, optional
